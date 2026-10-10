@@ -1203,6 +1203,58 @@ def _idem_claim(box: Path, sender: str, to: str, key: str, msg_id: str,
     return "CONFLICT"
 
 
+def _scope_lock(lock: Path) -> int | None:
+    """Take the scope lock (PROTOCOL.md section 30) and return the descriptor
+    that holds it, or None when a live claimant holds it.
+
+    The lock is an exclusive, non-blocking flock(2) on ``lock``, not the file's
+    existence: the file is opened-or-created (never O_EXCL) so every claimant
+    locks the same inode, and the kernel releases the lock the instant its
+    holder exits. A dead claimant therefore leaves nothing to break by age, and
+    no process ever removes a lock another process holds.
+    """
+    import fcntl  # POSIX only; local so the module still imports where fcntl is absent
+    for _ in range(8):
+        fd = os.open(lock, os.O_RDWR | os.O_CREAT, 0o644)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            os.close(fd)
+            return None  # a live process holds it
+        except OSError:
+            os.close(fd)
+            raise  # the filesystem refuses flock: the caller reports it, no fallback to a race
+        # A holder unlinks the file BEFORE it releases (_scope_unlock), so an
+        # inode that is no longer at the path is an orphan a previous holder
+        # already gave up: locking it proves nothing. Drop it and start over.
+        try:
+            at_path = os.stat(lock).st_ino
+        except FileNotFoundError:
+            at_path = -1
+        if os.fstat(fd).st_ino == at_path:
+            try:
+                os.ftruncate(fd, 0)
+                os.write(fd, f"{os.getpid()}\n".encode())  # who holds it, for a human
+            except OSError:
+                pass
+            return fd
+        os.close(fd)  # releases the orphan
+    return None
+
+
+def _scope_unlock(lock: Path, fd: int) -> None:
+    """Release a scope lock this process holds: unlink the file first, while the
+    lock is still held, then close (which releases it). Unlink-before-release
+    is what lets _scope_lock tell an orphan inode from the live one; the inode
+    check keeps this from ever removing a file that is not ours."""
+    try:
+        if os.stat(lock).st_ino == os.fstat(fd).st_ino:
+            lock.unlink(missing_ok=True)
+    except OSError:
+        pass
+    os.close(fd)
+
+
 _FREE_HEADER_FIELDS = (
     "scope", "key", "result", "reason", "namespace", "resolved_at", "falsifier",
     "do_not_infer", "artifact_class", "claim_currentness", "evidence_scope",
@@ -1378,20 +1430,19 @@ def cmd_send(args: argparse.Namespace) -> int:
                       file=sys.stderr)
             return 2
         box.mkdir(parents=True, exist_ok=True)
-    lock: Path | None = None
+    lock = box / f".scope.{hashlib.sha256(scope.encode()).hexdigest()[:24]}.lock"
+    lock_fd: int | None = None  # set only while this process holds the scope lock
     marker: Path | None = None
     try:
         if scope:
-            lock = box / f".scope.{hashlib.sha256(scope.encode()).hexdigest()[:24]}.lock"
+            # PROTOCOL.md section 30: a kernel-held lock, never broken by age.
             try:
-                if now.timestamp() - lock.stat().st_mtime > 60:
-                    lock.unlink(missing_ok=True)  # crashed holder
-            except FileNotFoundError:
-                pass
-            try:
-                os.close(os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644))
-            except FileExistsError:
-                lock = None  # not ours: must not be released below
+                lock_fd = _scope_lock(lock)
+            except OSError as exc:
+                print(f"cannot lock scope {scope!r}: {exc} "
+                      "(flock(2) on the mailbox filesystem is required)", file=sys.stderr)
+                return 2
+            if lock_fd is None:
                 print(f"scope {scope!r} is being claimed right now; retry", file=sys.stderr)
                 return 3
             current, _ = load_messages()
@@ -1427,8 +1478,8 @@ def cmd_send(args: argparse.Namespace) -> int:
     finally:
         if marker is not None:
             marker.unlink(missing_ok=True)  # reserved but never published: release
-        if lock is not None:
-            lock.unlink(missing_ok=True)
+        if lock_fd is not None:
+            _scope_unlock(lock, lock_fd)  # only ever a lock this process holds
     print(f"wrote {box / (fname + '.md')}")
     print(f"id: {msg_id}")
     return 0

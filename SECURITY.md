@@ -66,9 +66,12 @@ that grants something.
 * **Claims are advisory leases.** `--scope` makes simultaneous claimants
   produce one winner, but nothing forces an agent to respect a claim. Do not
   rely on one as the only guard on something irreversible.
-* **Stale scope-lock recovery is not atomic.** A lock older than 60 seconds is
-  assumed to belong to a crashed claimer and is removed by the next claimant;
-  two claimants racing to remove the same stale lock can both proceed.
+* **Scope locks are kernel-held.** `.scope.*.lock` is an exclusive `flock(2)`
+  held for the milliseconds of check-and-publish; the kernel releases it when
+  the holder exits, so a dead claimant's lock is reclaimed by exactly one later
+  claimant and no process removes a lock another process holds (PROTOCOL.md
+  section 30). `flock` is trusted on local filesystems only: a network mount
+  may grant it to two hosts or refuse it, in which case the claim is refused.
 * **Local filesystem, POSIX only.** Atomic rename and exclusive create are
   assumed. Network filesystems and Windows are untested and unsupported.
 

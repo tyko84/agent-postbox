@@ -7,7 +7,17 @@ behaviour).
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+
+- Breaking a stale scope lock was not atomic: two claimants finding the same
+  `.scope.*.lock` older than 60 seconds could both remove it (the second
+  removing the first one's fresh lock) and both publish a claim on the same
+  scope. The lock is now an exclusive `flock(2)` on the lock file, released by
+  the kernel when the holder exits, so a dead claimant's lock is reclaimed by
+  exactly one of any number of simultaneous claimants and a live claimant's
+  lock is never removed, whatever its age (PROTOCOL.md section 30). Exit codes
+  and messages are unchanged; a claimant that dies mid-claim no longer blocks
+  its scope for 60 seconds. `selftest.py` pins this with real subprocesses.
 
 ## [0.2.1] - 2026-10-10
 

@@ -280,12 +280,16 @@ executed or passed to a shell; the adapter only reads.
 * **Delivery is only as good as the declared pickup mechanism.** A disabled or
   broken adapter looks exactly like an empty inbox. Run `doctor` and the
   canary.
-* **The stale scope-lock break is not atomic.** A crashed claimer's
-  `.scope.*.lock` file is broken by whoever finds it older than 60 seconds; two
-  agents breaking the same stale lock at the same moment can both proceed
-  (one may then be refused or, in a narrow window, both may publish a claim).
-  Claims are advisory; `doctor` and the derived status will show the overlap.
-  Do not use a claim as the only guard on something irreversible.
+* **A scope lock is kernel-held, so a dead claimant's lock is reclaimed,
+  never broken.** `.scope.*.lock` is locked with `flock(2)` for the
+  milliseconds of check-and-publish; the kernel releases it the instant the
+  holder exits, nobody removes a lock another process holds, and a lock left
+  by a dead claimant is reclaimed by exactly one of any number of simultaneous
+  claimants (PROTOCOL.md section 30). What remains: `flock` is only trusted on
+  local filesystems (a network mount may grant it to two hosts at once, or
+  refuse it, in which case the claim is refused with exit 2), and claims are
+  advisory, so a winner's claim stops nobody who ignores it. Do not use a claim
+  as the only guard on something irreversible.
 * **Claims are advisory leases.** Nothing stops an agent from ignoring one.
 * **Local filesystems only.** Atomic rename, exclusive create and mtimes are
   assumed; network filesystems with weaker semantics are untested.

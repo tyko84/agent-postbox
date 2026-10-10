@@ -51,9 +51,10 @@ installed.
 ## Supported platforms
 
 POSIX only: Linux and macOS are tested in CI. Windows is unsupported and has no
-CI. The code uses no `fcntl`; it relies on POSIX file semantics (`os.link` for atomic
-publish, `O_EXCL` marker/lock files, a directory `fsync` that is best effort, and
-`O_NOFOLLOW` where available), which are untested on Windows.
+CI. The code relies on POSIX file semantics (`os.link` for atomic publish,
+`O_EXCL` marker files, `flock(2)` via `fcntl` for scope locks, a directory `fsync`
+that is best effort, and `O_NOFOLLOW` where available), which are unavailable or
+untested on Windows.
 
 ## Generic detectors (always on)
 

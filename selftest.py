@@ -1025,6 +1025,82 @@ def main() -> int:
               repr((r.stdout + r.stderr)[:500]))
 
 
+        print("\nscope lock is kernel-held: reclaimed, never broken (PROTOCOL.md §30)")
+        import fcntl
+        import hashlib
+        import json
+        import time
+        from concurrent.futures import ThreadPoolExecutor
+        SCOPE = "file:contested.py"
+
+        def lock_box(name: str) -> tuple[Path, Path]:
+            b = Path(tmp) / f"scope-lock-{name}"
+            b.mkdir()
+            return b, b / (".scope." + hashlib.sha256(SCOPE.encode()).hexdigest()[:24] + ".lock")
+
+        def claim(b: Path, who: str) -> subprocess.CompletedProcess:
+            return send(b, "--type", "CLAIM", "--from", who, "--to", "all",
+                        "--subject", f"claim by {who}", "--body", "b",
+                        "--scope", SCOPE, "--expires", iso(1))
+
+        def held_claims(b: Path) -> int:
+            env = {**os.environ, "AGENT_MAIL_DIR": str(b)}
+            r = subprocess.run([sys.executable, str(HERE / "agent_mail.py"), "status", "--json"],
+                               capture_output=True, text=True, env=env)
+            return int(json.loads(r.stdout)["claims"]["held"])
+
+        long_ago = time.time() - 120
+
+        # (a) a lock with a LIVE holder is never broken, however old the file is.
+        # This process is the holder: it plants the lock file, ages it past any
+        # staleness threshold, and holds flock on it while rivals try.
+        abox, alock = lock_box("live")
+        alock.write_text("0\n", encoding="utf-8")
+        os.utime(alock, (long_ago, long_ago))
+        holder = os.open(alock, os.O_RDWR)
+        fcntl.flock(holder, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        rivals = [claim(abox, f"rival-{i}") for i in range(3)]
+        check("a lock held by a live process is not broken even when 120 s old: rivals exit 3",
+              all(r.returncode == 3 and "being claimed right now" in r.stderr for r in rivals),
+              repr([(r.returncode, r.stderr.strip()[:80]) for r in rivals]))
+        check("control: rivals wrote nothing and the holder's lock file is still there",
+              not list(abox.glob("*.md")) and alock.exists() and held_claims(abox) == 0)
+        os.close(holder)  # the holder exits: the kernel releases its lock
+        r = claim(abox, "after-holder")
+        check("control: once the holder is gone the scope is claimable and the lock file is removed",
+              r.returncode == 0 and not alock.exists() and held_claims(abox) == 1, r.stderr)
+
+        # (b) a lock file whose holder DIED is reclaimed at once, however fresh:
+        # a crashed claimant must not block its scope for 60 s.
+        bbox, block = lock_box("dead")
+        block.write_text("0\n", encoding="utf-8")  # mtime is now; nobody holds it
+        r = claim(bbox, "survivor")
+        check("a fresh lock file with no living holder is reclaimed at once (no 60 s wait)",
+              r.returncode == 0 and not block.exists() and held_claims(bbox) == 1, r.stderr)
+
+        # (c) the documented race: N simultaneous claimants all find a dead
+        # holder's 120 s old lock. Exactly one may proceed into check-and-publish.
+        cbox, clock = lock_box("race")
+        clock.write_text("0\n", encoding="utf-8")
+        os.utime(clock, (long_ago, long_ago))
+        with ThreadPoolExecutor(12) as pool:
+            res = list(pool.map(lambda i: claim(cbox, f"racer-{i}"), range(12)))
+        rcs = [r.returncode for r in res]
+        check("12 racing claimants on a dead holder's 120 s old lock: exactly one wins, the rest exit 3",
+              rcs.count(0) == 1 and all(rc in (0, 3) for rc in rcs), repr(rcs))
+        check("losers are refused with a lock or a held-rival message, nothing else",
+              all("being claimed right now" in r.stderr or "already held by" in r.stderr
+                  for r in res if r.returncode == 3),
+              repr([r.stderr.strip()[:80] for r in res if r.returncode != 0]))
+        check("control: exactly one claim file and one held claim on the scope",
+              len(list(cbox.glob("*.md"))) == 1 and held_claims(cbox) == 1,
+              repr(sorted(p.name for p in cbox.iterdir())))
+        stray = [p.name for p in cbox.iterdir() if p.name.startswith(".scope.")]
+        check("no .scope.* file is left behind after the race", not stray, repr(stray))
+        r = claim(cbox, "latecomer")
+        check("control: a later rival is refused by the winner's held claim", r.returncode == 3
+              and "already held by" in r.stderr, r.stderr)
+
     print("\nversion")
     rv = subprocess.run([sys.executable, str(HERE / "agent_mail.py"), "--version"],
                         capture_output=True, text=True)

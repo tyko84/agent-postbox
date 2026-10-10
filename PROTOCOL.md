@@ -764,3 +764,60 @@ and exit 2.
 **Read state.** There is deliberately no read/ack state. An ASK is closed by a
 durable reply that cites its id; NOTICE/ANSWER/DISPUTE age out after seven days.
 
+---
+
+## 30. Scope locks are kernel-held: a dead holder's lock is reclaimed, never broken
+
+§5 promises one winner per `--scope` among simultaneous claimants. The lock
+around check-and-publish is `.scope.<sha256(scope)[:24]>.lock` in the mailbox.
+Before this section its *existence* was the lock (exclusive create), and a
+file older than 60 seconds was assumed to belong to a crashed claimant and
+unlinked by whoever found it. Two agents finding the same old file could both
+unlink it (the second removing the first one's new lock) and both proceed.
+Age cannot tell a dead holder from a live one, and `unlink` cannot be made
+conditional on what it removes, so that break is replaced rather than repaired.
+
+**Rule.** The lock is an exclusive, non-blocking advisory kernel lock
+(`flock(2)`) on the lock file, not the file's existence. The kernel releases
+it the instant the holder exits, however it exits, so a crashed claimant
+leaves nothing to break, nothing is ever removed by age, and no process ever
+removes a lock another process holds.
+
+**Algorithm (`send --type CLAIM --scope`).**
+
+1. Open-or-create the lock file (never exclusive-create, so every claimant
+   opens the same inode) and take `flock` `LOCK_EX | LOCK_NB`. Refusal
+   (`EWOULDBLOCK`) means a live claimant holds it: exit 3, "scope is being
+   claimed right now; retry", nothing written.
+2. Confirm the inode just locked is still the inode at the lock path. If not,
+   the previous holder released between this open and this lock, so the inode
+   is an orphan: close it (which releases it) and go to 1. At most eight
+   rounds, then exit 3 as in step 1.
+3. Record the holder's pid in the file, then check for a held rival claim on
+   the scope and publish, unchanged (a held rival means exit 3, "already held
+   by").
+4. Release: unlink the lock file first, and only if the path still names the
+   locked inode, then close the descriptor. Unlinking *while still holding* is
+   what makes step 2 sound: an inode that is no longer at the path can never
+   pass the check, so a late `flock` on it cannot win.
+
+Nothing sleeps, nothing polls and nothing is retried on a timer.
+
+**What callers observe.** Exit codes and messages are unchanged: 0 wrote the
+claim; 3 with "being claimed right now; retry" when a live process holds the
+lock; 3 with "already held by" when a held rival claim exists. The one visible
+change is that a claimant that dies mid-claim no longer blocks the scope for
+60 seconds: the next claimant proceeds at once. A `.scope.*.lock` file left by
+a dead claimant is inert and is removed by the next claim on that scope.
+
+**Invariant a test must pin.** (a) A lock whose holder is alive is never
+broken, whatever the file's age: with another process holding the lock, every
+rival exits 3 and writes nothing. (b) A lock file with no living holder,
+whatever its age, is reclaimed by exactly one of any number of simultaneous
+claimants: one exit 0, the rest exit 3, one held claim on the scope, no
+`.scope.*` file left behind. `selftest.py` pins both with real subprocesses.
+
+**Assumed.** `flock` on the mailbox filesystem (local filesystems; see the
+README's limitations for network mounts). Where the filesystem refuses `flock`
+the claim is refused with exit 2 and a message naming the cause, rather than
+falling back to a race.
