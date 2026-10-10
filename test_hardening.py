@@ -336,11 +336,11 @@ def main() -> int:
         print("recovery after an interrupted write (writer SIGKILLed at each dangerous point)")
         HOOK = str(HERE / "hooks" / "agent_mail_check.py")
 
-        def killed_send(box: Path, patch: str, *argv: str) -> tuple[bool, int | None, str]:
-            """Run the real send path in a child whose `patch` makes one chokepoint
-            write a ready-file and block (signal.pause); SIGKILL it there. Returns
-            (reached the chokepoint, child returncode, child stderr). The parent
-            polls in bounded 0.05 s steps; it never sleeps a fixed time."""
+        def blocked_send(box: Path, patch: str, *argv: str) -> tuple[subprocess.Popen[str], Path]:
+            """Start the real send path in a child whose `patch` makes one chokepoint
+            write a ready-file and block (signal.pause), and return once the child
+            is parked there (or has exited). The parent polls in bounded 0.05 s
+            steps; it never sleeps a fixed time."""
             ready = box.with_name(box.name + ".ready")
             code = (
                 "import os, signal, sys\n"
@@ -358,6 +358,12 @@ def main() -> int:
                 if ready.exists() or proc.poll() is not None:
                     break
                 time.sleep(0.05)
+            return proc, ready
+
+        def killed_send(box: Path, patch: str, *argv: str) -> tuple[bool, int | None, str]:
+            """blocked_send, then SIGKILL the parked child. Returns (reached the
+            chokepoint, child returncode, child stderr)."""
+            proc, ready = blocked_send(box, patch, *argv)
             proc.kill()
             _, err = proc.communicate()
             return ready.exists(), proc.returncode, err
@@ -494,29 +500,36 @@ def main() -> int:
               dup.returncode == 0 and same.returncode == 0 and f"duplicate of {mid(same)}" in dup.stdout
               and len(list(r3.glob("*.md"))) == 1, dup.stdout)
 
-        print("4. killed holding a CLAIM --scope lock, before publish")
+        print("4. holding a CLAIM --scope lock: alive it blocks rivals, dead it is reclaimed")
+        # PROTOCOL.md section 30: the lock is a kernel-held flock, never broken by age.
         r4 = Path(td) / "rec4"
         r4.mkdir()
         CLM = ["--type", "CLAIM", "--to", "all", "--subject", "s", "--body", "b",
                "--expires", soon(1), "--scope", "file:s.py"]
-        reached, rc, err = killed_send(r4, "agent_mail._publish = block",
-                                       "send", "--from", "alice", *CLM)
-        check("writer took the scope lock and was SIGKILLed before publish", reached and rc == -9,
-              f"rc={rc} {err[-300:]}")
+        holder, ready4 = blocked_send(r4, "agent_mail._publish = block",
+                                      "send", "--from", "alice", *CLM)
+        check("writer took the scope lock and is parked before publish",
+              ready4.exists() and holder.poll() is None, str(hidden(r4)))
         locks = list(r4.glob(".scope.*.lock"))
-        check("lock left behind, no claim on disk", len(locks) == 1 and not list(r4.glob("*.md")),
+        check("lock on disk, no claim on disk", len(locks) == 1 and not list(r4.glob("*.md")),
               str(hidden(r4)))
         rival = run(r4, "send", "--from", "bob", *CLM)
-        check("rival within 60 s: refused, exit 3, 'being claimed right now; retry'",
+        check("live holder: rival refused, exit 3, 'being claimed right now; retry'",
               rival.returncode == 3 and "scope 'file:s.py' is being claimed right now; retry"
               in rival.stderr and not list(r4.glob("*.md")), rival.stdout + rival.stderr)
-        check("the refused rival did not steal or drop the dead holder's lock",
-              locks[0].exists(), str(hidden(r4)))
-        age(locks[0], 61)
+        age(locks[0], 120)
+        rival = run(r4, "send", "--from", "bob", *CLM)
+        check("live holder, lock file 120 s old: still refused (age means nothing)",
+              rival.returncode == 3 and "being claimed right now" in rival.stderr
+              and locks[0].exists(), rival.stdout + rival.stderr + str(hidden(r4)))
+        holder.kill()
+        _, err4 = holder.communicate()
+        check("holder SIGKILLed; its lock file is left behind", holder.returncode == -9
+              and locks[0].exists() and not list(r4.glob("*.md")), err4[-300:] + str(hidden(r4)))
         rival2 = run(r4, "send", "--from", "bob", *CLM)
-        check("rival after the lock is 61 s old: breaks it and wins (exit 0)",
+        check("dead holder: rival reclaims the lock at once and wins (exit 0, no 60 s wait)",
               rival2.returncode == 0 and "wrote " in rival2.stdout, rival2.stdout + rival2.stderr)
-        check("exactly one held claim on disk, by the rival; lock released",
+        check("exactly one held claim on disk, by the rival; no lock file left",
               rows(r4, "[held      ] bob -> all  s") == 1 and len(list(r4.glob("*.md"))) == 1
               and not list(r4.glob(".scope.*.lock")), run(r4, "list").stdout + str(hidden(r4)))
         check("control: the dead holder's identity gets an ordinary 'held by bob' refusal, not a lock",
