@@ -10,7 +10,7 @@ It scans three surfaces:
 |---|---|---|
 | Tracked files | on by default (`--no-tracked` to skip) | every `git ls-files` path and file content |
 | Built artifacts | `--dist DIR` | member names and contents of every sdist (`.tar.gz`) and wheel (`.whl`) in `DIR` |
-| Git history | `--git-log [REV]` | author and committer names and emails, and full messages, of every commit reachable from `REV` (default `HEAD`) |
+| Git history | `--git-log [REV]` | author and committer names and emails, and full messages, of every commit reachable from `REV` (default `HEAD`; `--git-log=--all` covers every ref) |
 
 ## Forbidden patterns: supplied at run time, never committed
 
@@ -89,9 +89,19 @@ the top directory. Prefer fixing the content to allowlisting it.
 * The history scan covers commit metadata and messages, not old file contents. A
   secret committed and later deleted is not found by `--git-log`; rotate it, and
   rewrite history if needed.
-* Matching is literal substring, case-insensitive. Obfuscated or encoded forms are
-  not detected.
-* Members over 8 MB are reported as `unscanned-too-large`, not skipped silently.
+* Matching is literal substring, case-insensitive. Text is NFKC-normalised and
+  stripped of zero-width characters first, so full-width letters and invisible
+  joiners do not hide a term. A second pass with quotes, `+` and whitespace removed
+  catches a literal split across string pieces (`"fo" + "o"`) and reports it as
+  `forbidden-N-split`; allowlisting `forbidden-N` covers the split form too.
+  Homoglyphs, encodings such as base64 or UTF-16, and other obfuscation are not
+  detected.
+* Members over 8 MB are reported as `unscanned-too-large`, and a tracked file that
+  is missing from the work tree as `unscanned-missing`; neither is skipped silently.
+* A `.publication-allowlist` committed in the repository is honoured by local runs.
+  The CI job passes an empty allowlist from outside the checkout, so a pull request
+  cannot silence the scan by adding one.
+* Annotated tag messages are not scanned.
 
 ## Running it
 

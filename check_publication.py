@@ -3,6 +3,7 @@
 
 Scans, for configurable forbidden patterns plus generic secret/path shapes:
   * every tracked file (names and contents)         --tracked (default on)
+    (a tracked file missing from the work tree is reported as unscanned-missing)
   * member names and contents of built artifacts    --dist DIR (sdist .tar.gz, wheel .whl)
   * git history: author/committer name+email, messages  --git-log
 
@@ -12,7 +13,10 @@ Forbidden patterns are NEVER stored in the repo. Supply them at run time:
 
 Output rule: only "<location>  <rule-id>" lines are printed. The matched text and
 the pattern itself are never printed. Rule ids for supplied patterns are
-positional (forbidden-1, forbidden-2, ...), so a report does not reveal them.
+positional (forbidden-1, forbidden-2, ...), so a report does not reveal them. Text is
+NFKC-normalised, stripped of zero-width characters and casefolded first; a second pass
+with quotes, '+' and whitespace removed catches a literal split across string pieces
+and is reported as forbidden-N-split.
 
 Allowlist (--allowlist FILE, default .publication-allowlist if present): lines of
 "<rule-id> <path-glob>   # reason". A finding is suppressed only when both match.
@@ -30,12 +34,18 @@ import re
 import subprocess
 import sys
 import tarfile
+import unicodedata
 import zipfile
 from pathlib import Path
 
 ENV_VAR = "POSTBOX_FORBIDDEN"
 DEFAULT_ALLOWLIST = ".publication-allowlist"
 MAX_BYTES = 8_000_000  # larger members are reported unscanned, never silently skipped
+# Invisible code points dropped before matching (zero-width space/joiners, BOM, soft hyphen).
+_INVISIBLE = re.compile("[\u200b\u200c\u200d\u2060\ufeff\u00ad]")
+# Removed for the second, "joined" pass so a literal split across string pieces
+# ("fo" + "o", "fo" "o", fo-\n-o) is still seen as one word. Reported as forbidden-N-split.
+_JOIN = re.compile("[\"'+\\s]")
 
 # Generic detectors. Source is assembled from pieces so this file does not match itself.
 _GENERIC: tuple[tuple[str, re.Pattern[str]], ...] = (
@@ -54,7 +64,7 @@ def load_patterns(env: dict[str, str], patterns_file: str | None) -> list[str]:
     raw = env.get(ENV_VAR, "")
     pats += [p.strip() for p in raw.split(",") if p.strip()]
     if patterns_file:
-        for line in Path(patterns_file).read_text(encoding="utf-8").splitlines():
+        for line in Path(patterns_file).read_text(encoding="utf-8-sig").splitlines():
             line = line.strip()
             if line and not line.startswith("#"):
                 pats.append(line)
@@ -68,7 +78,7 @@ def load_allowlist(path: str | None) -> list[tuple[str, str]]:
             raise SystemExit(2)
         return []
     out: list[tuple[str, str]] = []
-    for line in p.read_text(encoding="utf-8").splitlines():
+    for line in p.read_text(encoding="utf-8-sig").splitlines():
         line = line.split("#", 1)[0].strip()
         parts = line.split()
         if len(parts) == 2:
@@ -92,10 +102,15 @@ class Scanner:
     def scan_text(self, loc: str, text: str, allow_loc: str | None = None) -> None:
         """Scan text; `allow_loc` is the path the allowlist is matched against."""
         al = allow_loc or loc
-        folded = text.casefold()
+        folded = unicodedata.normalize("NFKC", _INVISIBLE.sub("", text)).casefold()
+        joined = _JOIN.sub("", folded)
         for rule, pat in self.forbidden:
-            if pat in folded and not self._allowed(al, rule):
-                self._add(loc, rule)
+            if pat in folded:
+                if not self._allowed(al, rule):
+                    self._add(loc, rule)
+            elif (_JOIN.sub("", pat) in joined and not self._allowed(al, rule)
+                  and not self._allowed(al, rule + "-split")):
+                self._add(loc, rule + "-split")  # allowlisting forbidden-N covers this too
         for rule, rx in _GENERIC:
             if rx.search(text) and not self._allowed(al, rule):
                 self._add(loc, rule)
@@ -118,8 +133,12 @@ class Scanner:
                 continue
             self.scan_text(f"tracked:{rel}#name", rel, allow_loc=rel)
             f = root / rel
-            if f.is_file() and not f.is_symlink():
-                self.scan_bytes(f"tracked:{rel}", f.read_bytes(), allow_loc=rel)
+            if f.is_symlink():
+                continue  # the link target is not published content; its name was scanned
+            if not f.is_file():
+                self._add(f"tracked:{rel}", "unscanned-missing")  # tracked but absent: never silent
+                continue
+            self.scan_bytes(f"tracked:{rel}", f.read_bytes(), allow_loc=rel)
 
     def scan_dist(self, d: Path) -> None:
         files = sorted(list(d.glob("*.tar.gz")) + list(d.glob("*.whl")))
@@ -157,11 +176,13 @@ class Scanner:
 
 
 def main(argv: list[str] | None = None, env: dict[str, str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="Publication-safety scanner (see module docstring).")
+    ap = argparse.ArgumentParser(description="Publication-safety scanner (see module docstring).",
+                                 allow_abbrev=False)
     ap.add_argument("--root", default=".", help="repository root (default .)")
     ap.add_argument("--dist", help="directory holding built sdist/wheel to scan")
     ap.add_argument("--git-log", nargs="?", const="HEAD", metavar="REV",
-                    help="scan authors/committers/messages of REV (default HEAD, all ancestors)")
+                    help="scan authors/committers/messages of REV (default HEAD, all ancestors; "
+                         "use --git-log=--all for every ref)")
     ap.add_argument("--no-tracked", action="store_true", help="skip the tracked-file scan")
     ap.add_argument("--patterns-file", help="file with one forbidden literal per line")
     ap.add_argument("--allowlist", help=f"allowlist file (default {DEFAULT_ALLOWLIST} if present)")
@@ -175,7 +196,7 @@ def main(argv: list[str] | None = None, env: dict[str, str] | None = None) -> in
         allow = load_allowlist(args.allowlist if args.allowlist else
                                (str(root / DEFAULT_ALLOWLIST)
                                 if (root / DEFAULT_ALLOWLIST).is_file() else None))
-    except (OSError, SystemExit):
+    except (OSError, SystemExit, UnicodeDecodeError):
         print("check_publication: cannot read patterns/allowlist file", file=sys.stderr)
         return 2
     if args.require_patterns and not pats:

@@ -6,8 +6,11 @@ then:
   * wheel holds agent_mail.py + dist-info only; sdist holds only allow-listed
     files (no __pycache__, .git, .github, stray/private files);
   * no artifact member name or content trips check_publication.py: the generic
-    detectors always, plus any forbidden list supplied at run time through the same
-    mechanism (POSTBOX_FORBIDDEN); no real name is stored in this file;
+    detectors always, a built-in SYNTHETIC term always (so the forbidden-pattern path
+    is exercised on every run, not only when a list is configured), plus any forbidden
+    list supplied at run time through the same mechanism (POSTBOX_FORBIDDEN); no real
+    name is stored in this file. Findings name the member and a positional rule id;
+    matched text is never printed;
   * the single version source (agent_mail.__version__) is what the metadata says;
   * the wheel installs into a clean venv, `agent-postbox --version` works and a
     real send/list/canary/doctor round trip succeeds with AGENT_MAIL_DIR in a
@@ -41,9 +44,10 @@ import check_publication  # noqa: E402  (the scanner is the single source of the
 # Synthetic stand-ins used by the positive controls. Real forbidden names are never stored
 # here; they arrive at run time via POSTBOX_FORBIDDEN, exactly as for check_publication.py.
 SYNTHETIC = ("acme-private", "widget corp")
-# Generic by design: substrings stripped from content before scanning (e.g. an intended
-# copyright holder). Empty here; real exceptions belong in the run-time list's allowlist.
-ALLOWED_MENTIONS: tuple[str, ...] = ()
+# An invented word that is ALWAYS scanned for, so the real artifact scan is never a no-op.
+# Stored reversed so this file, which ships in the sdist, does not match itself (a plain
+# split literal would be caught by the scanner's own join pass).
+BUILTIN = ("talbrovqx"[::-1],)
 
 SDIST_ALLOWED = (
     "LICENSE", "README.md", "CHANGELOG.md", "CONTRIBUTING.md", "PROTOCOL.md", "SECURITY.md",
@@ -72,13 +76,11 @@ def private_mentions(name: str, data: bytes,
                      patterns: tuple[str, ...] | None = None) -> list[str]:
     """Findings as "<name>  <rule-id>" (never the matched text). `patterns` defaults to the
     run-time list (POSTBOX_FORBIDDEN); generic detectors always run."""
-    pats = list(check_publication.load_patterns(dict(os.environ), None)
+    pats = list(BUILTIN + tuple(check_publication.load_patterns(dict(os.environ), None))
                 if patterns is None else patterns)
-    text = data.decode("utf-8", "replace")
-    for ok in ALLOWED_MENTIONS:
-        text = text.replace(ok, "")
     sc = check_publication.Scanner(pats, [])
-    sc.scan_text(name, text)
+    sc.scan_name(name, name)  # a member NAME hit is reported as "<name>#name"
+    sc.scan_text(name, data.decode("utf-8", "replace"))
     return [f"{loc}  {rule}" for loc, rule in sc.findings]
 
 
@@ -100,7 +102,7 @@ def wheel_members(path: Path) -> dict[str, bytes]:
 def scan(members: dict[str, bytes], patterns: tuple[str, ...] | None = None) -> list[str]:
     hits: list[str] = []
     for n, d in members.items():
-        hits += private_mentions(n, d, patterns) + private_mentions(n, n.encode(), patterns)
+        hits += private_mentions(n, d, patterns)
     return hits
 
 
@@ -229,16 +231,23 @@ class Packaging(unittest.TestCase):
     def test_control_planted_names_and_text(self) -> None:
         self.assertEqual(unexpected(["pkg-1/secret.txt", "pkg-1/agent_mail.py"],
                                     SDIST_ALLOWED, True), ["pkg-1/secret.txt"])
-        self.assertTrue(private_mentions("x", b"WIDGET CORP internal", SYNTHETIC))
+        self.assertEqual(private_mentions("x", b"WIDGET CORP internal", SYNTHETIC),
+                         ["x  forbidden-2"])  # positional id only, never the text
+        self.assertEqual(private_mentions("x", b"ACME-PRIVATE", SYNTHETIC), ["x  forbidden-1"])
         self.assertEqual(private_mentions("LICENSE", b"Copyright (c) 2026 Example LLC",
                                           SYNTHETIC), [])
+        # the built-in term is active with no list configured, in content and in a member name
+        self.assertEqual(private_mentions("x", f"see {BUILTIN[0].upper()}".encode()),
+                         ["x  forbidden-1"])
+        self.assertEqual(scan({f"pkg-1/{BUILTIN[0]}.txt": b"clean"}),
+                         [f"pkg-1/{BUILTIN[0]}.txt#name  forbidden-1"])
         # the generic detectors fire even when no list is supplied
         self.assertTrue(private_mentions("x", b"see /ho" + b"me/someone/project/", ()))
         # a pattern supplied through the environment mechanism is honoured
         saved = os.environ.get(check_publication.ENV_VAR)
         os.environ[check_publication.ENV_VAR] = "acme-private"
         try:
-            self.assertTrue(private_mentions("x", b"ACME-PRIVATE"))
+            self.assertEqual(private_mentions("x", b"ACME-PRIVATE"), ["x  forbidden-2"])
         finally:
             if saved is None:
                 del os.environ[check_publication.ENV_VAR]

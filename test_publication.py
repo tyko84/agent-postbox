@@ -124,6 +124,43 @@ class Tracked(Base):
         self.commit({"a.txt": "ok\n"})
         self.assertEqual(self.scan("--patterns-file", "/nonexistent/x")[0], 2)
 
+    def test_patterns_file_bom_crlf_and_bad_encoding(self) -> None:
+        self.commit({"a.txt": WORD})
+        pf = Path(self._t.name) / "pats"
+        pf.write_bytes(b"\xef\xbb\xbf" + WORD.encode() + b"\r\n")  # BOM + CRLF still one literal
+        self.assertEqual(self.scan("--patterns-file", str(pf))[0], 1)
+        pf.write_bytes(b"\xff\xfe" + WORD.encode())
+        self.assertEqual(self.scan("--patterns-file", str(pf))[0], 2)  # unreadable: error, not pass
+
+    def test_split_literal_invisible_and_fullwidth_forms_fire(self) -> None:
+        half = len(WORD) // 2
+        split = f'x = "{WORD[:half]}" + "{WORD[half:]}"\n'
+        zw = WORD[:half] + "\u200b" + WORD[half:] + "\n"
+        wide = "".join(chr(ord(c) + 0xFEE0) for c in WORD) + "\n"  # fullwidth letters
+        for name, body, rule in (("split.py", split, "forbidden-1-split"),
+                                 ("zw.txt", zw, "forbidden-1"), ("wide.txt", wide, "forbidden-1")):
+            with self.subTest(name=name):
+                self.commit({name: body}, msg="plant")
+                rc, out, err = self.scan(env={cp.ENV_VAR: WORD})
+                self.assertEqual(rc, 1)
+                self.assertIn(f"tracked:{name}  {rule}", out)
+                self.assertNotIn(WORD, out + err)
+                self.commit({name: "clean\n"}, msg="fix")
+
+    def test_tracked_file_missing_from_worktree_is_reported(self) -> None:
+        self.commit({"a.txt": "ok\n"})
+        (self.repo / "a.txt").unlink()
+        rc, out, _ = self.scan()
+        self.assertEqual((rc, "tracked:a.txt  unscanned-missing" in out), (1, True))
+
+    def test_git_log_all_refs_is_spellable(self) -> None:
+        self.commit({"a": "1"})
+        git(self.repo, "checkout", "-q", "-b", "side")
+        self.commit({"b": "2"}, msg=f"side {WORD}")
+        git(self.repo, "checkout", "-q", "-")
+        self.assertEqual(self.scan("--no-tracked", "--git-log", env={cp.ENV_VAR: WORD})[0], 0)
+        self.assertEqual(self.scan("--no-tracked", "--git-log=--all", env={cp.ENV_VAR: WORD})[0], 1)
+
 
 class GitLog(Base):
     def test_clean_history_passes(self) -> None:
