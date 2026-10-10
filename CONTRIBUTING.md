@@ -9,8 +9,9 @@ deliver it (see `PARTICIPANTS.md`).
 Code changes:
 
 * `python selftest.py`, `python stress_test.py`, `python test_hardening.py`,
-  `python test_adversarial.py`, `python test_handoff.py`,
-  `python test_readme_examples.py` and `python test_packaging.py` must pass
+  `python test_adversarial.py`, `python test_field.py`, `python test_handoff.py`,
+  `python test_readme_examples.py`, `python test_publication.py` and
+  `python test_packaging.py` must pass
   (the last skips, loudly, if the `build` package is unavailable), and so must
   `ruff check .` and
   `mypy agent_mail.py install.py hooks/agent_mail_check.py check_handoff.py check_publication.py`

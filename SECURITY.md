@@ -72,6 +72,10 @@ that grants something.
   claimant and no process removes a lock another process holds (PROTOCOL.md
   section 30). `flock` is trusted on local filesystems only: a network mount
   may grant it to two hosts or refuse it, in which case the claim is refused.
+  `send --key` holds the same kind of lock on its idempotency marker (section
+  31). A `status` or `doctor` probe takes a shared lock for microseconds on
+  lock files and markers at least 60 seconds old, read-only and never following
+  links; a claim arriving in that instant is told to retry once (section 33).
 * **Local filesystem, POSIX only.** Atomic rename and exclusive create are
   assumed. Network filesystems and Windows are untested and unsupported.
 

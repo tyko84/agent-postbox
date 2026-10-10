@@ -189,7 +189,9 @@ A `CLAIM` is a **lease**, not a lock and not a permission: "I am working on X
 until T." It requires an expiry (ISO-8601 with an explicit zone, at most 168
 hours out), so an agent that dies mid-session cannot deadlock the repo. With
 `--scope` a second held claim on the same scope from another sender is refused
-(exit 3). Renew by sending a new claim with `--supersedes`.
+(exit 3). Renew by sending a new claim with `--supersedes`. Repeat `--scope`
+when you renew: a superseding claim holds only the scope it names, so leaving
+it out gives the scope up at once (and `send` says so).
 
 ```bash runnable
 EXPIRES=$(python3 -c 'import datetime as d; print((d.datetime.now(d.timezone.utc) + d.timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ"))')
@@ -223,8 +225,46 @@ agent-postbox status --json --stalled-hours 72
 It reports message counts by type, open ASKs and the oldest unanswered one,
 held versus expired versus malformed-expiry claims, quarantined files,
 leftover temp files, and agents that have been silent past `--stalled-hours`
-(an agent with no readable date is `unknown`, never `stalled`). The JSON key
-set is documented in PROTOCOL.md section 29 and is only ever added to.
+(an agent with no readable date is `unknown`, never `stalled`).
+
+It also counts what a crashed sender leaves behind: scope lock files and
+idempotency markers, each classed as in flight (under 60 s), held by a live
+process, or orphaned; stale takeover mutexes; messages whose `supersedes`
+cites a claim they may not supersede; and fresh replies that cite an id that
+is not in the mailbox. `status --json` carries a `problems` list of fixed
+codes with counts (`QUARANTINED`, `STALE_TMP`, `ORPHAN_IDEM_MARKER`,
+`ORPHAN_SCOPE_LOCK`, `STALLED_LOCK_HOLDER`, `STALE_TAKEOVER_MUTEX`,
+`MALFORMED_CLAIM_EXPIRY`, `FOREIGN_SUPERSEDE`, `DANGLING_REPLY`,
+`STALLED_AGENT`), empty for a clean mailbox, so tooling does not parse prose.
+`status` still exits 0 whenever the mailbox exists; `doctor` prints the same
+counts with file names. The JSON keys are documented in PROTOCOL.md sections
+29 and 33 and are only ever added to.
+
+### Retry-safe sends: `--key`
+
+A send with `--key K` is written at most once. A retry with the same key and
+content writes nothing and prints `duplicate of <id>` (exit 0). The same key
+with different content is refused (exit 2). The sender holds a kernel lock on
+the key while it publishes, so a retry can tell a dead sender from a slow one:
+a sender that died is taken over at once; a live one is never taken over. A
+retry waits up to `--key-wait SECONDS` (0 to 60, default 5, or
+`AGENT_MAIL_IDEM_WAIT`) for a live sender to finish and then exits 3, which
+means "nothing written, retry". Values outside 0 to 60 are refused, not
+clamped. Only a key reserved by a version before 0.3 (no lock) is taken over
+on the wait alone; keep the default there. See PROTOCOL.md section 31.
+
+### Exit statuses
+
+| Status | Meaning | Commands |
+|---|---|---|
+| 0 | Done. For `send`: written, or a `duplicate of` an earlier keyed send | all |
+| 1 | Not found, or could not be done: no such message (`show`, `verify`), fingerprint mismatch (`verify`), the OS refused the write (`send`: read-only mailbox, disk full, permission denied; one line on stderr, nothing left behind) | `show`, `verify`, `send`, `ask`, `canary` |
+| 2 | Refused or unhealthy: bad arguments or input, no mailbox, a key reused with different content, a filesystem without `flock` for a scope, quarantined files present (`list`, `inbox`, `latency`), `doctor` FAIL, Python older than 3.10 | all |
+| 3 | Contended, nothing written, safe to retry: scope held or being claimed, key being sent by a live process | `send` with `--scope` or `--key` |
+| 130, 143 | Interrupted by SIGINT / SIGTERM; the send released what it held first | `send`, `ask`, `canary` |
+
+`status` exits 0 whenever the mailbox exists, whatever it reports. The pickup
+adapter (`hooks/agent_mail_check.py`) always exits 0.
 
 ## Three ideas worth stealing even if you don't use this
 
@@ -265,7 +305,10 @@ CANNOT_VERIFY and scoped verify (16), verify hardening (17), structured
 `doctor` and the pickup canary (20), participant capabilities (21), load order
 and the closed type set (22), pickup-to-reply latency (23), persist/admit (24),
 a reference is not a body (25), shell metacharacters before argv (26),
-display alias vs writer token (27), and the handoff packet (28).
+display alias vs writer token (27), and the handoff packet (28). Later
+sections cover input policy and `status` (29), kernel-held scope locks (30),
+keyed-send locking (31), read-time ownership, id case and failure reporting
+(32), and crash diagnostics with the exit-status table (33).
 Sections 5 and 5a cover lease rules, retry-safe sends and quarantine. Steal those even if you keep your own
 transport.
 
@@ -280,7 +323,9 @@ contributors can write. In short:
 
 **Guaranteed (and tested):** `send` publishes atomically (readers never see a
 half-written message); a lease must carry a valid, bounded expiry; one winner
-per `--scope` under simultaneous claimants; `--key` retries are idempotent;
+per `--scope` under simultaneous claimants; `--key` yields one message per key even when a sender dies or stalls mid-send
+(a live sender is never taken over; PROTOCOL.md section 31); a claim is
+superseded only by its own sender's claim, even for hand-written files;
 malformed or ambiguous files are quarantined (reported, never delivered, never
 deleted); no network calls, no dependencies; message content is printed, never
 executed or passed to a shell; the adapter only reads.

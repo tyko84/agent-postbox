@@ -27,12 +27,12 @@ DIST="$(mktemp -d)"
 trap 'rm -rf "$DIST"' EXIT INT TERM
 
 for t in selftest.py stress_test.py test_hardening.py test_adversarial.py test_handoff.py \
-         test_readme_examples.py test_publication.py test_packaging.py; do
+         test_readme_examples.py test_publication.py test_packaging.py test_field.py; do
     echo "preflight: $t" >&2
     "$PY" "$t" >/dev/null
 done
 echo "preflight: build" >&2
-"$PY" -m build --outdir "$DIST" . >/dev/null
+"$PY" scripts/repro_build.py --outdir "$DIST" >/dev/null
 echo "preflight: check_publication (tracked, dist, git log of every ref and tag)" >&2
 # --git-log=--all: every branch, remote-tracking ref and tag, not only the ancestors of HEAD.
 "$PY" check_publication.py --require-patterns "$@" --dist "$DIST" --git-log=--all

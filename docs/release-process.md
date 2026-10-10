@@ -29,7 +29,7 @@ On a branch off `main`:
 3. Run the whole suite locally on one supported interpreter (3.10 to 3.13):
    `selftest.py`, `stress_test.py`, `test_hardening.py`, `test_adversarial.py`,
    `test_handoff.py`, `test_readme_examples.py`, `test_publication.py`,
-   `test_packaging.py`, `ruff check .` and the `mypy` command from `ci.yml`.
+   `test_packaging.py`, `test_field.py`, `ruff check .` and the `mypy` command from `ci.yml`.
 4. Run the privacy preflight below.
 5. Open a pull request into `main`. `main` is protected: the pull request must be
    green on every required check (see Required checks below) and is merged
@@ -75,7 +75,7 @@ committed: `POSTBOX_FORBIDDEN` in the environment, or
 
 ```sh
 POSTBOX_FORBIDDEN="name1,name2" python check_publication.py --require-patterns --git-log=--all
-python -m build --outdir /tmp/pb-out . && POSTBOX_FORBIDDEN="name1,name2" python check_publication.py --require-patterns --dist /tmp/pb-out
+python scripts/repro_build.py --outdir /tmp/pb-out && POSTBOX_FORBIDDEN="name1,name2" python check_publication.py --require-patterns --dist /tmp/pb-out
 python test_packaging.py
 unzip -l /tmp/pb-out/*.whl        # expect agent_mail.py plus dist-info only
 tar tzf /tmp/pb-out/*.tar.gz      # expect the MANIFEST.in allow-list plus setuptools metadata

@@ -7,7 +7,102 @@ behaviour).
 
 ## [Unreleased]
 
-Nothing yet.
+Keyed sends and claim ownership are now exact, the publication scanner no longer
+passes what it did not read, and builds are reproducible. Callers see new exit
+statuses in a few cases (listed under Changed); mailboxes need no migration and
+0.2.2 markers are still honoured.
+
+### Added
+
+- `send --key-wait SECONDS` and `AGENT_MAIL_IDEM_WAIT` (0 to 60, default 5; refused,
+  never clamped): how long a keyed retry waits for a reservation it finds unresolved
+  (PROTOCOL.md section 31).
+- `status --json`: `scope_locks`, `idem_markers`, `takeover_mutexes`,
+  `foreign_supersedes`, `dangling_replies` and a `problems` list of fixed codes with
+  counts. Schema number stays 1 (keys are only added). Text `status` and `doctor`
+  print the same counts; `doctor` names the files. None is a new reason for `doctor`
+  to fail (PROTOCOL.md section 33).
+- PROTOCOL.md sections 31 to 33, including one table of exit statuses for every
+  command; the README carries the same table.
+- `send` prints a note on stderr when a renewal drops or changes `--scope`, because
+  that releases the old scope at once.
+- `scripts/repro_build.py`: reproducible, ownerless builds. Exports a commit with
+  `git archive`, builds with `SOURCE_DATE_EPOCH` (default: the commit's committer
+  time) and rewrites the sdist so its tar headers carry no builder uid, gid, user or
+  group name, every timestamp is `SOURCE_DATE_EPOCH` and the gzip header has no
+  timestamp or file name. Prints the SHA-256 of both artifacts; `--check` builds
+  twice and fails if the runs differ. CI runs it and scans its output.
+- `test_field.py`: a synthetic four-agent end-to-end run through the CLI (claim
+  race, renewal, expiry and takeover; keyed sends including a killed sender;
+  ASK/ANSWER with a retried answer; 100 concurrent sends with two readers).
+- `test_packaging.py` pins the reproducible-build properties and checks that no
+  member of any built artifact contains a build-machine path.
+
+### Changed
+
+- `send --key` holds a kernel lock (`flock`) on its idempotency marker while it
+  publishes. A retry after a sender that died is taken over immediately instead of
+  after five seconds. A retry that outlasts its wait against a live sender exits 3
+  ("being sent by another process right now; retry") and writes nothing.
+- Markers have a third line (`flock`). Markers written by 0.2.2 are still honoured
+  with the previous algorithm and default wait; 0.2.2 reads the new markers.
+- SIGTERM and SIGINT during `send` release the marker, scope lock and temp file,
+  print one line and exit 143 / 130.
+- A CLAIM is superseded only by a CLAIM from its own sender when reading as well as
+  at send. Ids are compared without regard to case everywhere (`reply_to`,
+  `supersedes`, `show`, `latency`).
+- A scope lock file that cannot be opened is reported as a write failure (exit 1),
+  not as a missing `flock` (was exit 2).
+- `check_publication.py` never reports a pass for content it did not read. Anything
+  it was asked to cover but could not look inside is an `unscanned-<reason>` finding
+  (exit 1): a gitlink, an unreadable file, a symlinked parent directory, a nested
+  archive, an encrypted or special archive member, data after a damaged tar header,
+  a shallow clone, a grafts file, a tag on a blob, and any file in the `--dist`
+  directory that is not an sdist or wheel. A run that would scan nothing exits 2.
+- The tracked scan also reads the staged and `HEAD` blobs where they differ from the
+  work tree, scans the text of a tracked symlink without following it, and no longer
+  reads through a symlink that replaced a tracked file or directory.
+- `--dist` opens every wheel, zip, egg and tar variant in the directory and also
+  scans artifact file names, tar link targets, owner and group names and pax
+  headers, zip comments, and every member of a zip that holds duplicate names.
+- `--git-log` ignores replace refs. Forbidden patterns are normalised like the
+  scanned text; a pattern list that could never match exits 2. An allowlist glob of
+  only `*` is rejected and the number of suppressed findings is printed. A pass
+  prints what was scanned.
+- `scripts/preflight.sh` scans the git log of every ref and tag (was `HEAD` only),
+  builds through `scripts/repro_build.py`, runs `test_field.py`, and accepts a list
+  path that contains spaces.
+- CI: `test_field.py` joins the matrix; the packaging job checks the build is
+  reproducible; on a push to this repository a missing forbidden list fails the
+  publication job instead of downgrading it to the generic detectors.
+
+### Fixed
+
+- A keyed send whose original was alive but slower than five seconds was taken over
+  and then published as well: two messages for one key.
+- A sender that gave up removed whatever marker was at its key, including one a
+  later sender had taken over.
+- A hand-written message citing another agent's claim in `supersedes:` marked it
+  superseded, after which a rival's `--scope` claim succeeded.
+- An ANSWER citing an ASK's id in lower case left the ASK open with no error.
+- `send` printed a traceback when the mailbox was read-only, full, or a lock or
+  marker file was unreadable. It now prints one line and exits 1.
+- `doctor` crashed when a hidden temp file vanished or was a dangling symlink.
+
+### Security
+
+- A plain `python -m build` sdist records the builder's uid, gid, login and group
+  names in its tar headers. Build anything you hand to others with
+  `scripts/repro_build.py`.
+
+### Documentation
+
+- README and `docs/packaging.md` state prominently that this project is not on PyPI
+  and that the PyPI distribution named `agent-postbox` is a separate, unrelated
+  project: install from a clone or a wheel built from a clone.
+- `docs/publication-safety.md`: the `unscanned-*` rules, the exit-2 conditions and a
+  per-tag audit recipe. `docs/release-process.md`: required checks and how to verify
+  them.
 
 ## [0.2.2] - 2026-10-10
 
