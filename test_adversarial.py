@@ -222,8 +222,11 @@ def main() -> int:
                            ("RTL override in header", "rtl.md"), ("non-UTF-8 bytes", "latin1.md")]:
             check(f"quarantined: {tag}", f"REJECT {fname}" in res.stderr, res.stderr)
         check("no traceback from hostile files", "Traceback" not in res.stderr + res.stdout, res.stderr)
-        check("quarantined content never listed", "caseDup" not in res.stdout and "\x1b" not in res.stdout
-              and "gpj" not in res.stdout)
+        # Only the message lines count: the "# mailbox: <path>" header carries a random
+        # temp-directory name, which can contain any short letter sequence.
+        listed = "\n".join(ln for ln in res.stdout.splitlines() if not ln.startswith("# mailbox"))
+        check("quarantined content never listed", "caseDup" not in listed and "\x1b" not in listed
+              and "gpj" not in listed)
         check("control: good messages survive beside the rejects",
               "good one" in res.stdout and "ok one" in res.stdout)
         shown = run(qbox, "show", ULID_E)
