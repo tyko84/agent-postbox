@@ -821,3 +821,305 @@ claimants: one exit 0, the rest exit 3, one held claim on the scope, no
 README's limitations for network mounts). Where the filesystem refuses `flock`
 the claim is refused with exit 2 and a message naming the cause, rather than
 falling back to a race.
+
+---
+
+## 31. Keyed sends are kernel-held: an orphaned key is taken over at once, a live one never
+
+§5a promises one message per `(sender, recipient, key)`. The reservation is the
+marker `.idem.<sha256(sender NUL recipient NUL key)[:24]>` in the mailbox,
+holding the reserving send's id and a hash of its content. Before this section
+a retry that found a marker with no message polled for five seconds and then
+took the marker over, whoever had written it. Five seconds cannot tell a dead
+sender from a slow one: an original that was alive but took longer than that
+to publish (a stopped process, a slow disk) was taken over **and then
+published anyway**, giving two messages for one key. Shortening the wait only
+widens that window; at zero, every pair of simultaneous senders would both
+publish. So the wait is not made the mechanism. Liveness is.
+
+**Rule.** A send that reserves a key holds an exclusive kernel lock
+(`flock(2)`) on its marker from before the marker becomes visible until it has
+published or given up. The kernel drops the lock the instant the holder exits,
+however it exits. A marker is therefore in exactly one of three states, and a
+retry can tell which without guessing:
+
+| Marker | Message `<id>-*.md` | Lock | Meaning | A retry with the same content |
+|---|---|---|---|---|
+| any | present | any | resolved | prints `duplicate of <id>`, exit 0, writes nothing |
+| locked format | absent | held | a live send is mid-publish | waits (below), never takes over |
+| locked format | absent | free | its sender died before publishing | takes over at once and publishes |
+
+The same key with different content is refused (exit 2, `was already used with
+different content`) in every state, including an orphan whose message never
+landed: retry with the original content, or use a new key.
+
+**Marker format.** Three lines: the reserving send's id, the content hash
+(`sha256(type NUL subject NUL body)`), and the word `flock`. The third line
+says "my holder keeps a kernel lock". A marker with only the first two lines
+is the format written before this section (and on a filesystem that refuses
+`flock`); it carries no liveness signal and gets the fallback below. Readers
+of the old format ignore the third line.
+
+**Algorithm (`send --key`).**
+
+1. Reserve: write the three lines to a hidden temp file, take
+   `flock LOCK_EX|LOCK_NB` on it, then `link(2)` it to the marker name. `link`
+   fails if the name exists, so exactly one sender reserves, and the marker is
+   never visible unlocked or half-written. Success: publish, then release
+   (step 5).
+2. The name exists. Open it read-only (never create), read it. Different
+   content hash: exit 2. A message for its id exists: duplicate, exit 0.
+3. Locked format: try `flock LOCK_EX|LOCK_NB` on the descriptor.
+   * Refused: the holder is alive. Poll in 0.05 s steps until its message
+     appears (duplicate, exit 0), the lock comes free (continue below), or the
+     marker name no longer names this inode (its holder gave up: go to 1). When
+     the **key wait** runs out first: exit 3, `is being sent by another
+     process right now; nothing written; retry`. The live holder's marker is
+     never removed, by anyone, at any wait.
+   * Granted: confirm the inode is still the one at the marker name (else go
+     to 1) and look for the message once more (the holder may have published
+     and exited in between: duplicate). Otherwise the holder is dead and never
+     published. Still holding the orphan's lock, reserve a fresh locked marker
+     as in step 1 but with `rename(2)` over the orphan, then close the
+     orphan. Rivals holding the orphan open lock it only after that close,
+     fail the inode check and go to 1, where they find the new live marker.
+4. Old format (no liveness signal), or unreadable: poll as in step 3 for the
+   key wait, then take it over the way it was always done (the
+   `.idem.<hash>.takeover` mutex, re-read, remove only the marker that was
+   observed), and go to 1. This is the only path on which the wait decides
+   anything, and the only one that can still double-publish (see Assumed). An
+   unreadable marker is one being written in place by a sender without the
+   atomic reserve of step 1, so it is polled for at least one second whatever
+   the key wait.
+5. Release. Published: close the descriptor; the marker stays and now guards a
+   real message. Gave up (refused, failed, interrupted): unlink the marker
+   only if the name still names the inode this send locked, then close. A send
+   never removes a marker it does not hold.
+
+At most eight rounds of 1-4, then exit 3 as in step 3.
+
+**The key wait.** `send --key-wait SECONDS`, else the environment variable
+`AGENT_MAIL_IDEM_WAIT`, else 5. A plain decimal number of seconds from 0 to 60
+(digits with an optional fraction). Anything else (negative, above 60, an
+exponent, not a number, `nan`, `inf`) is refused with exit 2 and one line; it
+is never clamped. `--key-wait` without `--key` is refused the same way. The
+variable is read only by a keyed send, and an empty variable counts as unset.
+The wait is applied per observed reservation and bounds two things:
+
+* how long a retry waits for a **live** holder before answering exit 3. At 0
+  a retry never waits: a simultaneous second sender of a key gets exit 3
+  (`retry`) instead of `duplicate of`. Nothing is published twice at any
+  value.
+* how long a retry waits before taking over an **old-format** marker. Here a
+  short wait is a risk, not just impatience: a live old-format sender slower
+  than the wait is taken over and both publish. 0 means "take over an
+  old-format orphan immediately" and should be used only when no sender older
+  than this section can be running.
+
+A dead holder's locked-format marker is taken over immediately at every wait;
+the default changes nothing about it except that the five seconds are gone.
+
+**Interruption and crashes.** `send` turns SIGINT and SIGTERM into an orderly
+give-up: step 5 runs, temp files are removed, one line is printed
+(`interrupted (SIGTERM); nothing written`) and the exit status is 130 or 143.
+If the signal arrives after the message was linked into place the line says
+`interrupted (SIGTERM) after publishing; id: <id>`, the marker is kept, and a
+retry is a duplicate. A retry that is only waiting owns no marker and leaves
+none. SIGKILL and power loss skip all of that by definition and need none of
+it: the dead sender's lock is gone, so its marker is an orphan the next retry
+takes over at once; its temp files are hidden, never read as mail, and
+reported by `doctor`/`status` once stale.
+
+**What callers observe.** Unchanged: exit 0 and `wrote`/`id:` for the send that
+published; exit 0 and `duplicate of <id> (key 'K'); nothing written` plus
+`id: <id>` for every retry once the message exists; exit 2 for different
+content. Changed: (a) a retry after a sender that died mid-send completes
+immediately instead of after five seconds; (b) a retry that outlasts its key
+wait against a **live** sender now gets exit 3 and writes nothing, where it
+used to take the key over and cause a second message; (c) SIGTERM during a
+send exits 143 after cleaning up instead of dying on the signal.
+
+**Invariant a test must pin.** (a) A marker whose holder is alive is never
+taken over, however long the retry waits: with a live process holding the
+marker lock and no message, a retry at key wait 0 exits 3, writes nothing and
+leaves the marker; when the holder then publishes, there is exactly one
+message. (b) A locked-format marker with no living holder and no message is
+taken over without waiting, by exactly one of any number of simultaneous
+retries: one `wrote`, the rest `duplicate of` the same id, one `*.md`.
+(c) An old-format marker is still honoured: resolved means duplicate;
+orphaned means takeover after the key wait and not before.
+`selftest.py` pins all three with real subprocesses.
+
+**Assumed.** `flock` and hard links on the mailbox filesystem, as in §30 and
+§2; where either is refused the sender writes an old-format marker and its
+retries get the fallback, so keyed sends keep working with the old guarantee;
+a locked-format marker read where `flock` is refused is treated as old-format
+for the same reason. Exactness also needs every
+writer to follow this section: a sender from before it does not hold a lock
+(fallback applies to its markers) and does not honour one (after its own five
+seconds it will take over a live sender's marker, as it always could).
+
+---
+
+## 32. Ownership, id case and failure reporting hold at read time too
+
+`send` is the only sanctioned writer, but not the only possible one (§0, §29).
+Four things that were enforced or assumed at send did not hold for a file that
+reached the mailbox another way, or were never written down.
+
+**A CLAIM is superseded only by its own sender's CLAIM, whoever wrote the
+file.** §5 lets only a claim's sender supersede it, and `send` refuses anything
+else. Reading did not check: any file whose `supersedes:` cited a claim marked
+it `superseded`, so one hand-written NOTICE voided another agent's lease and a
+rival's `--scope` claim then succeeded. Rule: a message supersedes a CLAIM only
+if it is itself a CLAIM with the same `from`. Any other message citing a claim
+in `supersedes:` changes nothing about that claim (it stays `held` or
+`expired` by its own expiry), is still delivered as the ordinary mail it is,
+and is reported (§33, `FOREIGN_SUPERSEDE`). Superseding a message that is not
+a CLAIM is unchanged.
+
+**Ids compare without regard to case.** An id is Crockford Base32 (§2), which
+has no case. `supersedes` was already compared that way; `reply_to`/`re` and
+`show <id>` were not, so an ANSWER citing an ASK's id in lower case left the
+ASK open with no error. All id comparisons ignore case.
+
+**How a claim ends.** There is no release message. A claim stops being a hold
+when its `expires` passes or when its own sender supersedes it with a new
+CLAIM (§5, §11). The superseding claim holds what *it* names, until its own
+expiry: renewed with the same `--scope` it keeps the scope; superseded by a
+claim that names no scope (or a different one) the old scope is free at once
+and a rival may claim it. That is the way to give a scope up early, and it is
+also what happens when a renewal forgets `--scope`, so `send` says so on
+stderr (`note: the superseded claim held scope 'X' and this one names no
+scope: 'X' is released`; the claim is still written, exit 0). An ANSWER,
+NOTICE or DISPUTE never releases a claim, including one from the claim's
+owner; `send` refuses a non-CLAIM that supersedes a claim.
+
+**What acknowledgement means.** There is no ACK type and no read state (§3,
+§29). The only acknowledgement is an ANSWER (or any message) whose
+`reply_to:` cites an ASK's id; that closes the ASK. Any number of messages may
+cite the same ASK: the ASK is `answered` from the first one and later ones
+change nothing, so answering twice is harmless, and `--key` makes a retried
+answer write nothing (§31). A reply may cite an id that names no message in
+this mailbox: it is written and delivered like any other message and closes
+nothing. While it is fresh it is reported (§33, `DANGLING_REPLY`), because a
+mistyped id otherwise leaves an ASK open in silence.
+
+**A send that cannot write says so in one line.** When the operating system
+refuses the write (read-only mailbox, disk full, permission denied on the
+mailbox or on a lock or marker file), `send` prints
+`send failed: cannot write to the mailbox: <reason> (<ERRNO>); nothing written`
+on stderr and exits 1. No traceback, and nothing it created is left behind: no
+temp file, no key marker, no scope lock. Exit 1 is the status such a failure
+already had (as an uncaught exception); 2 stays "refused, do not retry
+unchanged" and 3 stays "contended, retry". A filesystem that refuses `flock`
+for a scope lock is still exit 2 as §30 says. The read-only commands never
+fail because a hidden file vanished or cannot be examined while they scan.
+
+**Invariant a test must pin.** (a) A hand-written NOTICE and a hand-written
+CLAIM from another sender, each citing a held claim in `supersedes:`, leave it
+`held`, and a rival's claim on its scope is still refused with exit 3; the
+owner's own superseding CLAIM does supersede it. (b) An ANSWER citing an ASK's
+id in lower case closes it. (c) A reply to a nonexistent id exits 0 and closes
+nothing; a second answer to an answered ASK changes nothing. (d) `send` into a
+mailbox that cannot be written exits 1 with exactly one line and leaves no
+hidden file. `selftest.py` pins all four.
+
+---
+
+## 33. `status` and `doctor` name what a crash leaves behind
+
+After §30 and §31 a crashed sender leaves only inert files: a scope lock
+nobody holds, a key marker whose message never landed, a temp file. Inert is
+not invisible: an orphaned key marker still answers "different content" (§31),
+and an operator could count none of them. `status` and `doctor` now report
+them. Both stay strictly read-only (§20, §29) and print file names and ids
+only, never a message body.
+
+**`status --json`: added keys.** The schema number stays 1: §29 allows keys
+to be added within a schema number and none is renamed, removed or changed.
+
+| Key | Value |
+|---|---|
+| `scope_locks` | `total`, `in_flight`, `held`, `orphaned`: `.scope.*.lock` files (§30) |
+| `idem_markers` | `total`, `resolved`, `in_flight`, `held`, `orphaned`: `.idem.<hash>` key markers (§31) |
+| `takeover_mutexes` | `total`, `stale`: `.idem.<hash>.takeover` files (§31 step 4); stale is older than 30 s |
+| `foreign_supersedes` | messages whose `supersedes:` cites a CLAIM they may not supersede (§32) |
+| `dangling_replies` | messages sent within the freshness window (§9) whose `reply_to:` names no message here (§32) |
+| `problems` | list of `{"code": ..., "count": n}`, only codes with `count > 0`, always in the order below |
+
+**How a lock file or marker is classified.** Age is `now` minus the file's
+mtime (`--now` applies, as it does to `stale_tmp`).
+
+* `resolved` (markers only): a message file for the marker's id exists.
+* `in_flight`: younger than 60 seconds and not resolved. Never probed. A
+  claim holds its scope lock for milliseconds and no key wait exceeds 60 s
+  (§31), so anything younger may simply be a send in progress.
+* `held`: 60 seconds or older and a live process holds its kernel lock: a
+  sender that has been stuck inside a claim or a keyed send for a minute.
+* `orphaned`: 60 seconds or older and nobody holds it (or it is an old-format
+  or unreadable marker, which carries no lock to ask about). Left by a sender
+  that died. An orphaned scope lock is removed by the next claim on that
+  scope; an orphaned key marker is taken over by the next retry with the same
+  content and refuses different content until then.
+
+A file that cannot be examined (not a regular file, unreadable, gone
+mid-scan) is counted in `total` only.
+
+**The probe.** "Does a live process hold it" is asked by opening the file
+read-only (never creating it, never following a link) and requesting a shared
+non-blocking `flock`, which is granted exactly when no sender holds the
+exclusive one; the descriptor is closed at once. Nothing is written and no
+file is created, removed or left locked. The one observable side effect:
+during the microseconds a probe holds its shared lock on an **orphaned** file
+at least 60 s old, a claimant or retry arriving at that instant sees the file
+as busy and gets the ordinary "retry" answer (exit 3) once. A probe never
+touches a file younger than 60 s and cannot disturb a live holder, which
+already has its lock.
+
+**Problem codes.** Fixed strings, so tooling does not parse prose. New codes
+may be added; an existing code never changes meaning.
+
+| Code | Count is |
+|---|---|
+| `QUARANTINED` | `quarantined` |
+| `STALE_TMP` | `stale_tmp` |
+| `ORPHAN_IDEM_MARKER` | `idem_markers.orphaned` |
+| `ORPHAN_SCOPE_LOCK` | `scope_locks.orphaned` |
+| `STALLED_LOCK_HOLDER` | `scope_locks.held + idem_markers.held` |
+| `STALE_TAKEOVER_MUTEX` | `takeover_mutexes.stale` |
+| `MALFORMED_CLAIM_EXPIRY` | `claims.malformed_expiry` |
+| `FOREIGN_SUPERSEDE` | `foreign_supersedes` |
+| `DANGLING_REPLY` | `dangling_replies` |
+| `STALLED_AGENT` | number of `stalled_agents` |
+
+`problems` is `[]` for a clean mailbox. It does not change `status`'s exit
+status, which stays 0 whenever the mailbox exists: `status` reports, `doctor`
+judges.
+
+**`doctor`.** Prints the same counts as `scope_locks:`, `idem_markers:`,
+`takeover_mutexes:`, `foreign_supersedes:` and `dangling_replies:` lines, with
+the file names or message ids of the orphaned, stale, foreign and dangling
+ones (at most 20 each). None of them is a new reason to FAIL: what `doctor`
+fails on is still exactly §20.
+
+**Exit statuses, all commands.**
+
+| Status | Meaning | Which commands |
+|---|---|---|
+| 0 | done. For `send`: the message was written, or it is a `duplicate of` an earlier keyed send | all |
+| 1 | not found, or could not be done: `show`/`verify` no such message; `verify` fingerprint mismatch; `send` the OS refused the write (§32) | `show`, `verify`, `send`, `ask`, `canary` |
+| 2 | refused or unhealthy: bad arguments or input (§29), no mailbox, a key reused with different content (§31), a filesystem without `flock` for a scope (§30), quarantined files present (`list`, `inbox`, `latency`), `doctor` FAIL, Python too old | all |
+| 3 | contended, nothing written, retry: scope held or being claimed (§5, §30), key being sent by a live process (§31) | `send` (CLAIM `--scope`, or `--key`) |
+| 130, 143 | interrupted by SIGINT, SIGTERM after an orderly release (§31) | `send`, `ask`, `canary` |
+
+The pickup adapter (`hooks/agent_mail_check.py`) always exits 0 (§9).
+
+**Invariant a test must pin.** A clean mailbox reports `problems: []` and all
+counts zero. Each of: an orphaned scope lock, a scope lock held by a live
+process, an old-format orphaned key marker, a locked-format orphaned key
+marker, a resolved marker, a stale takeover mutex, a foreign supersede and a
+dangling reply moves exactly its own count and code, with a fresh (under 60 s)
+copy of the same file as the control that stays `in_flight`. `status` leaves
+every file, mtime and hash unchanged, creates nothing, and a claim on a scope
+whose orphaned lock was just probed still succeeds. `selftest.py` pins this.

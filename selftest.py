@@ -1101,6 +1101,395 @@ def main() -> int:
         check("control: a later rival is refused by the winner's held claim", r.returncode == 3
               and "already held by" in r.stderr, r.stderr)
 
+        print("\nkeyed sends are kernel-held: orphan taken over at once, live never (PROTOCOL.md §31)")
+        KEY_ULID = "01ARZ3NDEKTSV4RRFFQ69G5KEY"
+
+        def key_box(name: str, fmt: str, key: str = "K") -> tuple[Path, Path]:
+            """A mailbox holding a planted reservation for alice -> bob, key `key`,
+            content NOTICE/s/b, in the locked ("flock") or the old two-line format."""
+            b = Path(tmp) / f"key-{name}"
+            b.mkdir()
+            m = b / (".idem." + hashlib.sha256(f"alice\0bob\0{key}".encode()).hexdigest()[:24])
+            content = hashlib.sha256(b"NOTICE\0s\0b").hexdigest()
+            m.write_text(f"{KEY_ULID}\n{content}\n" + ("flock\n" if fmt == "flock" else ""),
+                         encoding="utf-8")
+            return b, m
+
+        def keyed(b: Path, *extra: str, body: str = "b", wait_env: str | None = None,
+                  key: str = "K") -> tuple[subprocess.CompletedProcess, float]:
+            env = {**os.environ, "AGENT_MAIL_DIR": str(b)}
+            env.pop("AGENT_MAIL_IDEM_WAIT", None)
+            if wait_env is not None:
+                env["AGENT_MAIL_IDEM_WAIT"] = wait_env
+            t0 = time.monotonic()
+            r = subprocess.run(
+                [sys.executable, str(HERE / "agent_mail.py"), "send", "--type", "NOTICE",
+                 "--from", "alice", "--to", "bob", "--subject", "s", "--body", body,
+                 "--key", key, *extra], capture_output=True, text=True, env=env)
+            return r, time.monotonic() - t0
+
+        # (a) a marker whose holder is ALIVE is never taken over. This process is
+        # the holder: it keeps flock on the planted marker while retries run.
+        kbox, kmark = key_box("live", "flock")
+        planted = kmark.read_text(encoding="utf-8")
+        kfd = os.open(kmark, os.O_RDONLY)
+        fcntl.flock(kfd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        r, took = keyed(kbox, "--key-wait", "0")
+        check("live holder, key wait 0: retry exits 3 'being sent ... retry' and does not take over",
+              r.returncode == 3 and "is being sent by another process right now" in r.stderr
+              and "retry" in r.stderr, repr((r.returncode, r.stdout, r.stderr)))
+        check("control: nothing written, the live holder's marker is untouched",
+              not list(kbox.glob("*.md")) and kmark.read_text(encoding="utf-8") == planted,
+              repr(sorted(p.name for p in kbox.iterdir())))
+        r, took = keyed(kbox, wait_env="0.4")
+        check("live holder, AGENT_MAIL_IDEM_WAIT=0.4: waits the 0.4 s, then exit 3, still no takeover",
+              r.returncode == 3 and 0.4 <= took < 4.0 and not list(kbox.glob("*.md"))
+              and kmark.read_text(encoding="utf-8") == planted, repr((r.returncode, took, r.stderr)))
+        r, _ = keyed(kbox, "--key-wait", "0", body="DIFFERENT")
+        check("live holder, different content: exit 2 (conflict), not exit 3",
+              r.returncode == 2 and "different content" in r.stderr, repr((r.returncode, r.stderr)))
+        # the holder "publishes": its message appears, then it exits
+        (kbox / f"{KEY_ULID}-s.md").write_text(
+            f"---\nid: {KEY_ULID}\ntype: NOTICE\nfrom: alice\nto: bob\n"
+            f"date: {iso(0)}\nsubject: s\nidem: K\n---\n\nb\n", encoding="utf-8")
+        r, _ = keyed(kbox, "--key-wait", "0")
+        check("once the holder's message exists a retry is a duplicate of it (exit 0), lock still held",
+              r.returncode == 0 and f"duplicate of {KEY_ULID}" in r.stdout
+              and f"id: {KEY_ULID}" in r.stdout, repr((r.returncode, r.stdout, r.stderr)))
+        os.close(kfd)
+        check("control: exactly one message for the key after all of that",
+              len(list(kbox.glob("*.md"))) == 1, repr(sorted(p.name for p in kbox.iterdir())))
+
+        # (b) a locked-format marker with NO living holder and no message is an
+        # exact orphan: taken over without waiting, by exactly one of N retries.
+        obox, omark = key_box("orphan", "flock")
+        r, took = keyed(obox)  # default key wait (5 s) must not be spent
+        check("dead holder: a retry takes over at once under the default wait (no 5 s)",
+              r.returncode == 0 and "wrote " in r.stdout and took < 3.0,
+              repr((r.returncode, round(took, 2), r.stdout, r.stderr)))
+        nbox, nmark = key_box("orphan-race", "flock")
+        t0 = time.monotonic()
+        with ThreadPoolExecutor(8) as pool:
+            res = list(pool.map(lambda _i: keyed(nbox)[0], range(8)))
+        took = time.monotonic() - t0
+        wrote = [r for r in res if r.returncode == 0 and "wrote " in r.stdout]
+        dups = [r for r in res if r.returncode == 0 and "duplicate of" in r.stdout]
+        ids = {ln.split(": ", 1)[1] for r in res for ln in r.stdout.splitlines()
+               if ln.startswith("id: ")}
+        check("8 simultaneous retries of an orphaned key: one wrote, seven 'duplicate of' the same id",
+              len(wrote) == 1 and len(dups) == 7 and len(ids) == 1 and KEY_ULID not in ids,
+              repr([(r.returncode, r.stdout.strip()[:60], r.stderr.strip()[:80]) for r in res]))
+        check("control: one message on disk, marker names it, no temp or takeover file left, no 5 s wait",
+              len(list(nbox.glob("*.md"))) == 1 and took < 4.0
+              and sorted(p.name for p in nbox.iterdir() if p.name.startswith(".")) == [nmark.name]
+              and nmark.read_text(encoding="utf-8").split("\n")[0] in ids
+              and nmark.read_text(encoding="utf-8").split("\n")[2] == "flock",
+              repr((round(took, 2), sorted(p.name for p in nbox.iterdir()))))
+        r, _ = keyed(key_box("orphan-diff", "flock")[0], body="DIFFERENT")
+        check("orphaned key, different content: still exit 2, nothing written",
+              r.returncode == 2 and "different content" in r.stderr, repr((r.returncode, r.stderr)))
+
+        # (c) the old two-line marker carries no liveness signal: honoured as
+        # before, and the key wait (not a hard-coded 5 s) decides its takeover.
+        lbox, lmark = key_box("legacy", "old")
+        r, took = keyed(lbox, "--key-wait", "0.6")
+        check("old-format orphan: taken over after the key wait and not before",
+              r.returncode == 0 and "wrote " in r.stdout and 0.6 <= took < 4.0,
+              repr((r.returncode, round(took, 2), r.stdout, r.stderr)))
+        r, took = keyed(key_box("legacy-zero", "old")[0], "--key-wait", "0")
+        check("old-format orphan, key wait 0: taken over immediately",
+              r.returncode == 0 and "wrote " in r.stdout and took < 3.0, repr((r.returncode, took)))
+        dbox, dmark = key_box("legacy-done", "old")
+        (dbox / f"{KEY_ULID}-s.md").write_text(
+            f"---\nid: {KEY_ULID}\ntype: NOTICE\nfrom: alice\nto: bob\n"
+            f"date: {iso(0)}\nsubject: s\nidem: K\n---\n\nb\n", encoding="utf-8")
+        r, _ = keyed(dbox)
+        check("old-format marker whose message landed: duplicate of the original id, marker untouched",
+              r.returncode == 0 and f"duplicate of {KEY_ULID}" in r.stdout
+              and len(list(dbox.glob("*.md"))) == 1 and dmark.read_text(encoding="utf-8").count("\n") == 2,
+              repr((r.returncode, r.stdout, r.stderr)))
+
+        # the key wait is bounded and refused, never clamped
+        vbox = Path(tmp) / "key-bounds"
+        vbox.mkdir()
+        for flag in ("-1", "60.5", "abc", "nan", "inf", ""):
+            r, _ = keyed(vbox, f"--key-wait={flag}", key=f"bad{flag}")
+            check(f"--key-wait {flag!r} refused: exit 2, one line, nothing written",
+                  r.returncode == 2 and len(r.stderr.strip().splitlines()) == 1
+                  and "key wait" in r.stderr and not list(vbox.iterdir()),
+                  repr((r.returncode, r.stderr)))
+        for val in ("-0.1", "61", "soon"):
+            r, _ = keyed(vbox, wait_env=val, key=f"env{val}")
+            check(f"AGENT_MAIL_IDEM_WAIT={val!r} refused: exit 2, one line, nothing written",
+                  r.returncode == 2 and len(r.stderr.strip().splitlines()) == 1
+                  and "AGENT_MAIL_IDEM_WAIT" in r.stderr and not list(vbox.iterdir()),
+                  repr((r.returncode, r.stderr)))
+        env = {**os.environ, "AGENT_MAIL_DIR": str(vbox)}
+        r = subprocess.run([sys.executable, str(HERE / "agent_mail.py"), "send", "--type", "NOTICE",
+                            "--from", "alice", "--to", "bob", "--subject", "s", "--body", "b",
+                            "--key-wait", "1"], capture_output=True, text=True, env=env)
+        check("--key-wait without --key refused (exit 2)", r.returncode == 2
+              and "--key-wait" in r.stderr and not list(vbox.iterdir()), repr((r.returncode, r.stderr)))
+        r = subprocess.run([sys.executable, str(HERE / "agent_mail.py"), "send", "--type", "NOTICE",
+                            "--from", "alice", "--to", "bob", "--subject", "s", "--body", "b"],
+                           capture_output=True, text=True,
+                           env={**env, "AGENT_MAIL_IDEM_WAIT": "garbage"})
+        check("control: the variable is only read by a keyed send (unkeyed send unaffected)",
+              r.returncode == 0, repr((r.returncode, r.stderr)))
+        for ok_val in ("0", "60"):
+            r, _ = keyed(vbox, "--key-wait", ok_val, key=f"ok{ok_val}")
+            check(f"control: --key-wait {ok_val} (a bound) is accepted and the send publishes",
+                  r.returncode == 0 and "wrote " in r.stdout, repr((r.returncode, r.stderr)))
+        r, _ = keyed(vbox, "--key-wait", "0", wait_env="garbage", key="flagwins")
+        check("--key-wait takes precedence over the variable", r.returncode == 0, repr(r.stderr))
+
+        print("\nownership, id case and failure reporting at read time (PROTOCOL.md §32)")
+
+        def tool(b: Path, *argv: str) -> subprocess.CompletedProcess:
+            env = {**os.environ, "AGENT_MAIL_DIR": str(b)}
+            return subprocess.run([sys.executable, str(HERE / "agent_mail.py"), *argv],
+                                  capture_output=True, text=True, env=env)
+
+        def new_id(r: subprocess.CompletedProcess) -> str:
+            return next((ln.split(": ", 1)[1] for ln in r.stdout.splitlines()
+                         if ln.startswith("id: ")), "")
+
+        def row(b: Path, subject: str) -> str:
+            return next((ln for ln in tool(b, "list").stdout.splitlines()
+                         if ln.rstrip().endswith("  " + subject)), "")
+
+        # (a) only the claim's own sender's CLAIM supersedes it, at read time too
+        obox = Path(tmp) / "own"
+        obox.mkdir()
+        mine = send(obox, "--type", "CLAIM", "--from", "alice", "--to", "all", "--subject", "mine",
+                    "--body", "b", "--scope", "res", "--expires", iso(1))
+        cid = new_id(mine)
+        check("control: alice's claim is held", "[held" in row(obox, "mine"), row(obox, "mine"))
+        for n, (kind, extra) in enumerate([("NOTICE", ""), ("CLAIM", f"expires: {iso(1)}\n")]):
+            fid = f"01ARZ3NDEKTSV4RRFFQ69GFRG{n}"
+            (obox / f"{fid}-void.md").write_text(
+                f"---\nid: {fid}\ntype: {kind}\nfrom: mallory\nto: all\ndate: {iso(0)}\n"
+                f"subject: void{n}\nsupersedes: {cid.lower()}\n{extra}---\n\nhand-written\n",
+                encoding="utf-8")
+        check("a hand-written NOTICE and CLAIM from another sender citing it leave the claim held",
+              "[held" in row(obox, "mine"), row(obox, "mine"))
+        r = send(obox, "--type", "CLAIM", "--from", "bob", "--to", "all", "--subject", "rival",
+                 "--body", "b", "--scope", "res", "--expires", iso(1))
+        check("so a rival's claim on the scope is still refused (exit 3, held by alice)",
+              r.returncode == 3 and "already held by alice" in r.stderr, repr((r.returncode, r.stderr)))
+        check("the foreign files are still ordinary mail, not quarantined",
+              "void0" in tool(obox, "list").stdout and "REJECT" not in tool(obox, "list").stderr)
+        r = send(obox, "--type", "NOTICE", "--from", "alice", "--to", "all", "--subject", "done",
+                 "--body", "b", "--supersedes", cid)
+        check("there is no release message: the owner's NOTICE superseding its claim is refused (exit 2)",
+              r.returncode == 2 and "[held" in row(obox, "mine"), repr((r.returncode, r.stderr)))
+        r = send(obox, "--type", "CLAIM", "--from", "alice", "--to", "all", "--subject", "renewed",
+                 "--body", "b", "--scope", "res", "--expires", iso(1), "--supersedes", cid.lower())
+        check("control: the owner's own CLAIM does supersede it (id cited in lower case)",
+              r.returncode == 0 and "[superseded" in row(obox, "mine") and "[held" in row(obox, "renewed"),
+              repr((r.returncode, r.stderr, row(obox, "mine"))))
+
+        r = send(obox, "--type", "CLAIM", "--from", "bob", "--to", "all", "--subject", "rival2",
+                 "--body", "b", "--scope", "res", "--expires", iso(1))
+        check("renewed with the same --scope the owner keeps it: the rival is still refused",
+              r.returncode == 3 and "already held by alice" in r.stderr, repr((r.returncode, r.stderr)))
+        rid = next((p.name[:26] for p in obox.glob("*-renewed.md")), "NOSUCHID")
+        r = send(obox, "--type", "CLAIM", "--from", "alice", "--to", "all", "--subject", "given up",
+                 "--body", "b", "--expires", iso(1), "--supersedes", rid)
+        check("superseding it with a claim that names no scope releases the scope, and send says so",
+              r.returncode == 0 and "this one names no scope: 'res' is released" in r.stderr,
+              repr((r.returncode, r.stderr)))
+        r = send(obox, "--type", "CLAIM", "--from", "bob", "--to", "all", "--subject", "rival3",
+                 "--body", "b", "--scope", "res", "--expires", iso(1))
+        check("control: the rival can then claim the scope at once", r.returncode == 0, r.stderr)
+
+        # (b) (c) replies: case, twice, dangling
+        qbox = Path(tmp) / "ack"
+        qbox.mkdir()
+        ask = new_id(send(qbox, "--type", "ASK", "--from", "alice", "--to", "bob",
+                          "--subject", "question", "--body", "b"))
+        send(qbox, "--type", "ASK", "--from", "alice", "--to", "bob",
+             "--subject", "untouched", "--body", "b")
+        r = send(qbox, "--type", "ANSWER", "--from", "bob", "--to", "alice", "--subject", "dangling",
+                 "--body", "b", "--reply-to", "01ARZ3NDEKTSV4RRFFQ69GNONE")
+        check("a reply to a nonexistent id is written (exit 0) and closes nothing",
+              r.returncode == 0 and "[open" in row(qbox, "question") and "[open" in row(qbox, "untouched"),
+              repr((r.returncode, r.stderr)))
+        r = send(qbox, "--type", "ANSWER", "--from", "bob", "--to", "alice", "--subject", "answer",
+                 "--body", "b", "--reply-to", ask.lower(), "--key", "ans")
+        check("an ANSWER citing the ASK's id in lower case closes it",
+              r.returncode == 0 and "[answered" in row(qbox, "question"), row(qbox, "question"))
+        check("control: the other ASK is still open and still delivered to bob",
+              "[open" in row(qbox, "untouched") and "untouched" in pickup(qbox, "bob")
+              and "question" not in pickup(qbox, "bob"), pickup(qbox, "bob"))
+        r2 = send(qbox, "--type", "ANSWER", "--from", "bob", "--to", "alice", "--subject", "answer",
+                  "--body", "b", "--reply-to", ask.lower(), "--key", "ans")
+        r3 = send(qbox, "--type", "ANSWER", "--from", "bob", "--to", "alice", "--subject", "again",
+                  "--body", "b", "--reply-to", ask)
+        check("answering twice is harmless: a keyed retry writes nothing, a second answer changes nothing",
+              r2.returncode == 0 and "duplicate of" in r2.stdout and r3.returncode == 0
+              and "[answered" in row(qbox, "question") and len(list(qbox.glob("*.md"))) == 5,
+              repr((r2.stdout, r3.stderr, len(list(qbox.glob("*.md"))))))
+        r = tool(qbox, "show", ask.lower())
+        check("show accepts the id in lower case", r.returncode == 0 and "subject: question" in r.stdout,
+              repr((r.returncode, r.stderr)))
+
+        # (d) a send that cannot write says so in one line and leaves nothing
+        if os.geteuid() == 0:
+            skip("unwritable mailbox: one line, exit 1, nothing left", "running as root")
+        else:
+            wbox = Path(tmp) / "readonly"
+            wbox.mkdir()
+            os.chmod(wbox, 0o555)
+            try:
+                for label, extra in [("plain", []), ("keyed", ["--key", "k"]),
+                                     ("scoped claim", ["--scope", "s", "--expires", iso(1)])]:
+                    r = send(wbox, "--type", "CLAIM" if "claim" in label else "NOTICE",
+                             "--from", "alice", "--to", "bob", "--subject", "s", "--body", "b", *extra)
+                    check(f"read-only mailbox, {label} send: exit 1, exactly one line, no traceback",
+                          r.returncode == 1 and r.stdout == "" and len(r.stderr.strip().splitlines()) == 1
+                          and r.stderr.startswith("send failed: cannot write to the mailbox: ")
+                          and "nothing written" in r.stderr and "EACCES" in r.stderr,
+                          repr((r.returncode, r.stderr[-300:])))
+            finally:
+                os.chmod(wbox, 0o755)
+            check("nothing was left behind (no temp, marker or lock)", not list(wbox.iterdir()),
+                  repr(sorted(p.name for p in wbox.iterdir())))
+            r = send(wbox, "--type", "NOTICE", "--from", "alice", "--to", "bob", "--subject", "s",
+                     "--body", "b", "--key", "k")
+            check("control: the same send succeeds once the mailbox is writable",
+                  r.returncode == 0 and "wrote " in r.stdout, r.stderr)
+
+        print("\nstatus and doctor name what a crash leaves behind (PROTOCOL.md §33)")
+        gbox = Path(tmp) / "diag"
+        gbox.mkdir()
+
+        def status_json(b: Path) -> dict:
+            r = tool(b, "status", "--json")
+            return json.loads(r.stdout) if r.returncode == 0 else {}
+
+        def snapshot(b: Path) -> dict:
+            return {f.name: (f.lstat().st_mtime_ns, f.lstat().st_size,
+                             hashlib.sha256(f.read_bytes()).hexdigest())
+                    for f in sorted(b.iterdir())}
+
+        def plant(name: str, text: str, old: bool) -> Path:
+            f = gbox / name
+            f.write_text(text, encoding="utf-8")
+            if old:
+                os.utime(f, (time.time() - 120, time.time() - 120))
+            return f
+
+        def scope_lock_name(scope: str) -> str:
+            return ".scope." + hashlib.sha256(scope.encode()).hexdigest()[:24] + ".lock"
+
+        def marker_name(key: str) -> str:
+            return ".idem." + hashlib.sha256(f"alice\0bob\0{key}".encode()).hexdigest()[:24]
+
+        send(gbox, "--type", "NOTICE", "--from", "alice", "--to", "bob", "--subject", "s", "--body", "b",
+             "--key", "done")  # a real keyed send: one message, one resolved marker
+        st = status_json(gbox)
+        zero_locks = {"total": 0, "in_flight": 0, "held": 0, "orphaned": 0}
+        check("clean mailbox: problems is [], nothing orphaned, the one marker is resolved; schema still 1",
+              st.get("problems") == [] and st.get("scope_locks") == zero_locks
+              and st.get("idem_markers") == {"total": 1, "resolved": 1, "in_flight": 0, "held": 0, "orphaned": 0}
+              and st.get("takeover_mutexes") == {"total": 0, "stale": 0}
+              and st.get("foreign_supersedes") == 0 and st.get("dangling_replies") == 0
+              and st.get("schema") == 1, repr({k: st.get(k) for k in (
+                  "problems", "scope_locks", "idem_markers", "takeover_mutexes", "schema")}))
+
+        chash = hashlib.sha256(b"NOTICE\0s\0b").hexdigest()
+        plant(scope_lock_name("orphan-scope"), "0\n", old=True)
+        held_lock = plant(scope_lock_name("held-scope"), "0\n", old=True)
+        plant(scope_lock_name("fresh-scope"), "0\n", old=False)
+        plant(marker_name("old-format"), f"01ARZ3NDEKTSV4RRFFQ69GD1A0\n{chash}\n", old=True)
+        plant(marker_name("locked-orphan"), f"01ARZ3NDEKTSV4RRFFQ69GD1A1\n{chash}\nflock\n", old=True)
+        held_mark = plant(marker_name("locked-held"), f"01ARZ3NDEKTSV4RRFFQ69GD1A2\n{chash}\nflock\n", old=True)
+        plant(marker_name("fresh"), f"01ARZ3NDEKTSV4RRFFQ69GD1A3\n{chash}\nflock\n", old=False)
+        plant(marker_name("old-format") + ".takeover", "", old=True)
+        plant(marker_name("fresh") + ".takeover", "", old=False)
+        tmp_old = plant(".01ARZ3NDEKTSV4RRFFQ69GD1A4-x.md.1.tmp", "partial", old=False)
+        os.utime(tmp_old, (time.time() - 700, time.time() - 700))
+        plant("junk.md", "no frontmatter\n", old=False)
+        lease = new_id(send(gbox, "--type", "CLAIM", "--from", "alice", "--to", "all", "--subject", "lease",
+                            "--body", "b", "--expires", iso(1)))
+        plant("01ARZ3NDEKTSV4RRFFQ69GD1A5-void.md",
+              f"---\nid: 01ARZ3NDEKTSV4RRFFQ69GD1A5\ntype: NOTICE\nfrom: mallory\nto: all\ndate: {iso(0)}\n"
+              f"subject: void\nsupersedes: {lease}\n---\n\nb\n", old=False)
+        send(gbox, "--type", "ANSWER", "--from", "bob", "--to", "alice", "--subject", "typo", "--body", "b",
+             "--reply-to", "01ARZ3NDEKTSV4RRFFQ69GN0NE")
+        fd_lock = os.open(held_lock, os.O_RDWR)
+        fcntl.flock(fd_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fd_mark = os.open(held_mark, os.O_RDWR)
+        fcntl.flock(fd_mark, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        before = snapshot(gbox)
+        st = status_json(gbox)
+        check("status --json wrote nothing: every file, mtime and hash unchanged, nothing created",
+              snapshot(gbox) == before)
+        check("scope locks: one orphaned, one held by a live process, one in flight (fresh, not probed)",
+              st.get("scope_locks") == {"total": 3, "in_flight": 1, "held": 1, "orphaned": 1},
+              repr(st.get("scope_locks")))
+        check("key markers: resolved 1, in flight 1, held 1, orphaned 2 (old-format and locked-format)",
+              st.get("idem_markers") == {"total": 5, "resolved": 1, "in_flight": 1, "held": 1, "orphaned": 2},
+              repr(st.get("idem_markers")))
+        check("takeover mutexes: 2, of which 1 stale; foreign supersede 1; dangling reply 1",
+              st.get("takeover_mutexes") == {"total": 2, "stale": 1}
+              and st.get("foreign_supersedes") == 1 and st.get("dangling_replies") == 1,
+              repr((st.get("takeover_mutexes"), st.get("foreign_supersedes"), st.get("dangling_replies"))))
+        check("problems: fixed codes with counts, in the documented order, zero-count codes omitted",
+              st.get("problems") == [
+                  {"code": "QUARANTINED", "count": 1}, {"code": "STALE_TMP", "count": 1},
+                  {"code": "ORPHAN_IDEM_MARKER", "count": 2}, {"code": "ORPHAN_SCOPE_LOCK", "count": 1},
+                  {"code": "STALLED_LOCK_HOLDER", "count": 2}, {"code": "STALE_TAKEOVER_MUTEX", "count": 1},
+                  {"code": "FOREIGN_SUPERSEDE", "count": 1}, {"code": "DANGLING_REPLY", "count": 1}],
+              repr(st.get("problems")))
+        check("the keys of schema 1 are all still there", {
+            "schema", "now", "mailbox", "messages", "asks", "claims", "quarantined", "stale_tmp",
+            "stalled_hours", "agents", "stalled_agents"} <= set(st), repr(sorted(st)))
+        r = tool(gbox, "status")
+        check("text status prints a PROBLEMS line with the same codes, and still exits 0",
+              r.returncode == 0 and "PROBLEMS: QUARANTINED=1 STALE_TMP=1 ORPHAN_IDEM_MARKER=2 "
+              "ORPHAN_SCOPE_LOCK=1 STALLED_LOCK_HOLDER=2" in r.stdout, r.stdout)
+        r = tool(gbox, "doctor")
+        check("doctor names the orphaned files and never prints a body",
+              "scope_locks: 3 (in_flight 1, held 1, orphaned 1)" in r.stdout
+              and f"  - {scope_lock_name('orphan-scope')} (orphaned)" in r.stdout
+              and "idem_markers: 5 (resolved 1, in_flight 1, held 1, orphaned 2)" in r.stdout
+              and f"  - {marker_name('locked-orphan')} (orphaned)" in r.stdout
+              and "takeover_mutexes: 2 (stale 1)" in r.stdout
+              and "foreign_supersedes: 1\n  - 01ARZ3NDEKTSV4RRFFQ69GD1A5" in r.stdout
+              and "dangling_replies: 1" in r.stdout and "Traceback" not in r.stderr
+              and snapshot(gbox) == before, r.stdout + r.stderr)
+        os.close(fd_lock)
+        os.close(fd_mark)
+        st = status_json(gbox)
+        check("once the holders are gone the same files are orphaned, not held",
+              st.get("scope_locks") == {"total": 3, "in_flight": 1, "held": 0, "orphaned": 2}
+              and st.get("idem_markers", {}).get("held") == 0 and st["idem_markers"]["orphaned"] == 3,
+              repr(st.get("scope_locks")))
+        check("and STALLED_LOCK_HOLDER is gone from problems",
+              all(pr["code"] != "STALLED_LOCK_HOLDER" for pr in st.get("problems", [{"code": "STALLED_LOCK_HOLDER"}])),
+              repr(st.get("problems")))
+        r = send(gbox, "--type", "CLAIM", "--from", "carol", "--to", "all", "--subject", "after probe",
+                 "--body", "b", "--scope", "orphan-scope", "--expires", iso(1))
+        check("a probed orphan lock is not left locked: the scope is claimable and the file is removed",
+              r.returncode == 0 and not (gbox / scope_lock_name("orphan-scope")).exists(), r.stderr)
+        r, _ = keyed(gbox, key="locked-orphan")
+        check("a probed orphan marker is not left locked: the retry takes it over at once",
+              r.returncode == 0 and "wrote " in r.stdout, repr((r.returncode, r.stderr)))
+        hbox = Path(tmp) / "diag-doctor"
+        hbox.mkdir()
+        subprocess.run([sys.executable, str(HERE / "agent_mail.py"), "canary", "--from", "alice",
+                        "--to", "alice", "--hours", "1"], capture_output=True, text=True,
+                       env={**os.environ, "AGENT_MAIL_DIR": str(hbox)})
+        lk = hbox / scope_lock_name("x")
+        lk.write_text("0\n", encoding="utf-8")
+        os.utime(lk, (time.time() - 120, time.time() - 120))
+        r = tool(hbox, "doctor")
+        check("an orphaned lock is reported by doctor but is not a new reason to FAIL (exit 0, PASS)",
+              r.returncode == 0 and "scope_locks: 1 (in_flight 0, held 0, orphaned 1)" in r.stdout
+              and r.stdout.rstrip().endswith("PASS"), r.stdout + r.stderr)
+
     print("\nversion")
     rv = subprocess.run([sys.executable, str(HERE / "agent_mail.py"), "--version"],
                         capture_output=True, text=True)
