@@ -7,7 +7,11 @@ behaviour).
 
 ## [Unreleased]
 
-Changes merged or proposed since v0.2.0 and not yet released. None of them
+Nothing yet.
+
+## [0.2.1] - 2026-10-10
+
+Publication safety, CI hardening and documentation. Nothing in this release
 changes runtime behaviour; there is no breaking change and no migration.
 
 ### Added
@@ -30,10 +34,26 @@ changes runtime behaviour; there is no breaking change and no migration.
 - `test_packaging.py` no longer embeds any real name; it uses synthetic placeholder terms and the
   same run-time mechanism as `check_publication.py`.
 - `check_publication.py` prints an explicit warning when no forbidden list was supplied.
-- CI: `actions/setup-python` 5 -> 7 and `actions/checkout` 4 -> 7 (Dependabot, #1 and #2).
+- CI: `actions/setup-python` 5 -> 7 and `actions/checkout` 4 -> 7 (Dependabot, #1 and #2),
+  then pinned to commit SHAs with version comments; every job has a timeout, superseded
+  pull-request runs are cancelled, checkouts no longer persist the token, `build` is pinned,
+  and Dependabot groups action bumps into one pull request (#8).
+- `check_publication.py` normalises text (NFKC, zero-width characters stripped) before
+  matching and reports a literal split across string pieces as `forbidden-N-split`; a tracked
+  file missing from the work tree is reported as `unscanned-missing`; `--git-log=--all` is
+  unambiguous. The `publication` CI job exposes the secret only to the steps that read it and
+  passes an empty allowlist from outside the checkout (#6).
+- `test_packaging.py` always scans the built artifacts with a built-in synthetic term, so the
+  forbidden-pattern path runs on every build and positive controls assert the exact redacted
+  finding (#6).
 
 ### Fixed
 
+- `check_publication.py`: a patterns or allowlist file with a UTF-8 BOM no longer silently
+  loses its first entry, and an unreadable one exits 2 instead of crashing (#6).
+- `test_adversarial.py`: the quarantine listing check ignored the `# mailbox:` header line,
+  whose random temp-directory name could contain the marker it searched for; it was flaky on
+  macOS in CI (#7).
 - `CHANGELOG.md` listed 0.2.0 as unreleased; it was released on 2026-10-10.
 - `CONTRIBUTING.md` now lists every check `ci.yml` runs (`test_adversarial.py`,
   `mypy` on `check_handoff.py`); the README's 30-second demo shows the tool's
@@ -101,5 +121,6 @@ the first tag in the current repository.
 - Breaking a stale (older than 60 seconds) scope lock is not atomic; see the
   README "Security and limitations".
 
-[Unreleased]: https://github.com/tyko84/agent-postbox/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/tyko84/agent-postbox/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/tyko84/agent-postbox/releases/tag/v0.2.1
 [0.2.0]: https://github.com/tyko84/agent-postbox/releases/tag/v0.2.0
