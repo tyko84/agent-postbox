@@ -7,6 +7,35 @@ behaviour).
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.2.2] - 2026-10-10
+
+Atomic scope locks, recovery tests and scanner follow-ups. The only runtime
+change is how a scope lock is held (PROTOCOL.md section 30); exit codes and
+messages are unchanged and there is no migration.
+
+### Added
+
+- `test_hardening.py`: recovery after an interrupted write, with a writer killed at
+  each dangerous point of the publish path (before link, after link before the temp
+  is removed, after the idempotency marker, holding a scope lock) and a truncated
+  final file. The mailbox stays usable and no partial message is ever listed (#11).
+- `check_publication.py --git-log` also scans tags: every tag name, and the tagger
+  name, email and message of every annotated tag (location `tag:NAME`, allowlist path
+  `tag/NAME`), whatever `REV` is given (#10).
+- `check_publication.py` decodes tracked files and archive members that start with a
+  UTF-16 byte-order mark as UTF-16 before matching (#10).
+- `requirements-dev.txt` pins ruff, mypy, build and twine in one place; CI installs
+  from it, and Dependabot (new `pip` entry, weekly, grouped) keeps the pins current.
+  The publication job runs `twine check` on the built sdist and wheel (#10).
+
+### Changed
+
+- Lint tools: ruff 0.17.0 and mypy 2.4.0; twine 7.0.0 added (#10).
+- `docs/publication-safety.md` states that the history scan reads commit and tag
+  metadata only, never file contents of old commits, and how to audit releases (#10).
+
 ### Fixed
 
 - Breaking a stale scope lock was not atomic: two claimants finding the same
@@ -17,7 +46,9 @@ behaviour).
   exactly one of any number of simultaneous claimants and a live claimant's
   lock is never removed, whatever its age (PROTOCOL.md section 30). Exit codes
   and messages are unchanged; a claimant that dies mid-claim no longer blocks
-  its scope for 60 seconds. `selftest.py` pins this with real subprocesses.
+  its scope for 60 seconds. `selftest.py` pins this with real subprocesses (#12, #14).
+- `selftest.py`: an invalid `# noqa` directive on a fixture line that current ruff
+  warns about is now a plain comment (#10).
 
 ## [0.2.1] - 2026-10-10
 
@@ -131,6 +162,7 @@ the first tag in the current repository.
 - Breaking a stale (older than 60 seconds) scope lock is not atomic; see the
   README "Security and limitations".
 
-[Unreleased]: https://github.com/tyko84/agent-postbox/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/tyko84/agent-postbox/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/tyko84/agent-postbox/releases/tag/v0.2.2
 [0.2.1]: https://github.com/tyko84/agent-postbox/releases/tag/v0.2.1
 [0.2.0]: https://github.com/tyko84/agent-postbox/releases/tag/v0.2.0

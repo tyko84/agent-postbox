@@ -11,6 +11,10 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      # the build-system floor (setuptools>=77, the PEP 639 minimum) is a compatibility
+      # promise, not a pin; only requirements-dev.txt pins are tracked
+      - dependency-name: setuptools
     groups:
       dev-tools:
         patterns: ["*"]
