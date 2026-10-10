@@ -1,6 +1,6 @@
 #!/bin/sh
 # Local pre-publication gate: tests, build, then publication scan of tracked files,
-# built artifacts and the git log. POSIX sh. See docs/publication-safety.md.
+# built artifacts and the git log of every ref. POSIX sh. See docs/publication-safety.md.
 #
 # The forbidden list comes from $POSTBOX_FORBIDDEN (comma list) or, if unset, from
 # ~/.config/agent-postbox/forbidden (one literal per line). Keep that file OUTSIDE the
@@ -11,10 +11,12 @@ cd "$(dirname "$0")/.."
 PY="${1:-python3}"
 LISTFILE="$HOME/.config/agent-postbox/forbidden"
 
-PATARGS=""
+# The positional parameters become the scanner's pattern arguments, so a list path with
+# spaces in it stays one argument.
+set --
 if [ -z "${POSTBOX_FORBIDDEN:-}" ]; then
     if [ -f "$LISTFILE" ]; then
-        PATARGS="--patterns-file $LISTFILE"
+        set -- --patterns-file "$LISTFILE"
     else
         echo "preflight: no forbidden list (set POSTBOX_FORBIDDEN or create $LISTFILE)" >&2
         exit 2
@@ -31,7 +33,7 @@ for t in selftest.py stress_test.py test_hardening.py test_adversarial.py test_h
 done
 echo "preflight: build" >&2
 "$PY" -m build --outdir "$DIST" . >/dev/null
-echo "preflight: check_publication (tracked, dist, git log)" >&2
-# shellcheck disable=SC2086  # PATARGS is intentionally word-split: one flag and one path
-"$PY" check_publication.py --require-patterns $PATARGS --dist "$DIST" --git-log
+echo "preflight: check_publication (tracked, dist, git log of every ref and tag)" >&2
+# --git-log=--all: every branch, remote-tracking ref and tag, not only the ancestors of HEAD.
+"$PY" check_publication.py --require-patterns "$@" --dist "$DIST" --git-log=--all
 echo "preflight: ok" >&2
