@@ -1302,3 +1302,65 @@ hand-written one as `null` with `scope_oversize`.
 exits 0 when nothing matches. (f) No output contains a subject or a body,
 and `status` leaves every file, mtime and hash unchanged. `selftest.py` pins
 all six.
+
+## 35. A reader that goes away is not an error
+
+`list | head -1` ends its reader after one line. The next write to that pipe
+fails with `EPIPE`. Through 0.3.0 the installed `agent-postbox` answered with a
+`BrokenPipeError` traceback and exit 120 or 1; the pickup adapter, which must
+always exit 0 (§9), exited 120 with a line on stderr.
+
+**Rule.** When stdout's reader is gone (a closed pipe, a reader that was
+killed), every entry point (`agent-postbox`, `python agent_mail.py`,
+`python -m agent_mail`, `agent_mail.main(argv)`) behaves the same:
+
+| Command | What it does | Exit status |
+|---|---|---|
+| read-only: `list`, `inbox`, `show`, `status`, `doctor`, `latency`, `verify`, `capability`, `--help`, `--version` | stops at the first failed write; writes nothing more to stdout, and no traceback or other complaint about the pipe to stderr | 141 |
+| writes mail: `send`, `ask`, `canary` | finishes the work exactly as if the reader were there (`ask` still files every recipient's message; every lock and key is released, §30, §31); the confirmation lines are dropped | the status of the work: 0 once the mail is published, otherwise the 1, 2, 3, 130 or 143 of §33 |
+| the pickup adapter | stops | 0 |
+
+141 is 128 + SIGPIPE: what a shell reports for `yes | head -1`, and what
+`set -o pipefail` shows for the pipeline. The tool exits with that status; it
+is not killed by the signal, and SIGPIPE stays ignored, because the default
+disposition would kill a `send` between publishing and releasing what it
+holds. For a read-only command the output is the work, so output that could
+not be delivered is not success. For a writing command the mail is the work
+and it is durable before the first line is printed: a non-zero status there
+would tell the caller to retry, and a retry without `--key` files the message
+twice.
+
+**What is delivered is a prefix.** The bytes a reader received before it left
+are the first bytes of what it would have received by staying. Nothing is
+repeated, reordered or written after the failure. A reader that stays gets
+the same bytes as before this section.
+
+**Only stdout's reader.** `EPIPE` from anything else, such as the mailbox
+filesystem, is the write failure of §32, with its line and its exit status.
+An error that happens while the reader is gone is still printed on stderr and
+keeps its own status (`show <missing id> | true` exits 1). If stderr's reader
+is gone, or stderr is closed, the diagnostic is dropped, stdout and the exit
+status are unaffected, and a diagnostic is never written to stdout instead.
+A command whose output was already complete when the reader left (it fitted
+in the pipe) has finished normally and exits with its usual status.
+
+**In a caller's process.** `agent_mail.main(argv)` returns 141 (for `--help`
+and `--version`, raises `SystemExit(141)`) and leaves the caller's stdout as
+it found it: the same descriptor, nothing buffered for a later flush to fail
+on.
+
+**Compatibility.** One exit status is added to the table in §33: 141, for the
+read-only commands. No message, key or other status changes. Nothing on disk
+changes; no migration.
+
+**Invariant a test must pin.** With stdout on a pipe whose reader has already
+left, for `python agent_mail.py` and for the two statements the installed
+console script consists of: (a) `list`, `status --json`, `doctor`, `show` and
+`--help` exit 141 with empty stderr; (b) `send --key` exits 0 with empty
+stderr, the message exists exactly once, and the same send again with a
+reader prints `duplicate of`; (c) `show` of a missing id exits 1 with its
+line on stderr; (d) the pickup adapter exits 0 with empty stderr.
+`selftest.py` pins all four; `test_adversarial.py` pins the prefix rule,
+readers that leave mid-output or are killed, injected `EPIPE`, `ENOSPC` and
+interrupts, and `main()` called in-process; `test_packaging.py` runs (a) to
+(c) against the installed `agent-postbox`.

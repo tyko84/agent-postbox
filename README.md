@@ -315,9 +315,13 @@ on the wait alone; keep the default there. See PROTOCOL.md section 31.
 | 2 | Refused or unhealthy: bad arguments or input, no mailbox, a key reused with different content, a filesystem without `flock` for a scope, quarantined files present (`list`, `inbox`, `latency`), `doctor` FAIL, Python older than 3.10 | all |
 | 3 | Contended, nothing written, safe to retry: scope held or being claimed, key being sent by a live process | `send` with `--scope` or `--key` |
 | 130, 143 | Interrupted by SIGINT / SIGTERM; the send released what it held first | `send`, `ask`, `canary` |
+| 141 | The reader of stdout went away (`list \| head -1`): stopped quietly, no traceback. 128 + SIGPIPE, as a shell reports it | every read-only command: `list`, `inbox`, `show`, `status`, `doctor`, `latency`, `verify`, `capability`, `--help` |
 
 `status` exits 0 whenever the mailbox exists, whatever it reports. The pickup
-adapter (`hooks/agent_mail_check.py`) always exits 0.
+adapter (`hooks/agent_mail_check.py`) always exits 0. `send`, `ask` and `canary`
+never exit 141: the mail is published before anything is printed, so with no
+reader they finish and report the status of the send (`send ... | true` exits
+0). See PROTOCOL.md section 35.
 
 ## Three ideas worth stealing even if you don't use this
 

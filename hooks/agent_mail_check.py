@@ -74,5 +74,25 @@ def main() -> int:
         return 0
 
 
+def _quiet_exit() -> None:
+    """Flush now, while a failure can still be swallowed. A host that stops
+    reading leaves the text in Python's buffer; the interpreter's own flush at
+    exit would then print "Exception ignored ... BrokenPipeError" and exit 120,
+    which is neither silent nor 0. On any failure, point stdout at /dev/null so
+    that last flush has somewhere to go. This process is about to exit, so
+    nothing else can miss the descriptor."""
+    try:
+        sys.stdout.flush()
+    except Exception:
+        try:
+            null = os.open(os.devnull, os.O_WRONLY)
+            os.dup2(null, sys.stdout.fileno())
+            os.close(null)
+        except Exception:
+            pass
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()
+    _quiet_exit()
+    raise SystemExit(0)
