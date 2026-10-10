@@ -6,6 +6,7 @@ Scans, for configurable forbidden patterns plus generic secret/path shapes:
     (a tracked file missing from the work tree is reported as unscanned-missing)
   * member names and contents of built artifacts    --dist DIR (sdist .tar.gz, wheel .whl)
   * git history: author/committer name+email, messages  --git-log
+    plus every tag name and, for annotated tags, tagger name+email and message
 
 Forbidden patterns are NEVER stored in the repo. Supply them at run time:
   POSTBOX_FORBIDDEN="word1,word2"      comma list, case-insensitive literals
@@ -13,7 +14,8 @@ Forbidden patterns are NEVER stored in the repo. Supply them at run time:
 
 Output rule: only "<location>  <rule-id>" lines are printed. The matched text and
 the pattern itself are never printed. Rule ids for supplied patterns are
-positional (forbidden-1, forbidden-2, ...), so a report does not reveal them. Text is
+positional (forbidden-1, forbidden-2, ...), so a report does not reveal them. Content
+is decoded as UTF-8, or as UTF-16 when it starts with a UTF-16 byte-order mark. Text is
 NFKC-normalised, stripped of zero-width characters and casefolded first; a second pass
 with quotes, '+' and whitespace removed catches a literal split across string pieces
 and is reported as forbidden-N-split.
@@ -119,7 +121,9 @@ class Scanner:
         if len(data) > MAX_BYTES:
             self._add(loc, "unscanned-too-large")
             return
-        self.scan_text(loc, data.decode("utf-8", "replace"), allow_loc)
+        # A UTF-16 byte-order mark (FF FE or FE FF) selects UTF-16; the codec consumes it.
+        enc = "utf-16" if data[:2] in (b"\xff\xfe", b"\xfe\xff") else "utf-8"
+        self.scan_text(loc, data.decode(enc, "replace"), allow_loc)
 
     def scan_name(self, loc: str, name: str) -> None:
         self.scan_text(loc + "#name", name, allow_loc=loc)
@@ -173,6 +177,27 @@ class Scanner:
                 continue
             sha, *rest = rec.split("\x1f", 5)
             self.scan_text(f"git:{sha[:12]}", "\n".join(rest), allow_loc=f"git/{sha[:12]}")
+        self.scan_tags(root)
+
+    def scan_tags(self, root: Path) -> None:
+        """Every tag name, plus tagger name/email and message of every annotated tag.
+
+        Tags are refs, not ancestors of a commit, so all of them are scanned whatever REV
+        `--git-log` was given. Old file contents are still out of scope (see the docs).
+        """
+        r = subprocess.run(
+            ["git", "-C", str(root), "for-each-ref", "refs/tags",
+             "--format=%(objectname) %(objecttype) %(refname:short)"],
+            stdout=subprocess.PIPE, check=True)
+        for line in r.stdout.decode("utf-8", "replace").splitlines():
+            sha, kind, name = line.split(" ", 2)
+            self.scan_text(f"tag:{name}#name", name, allow_loc=f"tag/{name}")
+            if kind != "tag":
+                continue  # lightweight tag: a name pointing straight at a commit, no object
+            obj = subprocess.run(["git", "-C", str(root), "cat-file", "-p", sha],
+                                 stdout=subprocess.PIPE, check=True)
+            self.scan_text(f"tag:{name}", obj.stdout.decode("utf-8", "replace"),
+                           allow_loc=f"tag/{name}")
 
 
 def main(argv: list[str] | None = None, env: dict[str, str] | None = None) -> int:
@@ -182,7 +207,8 @@ def main(argv: list[str] | None = None, env: dict[str, str] | None = None) -> in
     ap.add_argument("--dist", help="directory holding built sdist/wheel to scan")
     ap.add_argument("--git-log", nargs="?", const="HEAD", metavar="REV",
                     help="scan authors/committers/messages of REV (default HEAD, all ancestors; "
-                         "use --git-log=--all for every ref)")
+                         "use --git-log=--all for every ref) and every tag's name, tagger "
+                         "and message")
     ap.add_argument("--no-tracked", action="store_true", help="skip the tracked-file scan")
     ap.add_argument("--patterns-file", help="file with one forbidden literal per line")
     ap.add_argument("--allowlist", help=f"allowlist file (default {DEFAULT_ALLOWLIST} if present)")

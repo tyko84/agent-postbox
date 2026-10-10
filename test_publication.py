@@ -8,6 +8,7 @@ assembled at run time so this file never matches its own detectors. Stdlib only.
 """
 from __future__ import annotations
 
+import codecs
 import contextlib
 import io
 import subprocess
@@ -147,6 +148,23 @@ class Tracked(Base):
                 self.assertNotIn(WORD, out + err)
                 self.commit({name: "clean\n"}, msg="fix")
 
+    def test_utf16_bom_content_is_decoded_and_fires(self) -> None:
+        # Without the BOM-driven decode the NUL-interleaved bytes would never match.
+        self.commit({"a.txt": "ok\n"})
+        planted = {"le.txt": codecs.BOM_UTF16_LE + f"x {WORD} y\n".encode("utf-16-le"),
+                   "be.txt": codecs.BOM_UTF16_BE + f"x {WORD} y\n".encode("utf-16-be"),
+                   "clean.txt": codecs.BOM_UTF16_LE + "nothing here\n".encode("utf-16-le")}
+        for name, body in planted.items():
+            (self.repo / name).write_bytes(body)
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-q", "-m", "utf16")
+        rc, out, err = self.scan(env={cp.ENV_VAR: WORD})
+        self.assertEqual(rc, 1)
+        self.assertIn("tracked:le.txt  forbidden-1", out)
+        self.assertIn("tracked:be.txt  forbidden-1", out)
+        self.assertNotIn("tracked:clean.txt", out)  # a clean UTF-16 file is not a finding
+        self.assertNotIn(WORD, out + err)
+
     def test_tracked_file_missing_from_worktree_is_reported(self) -> None:
         self.commit({"a.txt": "ok\n"})
         (self.repo / "a.txt").unlink()
@@ -165,7 +183,32 @@ class Tracked(Base):
 class GitLog(Base):
     def test_clean_history_passes(self) -> None:
         self.commit({"a": "1"}, msg="fine")
+        git(self.repo, "tag", "-a", "v1", "-m", "release one")   # annotated, clean
+        git(self.repo, "tag", "v1-light")                          # lightweight, clean
         self.assertEqual(self.scan("--no-tracked", "--git-log", env={cp.ENV_VAR: WORD})[0], 0)
+
+    def test_annotated_tag_message_tagger_and_name_fire(self) -> None:
+        self.commit({"a": "1"}, msg="fine")
+        git(self.repo, "tag", "-a", "v1", "-m", f"release mentions {WORD}")
+        git(self.repo, "-c", f"user.email=z@{WORD}.example", "tag", "-a", "v2", "-m", "ok")
+        git(self.repo, "tag", f"v3-{WORD}")  # lightweight: only the name can match
+        rc, out, err = self.scan("--no-tracked", "--git-log", env={cp.ENV_VAR: WORD})
+        self.assertEqual(rc, 1)
+        self.assertIn("tag:v1  forbidden-1", out)
+        self.assertIn("tag:v2  forbidden-1", out)
+        self.assertIn(f"tag:v3-{WORD}#name  forbidden-1", out)
+        # Content lines never carry the matched text; a tag NAME is a location, like a path.
+        self.assertNotIn(WORD, "".join(ln for ln in out.splitlines() if "#name" not in ln))
+        self.assertNotIn(WORD, err)
+        # Tags are history metadata: the tracked-only scan does not look at them.
+        self.assertEqual(self.scan("--no-tracked", env={cp.ENV_VAR: WORD})[0], 0)
+
+    def test_tag_allowlist_uses_tag_slash_name(self) -> None:
+        self.commit({"a": "1", ".publication-allowlist": "forbidden-1 tag/v1\n"}, msg="fine")
+        git(self.repo, "tag", "-a", "v1", "-m", f"allowed {WORD}")
+        git(self.repo, "tag", "-a", "v2", "-m", f"not allowed {WORD}")
+        rc, out, _ = self.scan("--no-tracked", "--git-log", env={cp.ENV_VAR: WORD})
+        self.assertEqual((rc, "tag:v1" in out, "tag:v2  forbidden-1" in out), (1, False, True))
 
     def test_message_author_and_committer_fire(self) -> None:
         self.commit({"a": "1"}, msg=f"mentions {WORD}")
@@ -214,6 +257,23 @@ class Dist(Base):
         # Paths are printed by design (a member NAME that matches shows as path#name);
         # matched CONTENT never is. Check the content-only lines.
         self.assertNotIn(WORD, "".join(ln for ln in out.splitlines() if "#name" not in ln))
+
+    def test_utf16_member_content_fires_in_both_formats(self) -> None:
+        d = Path(self._t.name) / "dist"
+        d.mkdir()
+        body = codecs.BOM_UTF16_LE + f"v = {WORD}\n".encode("utf-16-le")
+        with tarfile.open(d / "p-1.tar.gz", "w:gz") as t:
+            ti = tarfile.TarInfo("p-1/u.txt")
+            ti.size = len(body)
+            t.addfile(ti, io.BytesIO(body))
+        with zipfile.ZipFile(d / "p-1-py3-none-any.whl", "w") as z:
+            z.writestr("u.txt", body)
+        self.commit({"a": "1"})
+        rc, out, err = self.scan("--no-tracked", "--dist", str(d), env={cp.ENV_VAR: WORD})
+        self.assertEqual(rc, 1)
+        self.assertIn("dist:p-1.tar.gz:p-1/u.txt  forbidden-1", out)
+        self.assertIn("dist:p-1-py3-none-any.whl:u.txt  forbidden-1", out)
+        self.assertNotIn(WORD, out + err)
 
     def test_dist_allowlist_uses_path_without_sdist_top_dir(self) -> None:
         d = self.make({"p-1/a.py": WORD}, {"b.py": "ok"})

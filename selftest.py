@@ -231,7 +231,7 @@ def main() -> int:
         spec.loader.exec_module(am)
 
         # 1) tautology-resistant control
-        src = "WHERE scope=\'all_staff\' AND active"  # noqa: intentional fixture
+        src = "WHERE scope=\'all_staff\' AND active"  # intentional fixture
         # use a needle that appears once
         src = "WHERE scope='" + "all_staff" + "' AND active"
         check("naive substring would stay green under OR TRUE mutant",

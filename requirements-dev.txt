@@ -1,0 +1,5 @@
+# Development tools for CI and local checks (lint, types, build, upload check); the library itself has no dependencies.
+ruff==0.17.0
+mypy==2.4.0
+build==1.6.1
+twine==7.0.0

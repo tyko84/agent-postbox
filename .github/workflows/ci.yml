@@ -42,7 +42,7 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-      - run: python -m pip install build==1.6.1
+      - run: python -m pip install -r requirements-dev.txt
       - run: python test_packaging.py
 
   lint:
@@ -55,7 +55,7 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-      - run: python -m pip install ruff==0.8.4 mypy==1.13.0
+      - run: python -m pip install -r requirements-dev.txt
       - run: ruff check .
       - run: mypy agent_mail.py install.py hooks/agent_mail_check.py check_handoff.py check_publication.py
 
@@ -87,8 +87,9 @@ jobs:
           if [ -z "$POSTBOX_FORBIDDEN" ]; then
             echo "::warning::POSTBOX_FORBIDDEN secret is unavailable (unset, or a fork/Dependabot run): only the generic detectors ran"
           fi
-      - run: python -m pip install build==1.6.1
+      - run: python -m pip install -r requirements-dev.txt
       - run: python -m build --outdir "$RUNNER_TEMP/dist" .
+      - run: python -m twine check "$RUNNER_TEMP/dist"/*
       - name: scan tracked files, built artifacts and git history
         # The secret is visible to this step only. An empty allowlist from outside the
         # checkout means a committed .publication-allowlist cannot silence the scan.
