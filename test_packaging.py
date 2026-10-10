@@ -15,18 +15,27 @@ then:
   * the wheel installs into a clean venv, `agent-postbox --version` works and a
     real send/list/canary/doctor round trip succeeds with AGENT_MAIL_DIR in a
     temp dir.
+A second build goes through scripts/repro_build.py (from a git checkout only;
+skipped with a message elsewhere, e.g. in an unpacked sdist) and pins what that
+script exists for: the sdist's tar headers name no builder (uid = gid = 0, empty
+user and group names), every timestamp is SOURCE_DATE_EPOCH, the gzip header
+has no timestamp and no file name, and no member of either artifact contains a
+path of the machine that built it.
 Positive controls: the same inspectors must FAIL on a tampered sdist and on
-planted bad names/text. Skips with a message if `build` (or network access for
-the build backend) is unavailable. POSIX only. Stdlib + `build`.
+planted bad names/text, owners, timestamps and paths. Skips with a message if
+`build` (or network access for the build backend) is unavailable. POSIX only.
+Stdlib + `build`.
 """
 from __future__ import annotations
 
 import fnmatch
+import hashlib
 import importlib.util
 import io
 import os
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import tarfile
@@ -106,6 +115,56 @@ def scan(members: dict[str, bytes], patterns: tuple[str, ...] | None = None) -> 
     return hits
 
 
+def sdist_owner_leaks(path: Path) -> list[str]:
+    """Tar members whose header identifies a builder: a non-zero uid/gid or a user/group
+    name other than "" or root. Reported as "<member>  <field>"; the value is never printed
+    (it would be somebody's login name)."""
+    out: list[str] = []
+    with tarfile.open(path) as t:
+        for m in t.getmembers():
+            for field, bad in (("uid", m.uid != 0), ("gid", m.gid != 0),
+                               ("uname", m.uname not in ("", "root")),
+                               ("gname", m.gname not in ("", "root")),
+                               ("pax", bool(m.pax_headers))):
+                if bad:
+                    out.append(f"{m.name}  {field}")
+    return out
+
+
+def sdist_mtimes(path: Path) -> set[float]:
+    with tarfile.open(path) as t:
+        return {m.mtime for m in t.getmembers()}
+
+
+def gzip_header(path: Path) -> tuple[int, int]:
+    """(flags, mtime) of a gzip file. Flag bit 3 (0x08) means a file name is stored."""
+    with open(path, "rb") as fh:
+        head = fh.read(10)
+    _magic, _method, flags, mtime = struct.unpack("<HBBI", head[:8])
+    return flags, mtime
+
+
+def build_paths(members: dict[str, bytes], needles: list[str]) -> list[str]:
+    """Members whose name or content contains one of `needles` (paths of the build machine).
+    Reported as "<member>  build-path-<n>": positional, the path itself is not printed."""
+    out: list[str] = []
+    for name, data in members.items():
+        for i, needle in enumerate(needles, 1):
+            if needle and (needle in name or needle.encode() in data):
+                out.append(f"{name}  build-path-{i}")
+    return out
+
+
+def _needles(*paths: Path | str) -> list[str]:
+    """Each path as given and fully resolved (macOS temp dirs are reached through a symlink)."""
+    out: list[str] = []
+    for p in paths:
+        for s in (str(p), os.path.realpath(p)):
+            if s not in out and len(s) > 4:
+                out.append(s)
+    return out
+
+
 def _skip_reason() -> str | None:
     if importlib.util.find_spec("build") is None:
         return "the 'build' package is not installed (pip install build); packaging NOT verified"
@@ -156,6 +215,11 @@ class Packaging(unittest.TestCase):
     def test_no_private_mentions_in_either_artifact(self) -> None:
         self.assertEqual(scan(wheel_members(self.wheel)), [])
         self.assertEqual(scan(sdist_members(self.sdist)), [])
+
+    def test_no_build_paths_in_either_artifact(self) -> None:
+        needles = _needles(self.tmp.name, ROOT)
+        self.assertEqual(build_paths(wheel_members(self.wheel), needles), [])
+        self.assertEqual(build_paths(sdist_members(self.sdist), needles), [])
 
     def test_version_has_one_source(self) -> None:
         spec = importlib.util.spec_from_file_location("agent_mail_v", ROOT / "agent_mail.py")
@@ -253,6 +317,122 @@ class Packaging(unittest.TestCase):
                 del os.environ[check_publication.ENV_VAR]
             else:
                 os.environ[check_publication.ENV_VAR] = saved
+
+
+
+REPRO = ROOT / "scripts" / "repro_build.py"
+
+
+def _repro_skip_reason() -> str | None:
+    if _skip_reason():
+        return _skip_reason()
+    if not REPRO.is_file():
+        return "scripts/repro_build.py is not here (an unpacked sdist?); reproducible build NOT verified"
+    try:
+        inside = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--show-toplevel"],
+                                text=True, capture_output=True)
+    except FileNotFoundError:
+        return "git is not installed; reproducible build NOT verified"
+    if inside.returncode != 0 or os.path.realpath(inside.stdout.strip()) != os.path.realpath(ROOT):
+        return "not a git checkout of this project; reproducible build NOT verified"
+    return None
+
+
+@unittest.skipIf(_repro_skip_reason() is not None, _repro_skip_reason() or "")
+class ReproducibleBuild(unittest.TestCase):
+    """The artifacts scripts/repro_build.py makes (it builds the HEAD commit, not the work tree)."""
+    tmp: tempfile.TemporaryDirectory[str]
+    wheel: Path
+    sdist: Path
+    epoch: int
+    log: str
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.tmp = tempfile.TemporaryDirectory()
+        base = Path(cls.tmp.name)
+        scratch, out = base / "scratch", base / "out"
+        scratch.mkdir()
+        env = {k: v for k, v in os.environ.items() if k != "SOURCE_DATE_EPOCH"}
+        env["TMPDIR"] = str(scratch)  # the script builds under here, so the path is known
+        r = subprocess.run([sys.executable, str(REPRO), "--outdir", str(out)], cwd=base, env=env,
+                           text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        cls.log = r.stdout
+        if r.returncode != 0:
+            net = re.search(r"Connection|Temporary failure|No matching distribution|"
+                            r"Could not find a version|network", r.stdout, re.I)
+            cls.tmp.cleanup()
+            if r.returncode == 2 and net:
+                raise unittest.SkipTest("cannot fetch the build backend (no network); "
+                                        "reproducible build NOT verified")
+            raise AssertionError(f"repro_build.py failed ({r.returncode}):\n{r.stdout[-3000:]}")
+        cls.wheel = next(out.glob("*.whl"))
+        cls.sdist = next(out.glob("*.tar.gz"))
+        m = re.search(r"^SOURCE_DATE_EPOCH: (\d+)$", r.stdout, re.M)
+        assert m, r.stdout
+        cls.epoch = int(m.group(1))
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.tmp.cleanup()
+
+    def test_contents_are_the_allow_lists(self) -> None:
+        wheel, sdist = wheel_members(self.wheel), sdist_members(self.sdist)
+        self.assertIn("agent_mail.py", wheel)
+        self.assertEqual(unexpected(list(wheel), WHEEL_ALLOWED, strip_top=False), [])
+        self.assertTrue(any(n.endswith("/agent_mail.py") for n in sdist))
+        self.assertEqual(unexpected(list(sdist), SDIST_ALLOWED, strip_top=True), [])
+        self.assertEqual(scan(wheel), [])
+        self.assertEqual(scan(sdist), [])
+
+    def test_sdist_names_no_builder(self) -> None:
+        self.assertEqual(sdist_owner_leaks(self.sdist), [])
+
+    def test_timestamps_are_source_date_epoch(self) -> None:
+        self.assertEqual(sdist_mtimes(self.sdist), {self.epoch})
+        self.assertEqual(gzip_header(self.sdist), (0, 0), "gzip header: no file name, mtime 0")
+        with tarfile.open(self.sdist) as t:
+            names = t.getnames()
+        self.assertEqual(names, sorted(names))
+        with zipfile.ZipFile(self.wheel) as z:
+            stamps = {i.date_time for i in z.infolist()}
+        self.assertEqual(len(stamps), 1, stamps)
+
+    def test_no_build_paths_in_either_artifact(self) -> None:
+        needles = _needles(self.tmp.name, ROOT)
+        self.assertEqual(build_paths(wheel_members(self.wheel), needles), [])
+        self.assertEqual(build_paths(sdist_members(self.sdist), needles), [])
+
+    def test_hashes_are_printed(self) -> None:
+        for art in (self.wheel, self.sdist):
+            self.assertIn(f"{hashlib.sha256(art.read_bytes()).hexdigest()}  {art.name}", self.log)
+
+    # ---- positive controls: the inspectors must be able to fail ----
+
+    def test_control_owner_timestamp_and_path_are_caught(self) -> None:
+        base = Path(self.tmp.name)
+        needles = _needles(self.tmp.name, ROOT)
+        leaky = base / "leaky.tar.gz"
+        planted = f"built in {needles[0]}/src".encode()
+        with tarfile.open(self.sdist) as src, tarfile.open(leaky, "w:gz") as dst:
+            for m in src.getmembers():
+                f = src.extractfile(m) if m.isfile() else None
+                dst.addfile(m, f)
+            ti = tarfile.TarInfo(src.getnames()[0].split("/")[0] + "/docs/built.md")
+            ti.size = len(planted)
+            ti.uid, ti.gid, ti.uname, ti.gname = 1000, 1000, "builder", "builders"
+            ti.mtime = self.epoch + 60
+            dst.addfile(ti, io.BytesIO(planted))
+        self.assertEqual(sorted(x.split("  ")[1] for x in sdist_owner_leaks(leaky)),
+                         ["gid", "gname", "uid", "uname"])
+        self.assertNotIn("builder", " ".join(sdist_owner_leaks(leaky)), "the name is never printed")
+        self.assertEqual(sdist_mtimes(leaky), {self.epoch, self.epoch + 60})
+        flags, mtime = gzip_header(leaky)   # tarfile's own gzip writer stamps the wall clock
+        self.assertTrue(flags & 0x08 or mtime != 0)
+        hits = build_paths(sdist_members(leaky), needles)
+        self.assertEqual(len(hits), 1, hits)
+        self.assertTrue(hits[0].endswith("docs/built.md  build-path-1"), hits)
+        self.assertNotIn(needles[0], hits[0], "the path is never printed")
 
 
 if __name__ == "__main__":

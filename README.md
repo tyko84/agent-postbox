@@ -61,13 +61,28 @@ agent-postbox is one stdlib-only file. **POSIX only** (Linux, macOS): the
 atomic-send and lock code relies on POSIX file semantics, CI runs on Linux and
 macOS, and Windows is untested and unsupported. Python 3.10-3.13.
 
-**Option 1: pip, from source.** Not on PyPI; install from a clone:
+> **Not on PyPI. Do not `pip install agent-postbox`.** This project is not
+> published on PyPI. The PyPI distribution named
+> [`agent-postbox`](https://pypi.org/project/agent-postbox/) is a separate,
+> unrelated project by a different author; installing it by name gives you that
+> project, not this one. Always install this project from a clone of
+> <https://github.com/tyko84/agent-postbox>, or from a wheel you built from a
+> clone ([docs/packaging.md](docs/packaging.md)).
+
+**Option 1: pip, from a clone** (a local path, never the bare name):
 
 ```bash
 git clone https://github.com/tyko84/agent-postbox
 python -m pip install ./agent-postbox
 agent-postbox --version
 ```
+
+The `./` matters: `pip install ./agent-postbox` installs the directory you just
+cloned, while `pip install agent-postbox` would ask PyPI for the unrelated
+distribution of the same name. To check which one an environment has,
+`python -m pip show -f agent-postbox` shows, for this project,
+`Home-page: https://github.com/tyko84/agent-postbox` and a single module,
+`agent_mail.py`.
 
 This installs the `agent-postbox` command (and the `agent_mail` module) with no
 dependencies. Pip installs only the tool; it does not copy the spec, the
