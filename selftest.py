@@ -1759,6 +1759,68 @@ def main() -> int:
               and later.get("claims_held") == [] and later["claims"]["expired"] == 201,
               repr(later.get("claims_attention_truncated")))
 
+    print("\na reader that goes away (PROTOCOL.md §35)")
+    with tempfile.TemporaryDirectory() as tmp35:
+        box35 = Path(tmp35) / "mail"
+        box35.mkdir()
+        env35 = {**os.environ, "AGENT_MAIL_DIR": str(box35), "AGENT_MAIL_IDENTITY": "bob"}
+        tool35 = [sys.executable, str(HERE / "agent_mail.py")]
+        # what the installed console script runs: `from agent_mail import main; sys.exit(main())`
+        console35 = [sys.executable, "-c", f"import sys; sys.path.insert(0, {str(HERE)!r}); "
+                                           "from agent_mail import main; sys.exit(main())"]
+
+        def gone35(argv: list[str]) -> tuple[int, str]:
+            """Run with stdout on a pipe whose reader has already left."""
+            r_fd, w_fd = os.pipe()
+            os.close(r_fd)
+            try:
+                r = subprocess.run(argv, stdout=w_fd, stderr=subprocess.PIPE, text=True,
+                                   env=env35, timeout=120)
+            finally:
+                os.close(w_fd)
+            return r.returncode, r.stderr
+
+        say35 = ["send", "--type", "NOTICE", "--from", "alice", "--to", "bob", "--body", "b"]
+        r = subprocess.run(tool35 + say35 + ["--subject", "PIPE-CONTROL-TOKEN"],
+                           capture_output=True, text=True, env=env35, timeout=120)
+        listed = subprocess.run(tool35 + ["list"], capture_output=True, text=True, env=env35,
+                                timeout=120)
+        check("control: with a reader, send prints its id and list prints the message, exit 0",
+              r.returncode == 0 and "\nid: " in r.stdout and listed.returncode == 0
+              and "PIPE-CONTROL-TOKEN" in listed.stdout, r.stderr + listed.stderr)
+        for label, base in (("python agent_mail.py", tool35), ("the console script", console35)):
+            for name, argv in (("list", ["list"]), ("status --json", ["status", "--json"]),
+                               ("doctor", ["doctor"]), ("show", ["show", "PIPE"]),
+                               ("--help", ["--help"])):
+                if name == "show":
+                    argv = ["show", listed.stdout.split()[-1]]
+                got = gone35(base + argv)
+                check(f"{label}: `{name}` with its reader gone exits 141 and prints nothing "
+                      "on stderr", got == (141, ""), repr(got))
+            got = gone35(base + say35 + ["--subject", f"NO-READER {label}", "--key", f"k {label}"])
+            n = sum(f"subject: NO-READER {label}\n" in f.read_text(encoding="utf-8")
+                    for f in box35.glob("*.md"))
+            check(f"{label}: `send` with its reader gone exits 0, says nothing, and the "
+                  "message exists exactly once", got == (0, "") and n == 1, f"{got!r} n={n}")
+            again = subprocess.run(base + say35 + ["--subject", f"NO-READER {label}", "--key",
+                                                   f"k {label}"],
+                                   capture_output=True, text=True, env=env35, timeout=120)
+            check("...and a keyed retry is answered `duplicate of`, nothing written",
+                  again.returncode == 0 and again.stdout.startswith("duplicate of ")
+                  and sum(f"subject: NO-READER {label}\n" in f.read_text(encoding="utf-8")
+                          for f in box35.glob("*.md")) == 1, again.stdout + again.stderr)
+            got = gone35(base + ["show", "NOSUCHID"])
+            check(f"{label}: a real error keeps its own status and its line on stderr",
+                  got == (1, "no message with id NOSUCHID\n"), repr(got))
+        check("control: the hook has something to deliver here",
+              "PIPE-CONTROL-TOKEN" in pickup(box35, "bob"))
+        got = gone35([sys.executable, str(HOOK)])
+        check("the hook with its reader gone still exits 0 and is silent on stderr",
+              got == (0, ""), repr(got))
+        check("nothing but mail and resolved key markers is left behind",
+              all(f.name.endswith(".md") or f.name.startswith(".idem.") and "." not in f.name[6:]
+                  for f in box35.iterdir()), str(sorted(f.name for f in box35.iterdir())))
+
     print("\nversion")
     rv = subprocess.run([sys.executable, str(HERE / "agent_mail.py"), "--version"],
                         capture_output=True, text=True)
