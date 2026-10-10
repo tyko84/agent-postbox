@@ -7,6 +7,10 @@ behaviour).
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.3.0] - 2026-10-10
+
 Keyed sends and claim ownership are now exact, the publication scanner no longer
 passes what it did not read, and builds are reproducible. Callers see new exit
 statuses in a few cases (listed under Changed); mailboxes need no migration and
@@ -37,6 +41,36 @@ statuses in a few cases (listed under Changed); mailboxes need no migration and
   ASK/ANSWER with a retried answer; 100 concurrent sends with two readers).
 - `test_packaging.py` pins the reproducible-build properties and checks that no
   member of any built artifact contains a build-machine path.
+- `status` names who holds what (PROTOCOL.md section 34): `status --json` gains
+  `claims_held` and `claims_attention` (at most 200 rows each, with
+  `claims_held_truncated` / `claims_attention_truncated`), `contested_scopes` and
+  `scope_filter`; text `status` prints a held-claims table; `status --scope SCOPE`
+  filters both lists; new problem code `CONTESTED_SCOPE`; `doctor` prints
+  `contested_scopes`. Schema stays 1. A consumer that checks for an exact top-level
+  key set must add the six keys.
+- `scripts/repro_build.py` writes `SHA256SUMS` (`--sums FILE`), verifies a download
+  by rebuilding (`--verify DIR`) and prints a `BUILDINFO` block; the build backend is
+  pinned by `build-constraints.txt` (setuptools 84.0.0), read from the commit being
+  built. CI builds the same commit on Linux and macOS and compares the bytes.
+- `check_publication.py --dist` rejects builder identity in archives, with or without
+  a forbidden list: tar owner names other than empty or `root`, non-zero uid/gid,
+  unexpected pax records, a gzip header with a file name, comment, extra field or
+  timestamp, zip extra fields other than zip64, zip comments, unusual zip attributes,
+  operating-system litter such as `__MACOSX/` and `.DS_Store`, and a
+  `direct_url.json` with a `file:` URL (rules `builder-*`). One line per artifact and
+  rule, value never printed. A plain `python -m build` sdist now fails the scan;
+  `scripts/repro_build.py` output passes.
+- `check_publication.py --dist` reads a `SHA256SUMS` file beside the artifacts and
+  verifies it against them (`checksum-malformed`, `checksum-mismatch`,
+  `checksum-unlisted`).
+- `.github/workflows/release.yml`: pushing an annotated tag `vX.Y.Z` on `main` runs
+  the tests, builds the wheel and sdist reproducibly, runs the publication scan, and
+  attaches both with `SHA256SUMS` and a build provenance attestation to a draft
+  GitHub release. Assets are never replaced and the tag is never moved.
+- Tests: `test_field.py` has bounded waits, a watchdog, `FIELD_DEBUG=1` and per-phase
+  time budgets scaled to the machine (73 checks); `test_hardening.py` pins the
+  `status` probe window; `test_adversarial.py` kills sixteen keyed writers at
+  arbitrary moments and restarts them; `stress_test.py` kills a sender mid-publish.
 
 ### Changed
 
@@ -88,6 +122,13 @@ statuses in a few cases (listed under Changed); mailboxes need no migration and
 - `send` printed a traceback when the mailbox was read-only, full, or a lock or
   marker file was unreadable. It now prints one line and exits 1.
 - `doctor` crashed when a hidden temp file vanished or was a dangling symlink.
+- `status` raised OverflowError on a hand-written `date` or `expires` that UTC cannot
+  represent (year 1 or 9999 with an offset); it is now clamped.
+- `list | head` ended with a `BrokenPipeError` traceback; it now exits 141 quietly.
+- `test_field.py`: a failed burst writer could leave the readers looping for ever, and
+  the renewal check depended on a one-to-two-second wall-clock margin.
+- `test_publication.py`: temporary repositories no longer run background `git gc`,
+  which could fail a run with `Directory not empty: 'pack'` during cleanup.
 
 ### Security
 
@@ -257,7 +298,8 @@ the first tag in the current repository.
 - Breaking a stale (older than 60 seconds) scope lock is not atomic; see the
   README "Security and limitations".
 
-[Unreleased]: https://github.com/tyko84/agent-postbox/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/tyko84/agent-postbox/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/tyko84/agent-postbox/releases/tag/v0.3.0
 [0.2.2]: https://github.com/tyko84/agent-postbox/releases/tag/v0.2.2
 [0.2.1]: https://github.com/tyko84/agent-postbox/releases/tag/v0.2.1
 [0.2.0]: https://github.com/tyko84/agent-postbox/releases/tag/v0.2.0

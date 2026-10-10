@@ -1123,3 +1123,182 @@ dangling reply moves exactly its own count and code, with a fresh (under 60 s)
 copy of the same file as the control that stays `in_flight`. `status` leaves
 every file, mtime and hash unchanged, creates nothing, and a claim on a scope
 whose orphaned lock was just probed still succeeds. `selftest.py` pins this.
+
+---
+
+## 34. `status` names who holds what
+
+§29 and §33 report claims as counts. "Who holds `file:s.py`, and until when"
+could only be answered by reading `list` output and each claim's file.
+`status` now answers it. It stays strictly read-only and deterministic for a
+given `--now` (§29, §33), and what it reports is evidence, never authority
+(§0): a row says a claim file exists and has not expired, not that its sender
+may do anything.
+
+**`status --json`: added keys.** The schema number stays 1: §29 allows keys to
+be added within a schema number and none is renamed, removed or changed.
+
+| Key | Value |
+|---|---|
+| `claims_held` | list, one object per `held` CLAIM (§19: unsuperseded, `expires` in the future), at most 200 |
+| `claims_held_truncated` | number of held claims left out of `claims_held` by the cap |
+| `claims_attention` | list, one object per (claim, reason) for unsuperseded claims that need a look, at most 200 |
+| `claims_attention_truncated` | number of rows left out of `claims_attention` by the cap |
+| `contested_scopes` | number of scopes held by more than one sender at `now` |
+| `scope_filter` | the `--scope` value the two lists were filtered by, or `null` |
+
+**A `claims_held` row** always has exactly these keys:
+
+| Key | Value |
+|---|---|
+| `id` | the claim's id, as stored |
+| `sender` | the holder: the claim's `from`, lower-cased, exactly the string `send` compares when it refuses a rival (§5) |
+| `to` | the claim's `to`, lower-cased |
+| `scope` | the claim's `scope` exactly as stored, or `null` when it names none |
+| `expires` | the claim's expiry as UTC, `YYYY-MM-DDTHH:MM:SSZ` |
+| `seconds_left` | whole seconds from `now` to the expiry, rounded down, never negative |
+| `date` | the claim's `date` as UTC in the same form, or `null` when it has none |
+| `supersedes` | the id this claim cites in `supersedes:`, as stored, or `null` |
+
+`sender` is the **writer token** (§27), never a display alias and never
+expanded through the alias map: a lease belongs to the one identity that filed
+it, and that string is what §5 enforces. A hand-written claim whose `from` is
+an alias token is reported under that token, as stored. `expires` and `date`
+are normalised to UTC the way `now` and `agents[].last_message_at` already
+are, so a lease written with another offset (or, by hand, with none, which
+reads as UTC) is comparable without parsing; fractions of a second are
+dropped from the text and kept in the comparison. An instant UTC cannot
+represent (a hand-written year 9999 with a negative offset) is reported as
+the nearest second it can. The stored text is unchanged and `show <id>`
+prints it.
+
+**A `claims_attention` row** has `id`, `sender`, `scope` (as above) and
+`reason`, one of these fixed strings. A claim with two reasons has two rows.
+
+| Reason | The claim is unsuperseded and |
+|---|---|
+| `CONTESTED_SCOPE` | is held, and another sender also holds its scope (see below) |
+| `MALFORMED_EXPIRES` | has an `expires` that cannot be read: not a hold (§5) |
+| `NO_EXPIRES` | has no `expires`: not a hold (§5) |
+| `TOO_LONG` | is held with more than 168 hours left (§5) |
+| `EXPIRED` | has an `expires` at or before `now` |
+
+`EXPIRED` is the ordinary end of every claim that was not renewed (§32), so
+it is not a fault; it is listed because "whose lease on X just ran out" is
+the next question after "who holds X", and it sorts last so the cap drops
+those rows first. `MALFORMED_EXPIRES` and `NO_EXPIRES` rows together are the
+claims counted by `claims.malformed_expiry`.
+
+**Order.** `claims_held` is sorted by `scope` (by code point; claims that
+name no scope come last), then by `id` compared in upper case (§32).
+`claims_attention` is sorted by reason in the order of the table above, then
+the same way. A row is ordered by the `scope` it reports, so an oversize one
+(below) sorts with the claims that name none. The cap keeps the first 200
+rows of that order.
+
+**Caps and sizes.** Each list holds at most 200 rows and its `*_truncated`
+key says how many were left out, so with no `--scope`
+`len(claims_held) + claims_held_truncated == claims.held`, and a mailbox of
+any size produces a bounded number of rows. A scope is reported exactly as stored,
+never shortened, because a shortened scope names a different resource. `send`
+refuses a `--scope` longer than 4096 characters (§29), but reading sets no
+limit on one header, so a hand-written claim can carry a longer one: such a
+row has `"scope": null` and the extra key `"scope_oversize": true`, the only
+key a row may have beyond those listed. The claim is still counted, still
+compared for contest by its real scope, and still findable by `id`. `sender`
+and `to` are reported as stored, as `agents[].agent` (§29) already reports
+every sender: `send` limits them to 128 characters.
+
+**Contested scopes.** §5 and §30 make `send` refuse a second held claim on a
+scope from another sender, so a mailbox written only by `send` never has one.
+A file written by hand or by a version older than §5's scope rule can. A
+scope is contested when two or more held claims that name it have different
+`sender`s; one sender holding its own scope twice is not contested (§5 allows
+re-claiming). Each such claim gets a `CONTESTED_SCOPE` row,
+`contested_scopes` counts the scopes, and `problems` (§33) gains the code
+`CONTESTED_SCOPE` with that count, appended after `STALLED_AGENT` so the
+order of the existing codes is unchanged. Nothing is resolved or voided by
+the tool: which claim stands is for the senders to settle (DISPUTE, §12), and
+both stay `held`.
+
+**`status --scope SCOPE`.** Keeps only the rows of `claims_held` and
+`claims_attention` whose stored scope equals `SCOPE` exactly (the comparison
+`send` makes: after trimming surrounding whitespace, case-sensitive, no
+patterns), before the cap is applied, and reports the value as
+`scope_filter`. Every other key, including the `claims` counts,
+`contested_scopes` and `problems`, still describes the whole mailbox. No
+match is not an error: the lists are empty and the exit status is 0. An empty
+`--scope` is refused (exit 2) like any other unusable argument.
+
+**Text `status`.** After the `claims:` line, when anything is held, a table
+of at most 20 held claims in the same order: scope, holder, expiry, time
+left; `... and N more` when there are more. It is for people: a scope longer
+than 48 characters is shortened there with `...`, and `-` stands for no
+scope. Tools read `--json`.
+
+**`doctor`.** One added line, `contested_scopes: N`, followed by at most 20
+lines naming each contested scope and its holders with their claim ids. Like
+everything §33 added it is reported, never a new reason to FAIL (§20).
+
+**Deliberately not reported.** No body, ever (§33). No `subject`: no JSON
+output of this tool carries one, a subject is free text chosen by the sender,
+and a consumer that wants it can `show <id>`. No file name or path: the only
+path in `status` output is still the `mailbox` key, and a scope that looks
+like a path is the sender's text, reported because it is the answer, not a
+path the tool derived or checked. No superseded claims (they hold nothing;
+`claims.superseded` counts them). No judgement about whether the holder is
+alive: `agents` (§29) already says who has gone quiet.
+
+**Example.** A mailbox with five claims, evaluated with
+`status --json --now 2030-01-01T12:00:00Z`: alice holds `file:s.py`; bob
+renewed a claim without a scope, writing the new expiry with a `+02:00`
+offset; carol's claim on `file:t.py` expired yesterday and her claim on
+`db:schema` has `expires: tomorrow`. The added keys are:
+
+```json
+{
+  "claims_attention": [
+    {"id": "01ARZ3NDEKTSV4RRFFQ69G5FA4", "reason": "MALFORMED_EXPIRES", "scope": "db:schema", "sender": "carol"},
+    {"id": "01ARZ3NDEKTSV4RRFFQ69G5FA3", "reason": "EXPIRED", "scope": "file:t.py", "sender": "carol"}
+  ],
+  "claims_attention_truncated": 0,
+  "claims_held": [
+    {"date": "2030-01-01T09:00:00Z", "expires": "2030-01-01T18:00:00Z",
+     "id": "01ARZ3NDEKTSV4RRFFQ69G5FA0", "scope": "file:s.py", "seconds_left": 21600,
+     "sender": "alice", "supersedes": null, "to": "all"},
+    {"date": "2030-01-01T10:00:00Z", "expires": "2030-01-02T10:00:00Z",
+     "id": "01ARZ3NDEKTSV4RRFFQ69G5FA2", "scope": null, "seconds_left": 79200,
+     "sender": "bob", "supersedes": "01ARZ3NDEKTSV4RRFFQ69G5FA1", "to": "all"}
+  ],
+  "claims_held_truncated": 0,
+  "contested_scopes": 0,
+  "scope_filter": null
+}
+```
+
+and `claims` is `{"held": 2, "expired": 1, "malformed_expiry": 1,
+"superseded": 1}`. To filter without `--scope`, any JSON tool will do, for
+example `jq '.claims_held[] | select(.sender == "alice")'`.
+
+**Compatibility.** Nothing existing changes: no key, count, exit status or
+message is renamed, removed or redefined, and `status` without `--scope`
+prints every line it printed before. A consumer that checks for an exact set
+of top-level keys must add the six above. Records older than this section
+need no migration: every field read here has existed since §5 and §11.
+
+**Invariant a test must pin.** (a) The example above, byte for byte in its
+values. (b) Not listed in `claims_held`: a superseded claim, an expired one,
+one with a missing or unreadable expiry; listed: a claim that only a foreign
+message cites in `supersedes:` (§32), a claim with no scope, a hand-written
+one, one with a lower-case id, one with a non-ASCII scope, one whose `from`
+is an alias token (unexpanded). (c) Two hand-written held claims on one scope
+from different senders give `contested_scopes: 1`, two `CONTESTED_SCOPE`
+rows and the `CONTESTED_SCOPE` problem code; the same mailbox without the
+second claim, and one where the same sender holds the scope twice, give
+none. (d) 201 held claims give 200 rows and `claims_held_truncated: 1`; a
+4096-character scope written by `send` is reported whole and a longer,
+hand-written one as `null` with `scope_oversize`.
+(e) `--scope` keeps exactly the matching rows, leaves the counts alone and
+exits 0 when nothing matches. (f) No output contains a subject or a body,
+and `status` leaves every file, mtime and hash unchanged. `selftest.py` pins
+all six.

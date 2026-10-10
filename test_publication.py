@@ -11,10 +11,17 @@ from __future__ import annotations
 import bz2
 import codecs
 import contextlib
+import grp
 import gzip
+import importlib.util
+import hashlib
 import io
 import lzma
 import os
+import pwd
+import shutil
+import stat
+import struct
 import subprocess
 import sys
 import tarfile
@@ -23,6 +30,8 @@ import unicodedata
 import unittest
 import warnings
 import zipfile
+import zlib
+from collections.abc import Sequence
 from pathlib import Path
 from unittest import mock
 
@@ -43,6 +52,12 @@ def run(args: list[str], env: dict[str, str] | None = None) -> tuple[int, str, s
     return rc, out.getvalue(), err.getvalue()
 
 
+# A temporary repository must never start a background `git gc`: a test that makes many
+# commits can trigger `gc --auto`, which detaches and is still writing into
+# .git/objects/pack while the temporary directory is being removed.
+NO_GC = ("gc.auto=0", "gc.autoDetach=false", "maintenance.auto=false")
+
+
 def git(repo: Path, *a: str) -> None:
     subprocess.run(["git", "-C", str(repo), *a], check=True, stdout=subprocess.DEVNULL,
                    stderr=subprocess.DEVNULL)
@@ -53,13 +68,63 @@ def git_out(repo: Path, *a: str, stdin: str | None = None) -> str:
                           stderr=subprocess.DEVNULL, text=True, input=stdin).stdout.strip()
 
 
+def no_gc(repo: Path) -> None:
+    for setting in NO_GC:
+        git(repo, "config", *setting.split("=", 1))
+
+
+def clone(cwd: Path, *a: str) -> None:
+    """`git clone` whose result has background gc switched off from its first command."""
+    git(cwd, "clone", "-q", *(x for setting in NO_GC for x in ("-c", setting)), *a)
+
+
+def gz(raw: bytes) -> bytes:
+    """gzip with the header a clean build has: no file name, no timestamp."""
+    return gzip.compress(raw, mtime=0)
+
+
+TarMember = tarfile.TarInfo | tuple[str, bytes] | tuple[tarfile.TarInfo, bytes]
+
+
+def tar_bytes(members: Sequence[TarMember], comp: str = "",
+              fmt: int = tarfile.PAX_FORMAT) -> bytes:
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w", format=fmt) as t:
+        for m in members:
+            if isinstance(m, tarfile.TarInfo):
+                t.addfile(m)
+                continue
+            ti = m[0] if isinstance(m[0], tarfile.TarInfo) else tarfile.TarInfo(m[0])
+            ti.size = len(m[1])
+            t.addfile(ti, io.BytesIO(m[1]))
+    raw = buf.getvalue()
+    if comp == "gz":
+        return gz(raw)
+    if comp == "bz2":
+        return bz2.compress(raw)
+    return lzma.compress(raw) if comp == "xz" else raw
+
+
+def zip_bytes(members: Sequence[tuple[str | zipfile.ZipInfo, bytes]], comment: bytes = b"") -> bytes:
+    buf = io.BytesIO()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")            # duplicate member names are deliberate
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+            z.comment = comment
+            for n, b in members:
+                z.writestr(n, b)
+    return buf.getvalue()
+
+
 class Base(unittest.TestCase):
     def setUp(self) -> None:
-        self._t = tempfile.TemporaryDirectory()
+        # ignore_cleanup_errors is the second line of defence only; NO_GC is the fix.
+        self._t = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self._t.cleanup)
         self.repo = Path(self._t.name) / "repo"
         self.repo.mkdir()
         git(self.repo, "init", "-q")
+        no_gc(self.repo)
         git(self.repo, "config", "user.email", "dev@example.invalid")
         git(self.repo, "config", "user.name", "Dev")
 
@@ -242,12 +307,8 @@ class Dist(Base):
     def make(self, tar_members: dict[str, str], whl_members: dict[str, str]) -> Path:
         d = Path(self._t.name) / "dist"
         d.mkdir()
-        with tarfile.open(d / "p-1.tar.gz", "w:gz") as t:
-            for n, c in tar_members.items():
-                b = c.encode()
-                ti = tarfile.TarInfo(n)
-                ti.size = len(b)
-                t.addfile(ti, io.BytesIO(b))
+        (d / "p-1.tar.gz").write_bytes(
+            tar_bytes([(n, c.encode()) for n, c in tar_members.items()], "gz"))
         with zipfile.ZipFile(d / "p-1-py3-none-any.whl", "w") as z:
             for n, c in whl_members.items():
                 z.writestr(n, c)
@@ -275,10 +336,7 @@ class Dist(Base):
         d = Path(self._t.name) / "dist"
         d.mkdir()
         body = codecs.BOM_UTF16_LE + f"v = {WORD}\n".encode("utf-16-le")
-        with tarfile.open(d / "p-1.tar.gz", "w:gz") as t:
-            ti = tarfile.TarInfo("p-1/u.txt")
-            ti.size = len(body)
-            t.addfile(ti, io.BytesIO(body))
+        (d / "p-1.tar.gz").write_bytes(tar_bytes([("p-1/u.txt", body)], "gz"))
         with zipfile.ZipFile(d / "p-1-py3-none-any.whl", "w") as z:
             z.writestr("u.txt", body)
         self.commit({"a": "1"})
@@ -539,10 +597,7 @@ class SilentSkips(Base):
         d = Path(self._t.name) / "dist"
         d.mkdir()
         body = b"y" * 200
-        with tarfile.open(d / "p-1.tar.gz", "w:gz") as t:
-            ti = tarfile.TarInfo("p-1/big.txt")
-            ti.size = len(body)
-            t.addfile(ti, io.BytesIO(body))
+        (d / "p-1.tar.gz").write_bytes(tar_bytes([("p-1/big.txt", body)], "gz"))
         with zipfile.ZipFile(d / "p-1-py3-none-any.whl", "w") as z:
             z.writestr("big.txt", body)
         with mock.patch.object(cp, "MAX_BYTES", 100):
@@ -557,8 +612,8 @@ class SilentSkips(Base):
         self.commit({"a": "1"}, msg=f"old {WORD}")
         self.commit({"a": "2"}, msg="new")
         tmp = Path(self._t.name)
-        git(tmp, "clone", "-q", "--depth", "1", self.repo.as_uri(), "shallow")
-        git(tmp, "clone", "-q", self.repo.as_uri(), "full")
+        clone(tmp, "--depth", "1", self.repo.as_uri(), "shallow")
+        clone(tmp, self.repo.as_uri(), "full")
         rc, out, _ = run(["--root", str(tmp / "shallow"), "--git-log"], {cp.ENV_VAR: WORD})
         self.assertEqual((rc, out.strip()), (1, "git:history  unscanned-shallow-clone"))
         rc, out, _ = run(["--root", str(tmp / "full"), "--git-log"], {cp.ENV_VAR: WORD})
@@ -644,33 +699,56 @@ class SilentSkips(Base):
         self.assertEqual((rc, "suppressed" in err), (1, False))
 
 
-def tar_bytes(members: list[tarfile.TarInfo | tuple[str, bytes]], comp: str = "") -> bytes:
-    buf = io.BytesIO()
-    with tarfile.open(fileobj=buf, mode="w") as t:
-        for m in members:
-            if isinstance(m, tarfile.TarInfo):
-                t.addfile(m)
-            else:
-                ti = tarfile.TarInfo(m[0])
-                ti.size = len(m[1])
-                t.addfile(ti, io.BytesIO(m[1]))
-    raw = buf.getvalue()
-    if comp == "gz":
-        return gzip.compress(raw)
-    if comp == "bz2":
-        return bz2.compress(raw)
-    return lzma.compress(raw) if comp == "xz" else raw
+class Checksums(Base):
+    """A SHA256SUMS file beside the artifacts is read and checked, never passed unread."""
 
+    def setUp(self) -> None:
+        super().setUp()
+        self.commit({"a": "1"})
+        self.d = Path(self._t.name) / "dist"
+        self.d.mkdir()
+        self.whl = self.d / "p-1-py3-none-any.whl"
+        with zipfile.ZipFile(self.whl, "w") as z:
+            z.writestr("a.py", "ok")
+        self.tgz = self.d / "p-1.tar.gz"
+        self.tgz.write_bytes(tar_bytes([("p-1/a.py", b"ok")], "gz"))
 
-def zip_bytes(members: list[tuple[str, bytes]], comment: bytes = b"") -> bytes:
-    buf = io.BytesIO()
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")            # duplicate member names are deliberate
-        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-            z.comment = comment
-            for n, b in members:
-                z.writestr(n, b)
-    return buf.getvalue()
+    def line(self, p: Path) -> str:
+        return f"{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n"
+
+    def sums(self, text: str, word: str = WORD) -> tuple[int, list[str], str]:
+        (self.d / "SHA256SUMS").write_text(text, encoding="utf-8")
+        rc, out, err = self.scan("--no-tracked", "--dist", str(self.d), env={cp.ENV_VAR: word})
+        return rc, sorted(out.splitlines()), err
+
+    def test_matching_checksum_file_passes_and_is_counted(self) -> None:
+        rc, lines, err = self.sums(self.line(self.whl) + self.line(self.tgz))
+        self.assertEqual((rc, lines), (0, []), err)
+        self.assertIn("1 checksum file(s)", err)
+
+    def test_wrong_hash_unlisted_artifact_and_bad_lines_are_findings(self) -> None:
+        good = self.line(self.whl) + self.line(self.tgz)
+        for text, rule in ((good.replace(good[:4], "0000" if good[:4] != "0000" else "1111", 1),
+                            "checksum-mismatch"),
+                           (self.line(self.whl), "checksum-unlisted"),
+                           (good + "not a checksum line\n", "checksum-malformed"),
+                           (good + self.line(self.whl), "checksum-malformed"),          # listed twice
+                           (good + "0" * 64 + "  ../outside\n", "checksum-malformed"),  # not a bare name
+                           (good + "0" * 64 + "  absent.whl\n", "checksum-malformed")):  # no such file
+            with self.subTest(rule=rule, text=text[-30:]):
+                rc, lines, err = self.sums(text)
+                self.assertEqual((rc, lines), (1, [f"dist:SHA256SUMS  {rule}"]), err)
+
+    def test_forbidden_word_in_the_checksum_file_fires_without_being_printed(self) -> None:
+        rc, lines, err = self.sums(self.line(self.whl) + self.line(self.tgz) + f"# {WORD}\n")
+        self.assertEqual(rc, 1)
+        self.assertIn("dist:SHA256SUMS  forbidden-1", lines)
+        self.assertNotIn(WORD, "\n".join(lines) + err)
+
+    def test_other_stray_files_are_still_reported(self) -> None:
+        (self.d / "SHA512SUMS").write_text("x")
+        rc, lines, _ = self.sums(self.line(self.whl) + self.line(self.tgz))
+        self.assertEqual((rc, lines), (1, ["dist:SHA512SUMS  unscanned-unknown-artifact"]))
 
 
 class DistSkips(Base):
@@ -743,11 +821,11 @@ class DistSkips(Base):
 
     def test_members_after_a_damaged_tar_header_are_not_lost(self) -> None:
         raw = bytearray(tar_bytes([("p-1/a.py", b"ok"), ("p-1/b.py", WORD.encode())]))
-        clean = gzip.compress(bytes(raw))
+        clean = gz(bytes(raw))
         raw[1024 + 148:1024 + 156] = b"zzzzzzzz"             # second header: checksum destroyed
         with tarfile.open(fileobj=io.BytesIO(bytes(raw))) as t:
             self.assertEqual(t.getnames(), ["p-1/a.py"])      # tarfile stops there without error
-        d = self.dist({"p-1.tar.gz": gzip.compress(bytes(raw))})
+        d = self.dist({"p-1.tar.gz": gz(bytes(raw))})
         rc, lines, _ = self.dscan(d)
         self.assertEqual((rc, lines), (1, ["dist:p-1.tar.gz  unscanned-trailing-data"]))
         self.assertEqual(self.dscan(self.dist({"p-1.tar.gz": clean}))[1],
@@ -759,7 +837,7 @@ class DistSkips(Base):
             ti.type, ti.linkname = kind, link
             return ti
         owner = info("p-1/owned.py", tarfile.REGTYPE)
-        owner.uname = WORD                                     # the builder's login name
+        owner.uname = WORD                # the builder's login name: also builder-owner
         pax = info("p-1/pax.py", tarfile.REGTYPE)
         pax.pax_headers = {"comment": f"built by {WORD}"}
         d = self.dist({"p-1.tar.gz": tar_bytes([
@@ -770,7 +848,8 @@ class DistSkips(Base):
             info("p-1/dir", tarfile.DIRTYPE), owner, pax], "gz")})
         rc, lines, _ = self.dscan(d)
         self.assertEqual(rc, 1)
-        self.assertEqual(lines, ["dist:p-1.tar.gz#owner  forbidden-1",
+        self.assertEqual(lines, ["dist:p-1.tar.gz#owner  builder-owner",
+                                 "dist:p-1.tar.gz#owner  forbidden-1",
                                  "dist:p-1.tar.gz:p-1/dev  unscanned-special-member",
                                  "dist:p-1.tar.gz:p-1/fifo  unscanned-special-member",
                                  "dist:p-1.tar.gz:p-1/hard#target  forbidden-1",
@@ -791,7 +870,8 @@ class DistSkips(Base):
         enc[enc.index(b"PK\x01\x02") + 8] |= 1                 # central directory: the same
         for label, body, want in (
                 ("duplicate", dup, ["dist:p-1.whl:a.py  forbidden-1"]),
-                ("comment", note, ["dist:p-1.whl#comment  forbidden-1"]),
+                ("comment", note, ["dist:p-1.whl#comment  builder-zip-comment",
+                                   "dist:p-1.whl#comment  forbidden-1"]),
                 ("encrypted", bytes(enc), ["dist:p-1.whl:a.py  unscanned-encrypted"])):
             with self.subTest(case=label):
                 rc, lines, _ = self.dscan(self.dist({"p-1.whl": body}))
@@ -815,6 +895,482 @@ class DistSkips(Base):
                           "dist:p-1.tar.gz:p-1/data/inner.zip  unscanned-archive",
                           "dist:p-1.whl:data/inner.tgz  unscanned-archive",
                           "tracked:bundle.zip  unscanned-archive"])
+
+
+BUILDER_NAME = "builder" + "zq"            # invented account and group names
+BUILDER_GROUP = "staff" + "zq"
+BUILDER_UID = 54321
+BUILDER_HOST = "buildhost" + "zq"
+
+
+def owned(name: str, body: bytes = b"ok\n", **fields: object) -> tuple[tarfile.TarInfo, bytes]:
+    """A tar member with the given header fields set (uname, uid, pax_headers, ...)."""
+    ti = tarfile.TarInfo(name)
+    for k, v in fields.items():
+        setattr(ti, k, v)
+    return ti, body
+
+
+def zinfo(name: str, mode: int = 0o100644, system: int = 3, dos: int = 0, extra: bytes = b"",
+          comment: bytes = b"") -> zipfile.ZipInfo:
+    zi = zipfile.ZipInfo(name, date_time=(2020, 1, 1, 0, 0, 0))
+    zi.create_system, zi.external_attr, zi.extra, zi.comment = system, mode << 16 | dos, extra, comment
+    return zi
+
+
+def extra_field(field: int, payload: bytes) -> bytes:
+    return struct.pack("<HH", field, len(payload)) + payload
+
+
+def gzip_stream(raw: bytes, flags: int = 0, mtime: int = 0, name: bytes = b"",
+                comment: bytes = b"", extra: bytes = b"") -> bytes:
+    """One gzip member with a hand-written header, so every header field can be planted."""
+    head = b"\x1f\x8b\x08" + bytes([flags]) + struct.pack("<I", mtime) + b"\x02\xff"
+    if flags & 0x04:
+        head += struct.pack("<H", len(extra)) + extra
+    if flags & 0x08:
+        head += name + b"\0"
+    if flags & 0x10:
+        head += comment + b"\0"
+    if flags & 0x02:
+        head += struct.pack("<H", zlib.crc32(head) & 0xFFFF)
+    deflate = zlib.compressobj(9, zlib.DEFLATED, -zlib.MAX_WBITS)
+    return (head + deflate.compress(raw) + deflate.flush()
+            + struct.pack("<II", zlib.crc32(raw), len(raw) & 0xFFFFFFFF))
+
+
+class BuilderIdentity(DistSkips):
+    """An artifact must not say who built it, whatever the forbidden list holds.
+
+    Each rule is planted in an in-memory archive and paired with a clean control. The
+    planted values are invented, and none of them may appear in the output.
+    """
+
+    PLANTED = (BUILDER_NAME, BUILDER_GROUP, str(BUILDER_UID), BUILDER_HOST)
+
+    def bscan(self, files: dict[str, bytes], *extra: str,
+              env: dict[str, str] | None = None) -> tuple[int, list[str], str]:
+        d = self.dist(files)
+        rc, out, err = self.scan("--no-tracked", "--dist", str(d), *extra, env=env)
+        for name in files:
+            (d / name).unlink()
+        for value in self.PLANTED:
+            self.assertNotIn(value, out + err)
+        return rc, sorted(out.splitlines()), err
+
+    def fires(self, files: dict[str, bytes], want: list[str]) -> None:
+        rc, lines, err = self.bscan(files)                    # no forbidden list at all
+        self.assertEqual((rc, lines), (1, sorted(want)))
+        self.assertIn("rebuild with scripts/repro_build.py", err)
+
+    def clean(self, files: dict[str, bytes]) -> None:
+        rc, lines, err = self.bscan(files)
+        self.assertEqual((rc, lines), (0, []))
+        self.assertNotIn("builder-", err)
+
+    # ---- tar: owner names, ids, pax records ----------------------------------
+    def test_tar_owner_names(self) -> None:
+        want = ["dist:p-1.tar.gz#owner  builder-owner"]
+        for label, fields in (("user", {"uname": BUILDER_NAME}),
+                              ("group", {"gname": BUILDER_GROUP}),
+                              ("both", {"uname": BUILDER_NAME, "gname": BUILDER_GROUP}),
+                              ("system group", {"uname": "root", "gname": "wheel"}),
+                              ("case", {"uname": "Root"})):
+            with self.subTest(case=label):
+                self.fires({"p-1.tar.gz": tar_bytes(
+                    [("p-1/a.py", b"ok"), owned("p-1/b.py", b"ok", **fields)], "gz",
+                    tarfile.USTAR_FORMAT)}, want)
+        for label, fields in (("empty", {}), ("root", {"uname": "root", "gname": "root"})):
+            with self.subTest(control=label):
+                self.clean({"p-1.tar.gz": tar_bytes([owned("p-1/b.py", b"ok", **fields)], "gz")})
+
+    def test_tar_owner_name_encodings(self) -> None:
+        latin = (BUILDER_NAME + "é").encode("latin-1").decode("utf-8", "surrogateescape")
+        for label, name, fmt, want in (
+                ("non-ASCII, ustar field", BUILDER_NAME + "é", tarfile.USTAR_FORMAT,
+                 ["dist:p-1.tar#owner  builder-owner"]),
+                ("not UTF-8, gnu field", latin, tarfile.GNU_FORMAT,
+                 ["dist:p-1.tar#owner  builder-owner"]),
+                # A pax archive moves a non-ASCII name into a pax record: both are refused.
+                ("non-ASCII, pax record", BUILDER_NAME + "é", tarfile.PAX_FORMAT,
+                 ["dist:p-1.tar#header  builder-pax", "dist:p-1.tar#owner  builder-owner"])):
+            with self.subTest(case=label):
+                self.fires({"p-1.tar": tar_bytes([owned("p-1/a.py", uname=name)], "", fmt)}, want)
+
+    def test_tar_uid_and_gid(self) -> None:
+        for label, fields, fmt in (("uid", {"uid": BUILDER_UID}, tarfile.USTAR_FORMAT),
+                                   ("gid", {"gid": 20}, tarfile.USTAR_FORMAT),
+                                   ("both", {"uid": 501, "gid": 20}, tarfile.PAX_FORMAT),
+                                   ("large, base-256", {"uid": 3_000_000}, tarfile.GNU_FORMAT)):
+            with self.subTest(case=label):
+                self.fires({"p-1.tar.gz": tar_bytes(
+                    [("p-1/a.py", b"ok"), owned("p-1/b.py", b"ok", **fields)], "gz", fmt)},
+                    ["dist:p-1.tar.gz#owner  builder-uid"])
+        self.fires({"p-1.tar.gz": tar_bytes([owned("p-1/b.py", uid=3_000_000)], "gz")},
+                   ["dist:p-1.tar.gz#header  builder-pax",    # too large for ustar: a pax record
+                    "dist:p-1.tar.gz#owner  builder-uid"])
+        self.clean({"p-1.tar.gz": tar_bytes([owned("p-1/b.py", uid=0, gid=0)], "gz")})
+
+    def test_tar_pax_records(self) -> None:
+        want = ["dist:p-1.tar.gz#header  builder-pax"]
+        for key in ("atime", "ctime", "SCHILY.xattr.com.apple.quarantine", "SCHILY.dev",
+                    "LIBARCHIVE.creationtime", "LIBARCHIVE.xattr.com.apple.provenance",
+                    "GNU.sparse.major", "com.apple.metadata", "vendorzq.note"):
+            with self.subTest(key=key):
+                self.fires({"p-1.tar.gz": tar_bytes(
+                    [owned("p-1/a.py", pax_headers={key: "1700000000.5"})], "gz")}, want)
+        for key in ("uname", "gname"):                        # tarfile applies them to the member
+            with self.subTest(key=key):
+                self.fires({"p-1.tar.gz": tar_bytes(
+                    [owned("p-1/a.py", pax_headers={key: BUILDER_NAME})], "gz")},
+                    [*want, "dist:p-1.tar.gz#owner  builder-owner"])
+        for key in ("uid", "gid"):
+            with self.subTest(key=key):
+                self.fires({"p-1.tar.gz": tar_bytes(
+                    [owned("p-1/a.py", pax_headers={key: str(BUILDER_UID)})], "gz")},
+                    [*want, "dist:p-1.tar.gz#owner  builder-uid"])
+        long_name = "p-1/" + "d" * 120 + "/ä.py"          # path record, non-ASCII
+        self.clean({"p-1.tar.gz": tar_bytes([
+            owned(long_name, mtime=1700000000.25),            # mtime record
+            owned("p-1/b.py", pax_headers={"comment": "0" * 40, "hdrcharset": "BINARY"}),
+            owned("p-1/dir", b"", type=tarfile.DIRTYPE)], "gz")})
+
+    # ---- gzip header -------------------------------------------------------------
+    def test_gzip_header(self) -> None:
+        raw = tar_bytes([("p-1/a.py", b"ok")])
+        named = io.BytesIO()
+        with gzip.GzipFile(BUILDER_HOST + ".tar", "wb", fileobj=named, mtime=0) as g:
+            g.write(raw)                                      # what `tarfile.open(.., "w:gz")` does
+        half = len(raw) // 2
+        want = ["dist:p-1.tar.gz#gzip  builder-gzip-header"]
+        for label, body in (
+                ("file name", gzip_stream(raw, 0x08, name=BUILDER_HOST.encode() + b".tar")),
+                ("file name, stdlib writer", named.getvalue()),
+                ("comment", gzip_stream(raw, 0x10, comment=b"built on " + BUILDER_HOST.encode())),
+                ("extra field", gzip_stream(raw, 0x04, extra=BUILDER_NAME.encode())),
+                ("timestamp", gzip_stream(raw, mtime=1700000000)),
+                ("timestamp, stdlib writer", gzip.compress(raw, mtime=1700000000)),
+                ("reserved flag", gzip_stream(raw, 0x20)),
+                ("second member of the stream",
+                 gz(raw[:half]) + gzip_stream(raw[half:], 0x08, name=BUILDER_HOST.encode()))):
+            with self.subTest(case=label):
+                self.fires({"p-1.tar.gz": body}, want)
+        self.fires({"p-1.tgz": gzip_stream(raw, mtime=1)}, ["dist:p-1.tgz#gzip  builder-gzip-header"])
+        # a gzip stream under a plain .tar name is still a gzip stream
+        self.fires({"p-1.tar": gzip_stream(raw, mtime=1)}, ["dist:p-1.tar#gzip  builder-gzip-header"])
+        for label, body in (("fixed header", gzip_stream(raw)), ("stdlib, mtime 0", gz(raw)),
+                            ("header checksum", gzip_stream(raw, 0x02)),
+                            ("two clean members", gz(raw[:half]) + gzip_stream(raw[half:])),
+                            ("zero padding", gz(raw) + b"\0" * 512)):
+            with self.subTest(control=label):
+                self.clean({"p-1.tar.gz": body})
+        self.clean({"p-1.tar": raw, "p-1.tar.bz2": bz2.compress(raw), "p-1.tar.xz": lzma.compress(raw)})
+
+    # ---- zip: extra fields, comments, attributes ---------------------------------
+    def test_zip_extra_fields(self) -> None:
+        want = ["dist:p-1-py3-none-any.whl#extra  builder-zip-extra"]
+        unix_new = extra_field(0x7875, b"\x01\x04" + struct.pack("<I", BUILDER_UID) + b"\x04"
+                               + struct.pack("<I", 20))
+        fields = (("unix uid/gid 0x7875", unix_new),
+                  ("unix 0x5855", extra_field(0x5855, struct.pack("<IIHH", 1, 2, 501, 20))),
+                  ("unix 0x7855", extra_field(0x7855, struct.pack("<HH", 501, 20))),
+                  ("timestamps 0x5455", extra_field(0x5455, b"\x03" + struct.pack("<II", 1, 2))),
+                  ("pkware unix 0x000d", extra_field(0x000D, struct.pack("<IIHH", 1, 2, 501, 20))),
+                  ("ntfs 0x000a", extra_field(0x000A, b"\0" * 32)),
+                  ("stray bytes", b"\x01"),
+                  ("after a zip64 field", extra_field(0x0001, b"\0" * 16) + unix_new))
+        for label, extra in fields:
+            with self.subTest(case=label):
+                self.fires({"p-1-py3-none-any.whl": zip_bytes(
+                    [("a.py", b"ok"), (zinfo("b.py", extra=extra), b"ok")])}, want)
+        # A field longer than the block it sits in: zipfile refuses the archive (exit 2).
+        overlong = struct.pack("<HH", 0x0001, 99) + b"\0" * 8
+        rc, lines, _ = self.bscan(
+            {"p-1-py3-none-any.whl": zip_bytes([(zinfo("b.py", extra=overlong), b"ok")])})
+        self.assertEqual((rc, lines), (2, []))
+        # The two copies of a member's extra field are read separately: plant in one only.
+        body = zip_bytes([(zinfo("b.py", extra=unix_new), b"ok")])
+        local, central = body.index(unix_new), body.rindex(unix_new)
+        self.assertLess(local, body.index(b"PK\x01\x02"))
+        self.assertGreater(central, body.index(b"PK\x01\x02"))
+        zip64_id = struct.pack("<H", 0x0001)
+        for label, at in (("local header only", central), ("central directory only", local)):
+            with self.subTest(case=label):
+                self.fires({"p-1-py3-none-any.whl": body[:at] + zip64_id + body[at + 2:]}, want)
+        self.clean({"p-1-py3-none-any.whl":
+                    body[:local] + zip64_id + body[local + 2:central] + zip64_id + body[central + 2:]})
+        big = io.BytesIO()
+        with zipfile.ZipFile(big, "w") as z, z.open(zinfo("a.py"), "w", force_zip64=True) as f:
+            f.write(b"ok")                                    # a real zip64 field
+        self.clean({"p-1-py3-none-any.whl": big.getvalue(), "p-1.zip": zip_bytes([("a.py", b"ok")])})
+
+    def test_zip_comments(self) -> None:
+        want = ["dist:p-1-py3-none-any.whl#comment  builder-zip-comment"]
+        self.fires({"p-1-py3-none-any.whl": zip_bytes(
+            [("a.py", b"ok")], comment=b"packed on " + BUILDER_HOST.encode())}, want)
+        self.fires({"p-1-py3-none-any.whl": zip_bytes(
+            [(zinfo("a.py", comment=BUILDER_NAME.encode()), b"ok")])}, want)
+        self.fires({"p-1-py3-none-any.whl": zip_bytes([("a.py", b"ok")], comment=b" ")}, want)
+        self.clean({"p-1-py3-none-any.whl": zip_bytes([("a.py", b"ok")])})
+
+    def test_zip_attributes(self) -> None:
+        want = ["dist:p-1-py3-none-any.whl#attr  builder-zip-attr"]
+        for label, info in (
+                ("made on darwin", zinfo("a.py", system=19)),
+                ("made on ntfs", zinfo("a.py", mode=0, system=10, dos=0x20)),
+                ("setuid", zinfo("a.py", mode=0o104755)),
+                ("sticky directory", zinfo("d/", mode=0o041777, dos=0x10)),
+                ("device", zinfo("a.py", mode=stat.S_IFCHR | 0o644)),
+                ("hidden and system bits", zinfo("a.py", dos=0x06)),
+                ("high attribute byte", zinfo("a.py", dos=0x4000)),
+                ("mode bits on FAT", zinfo("a.py", mode=0o100644, system=0))):
+            with self.subTest(case=label):
+                self.fires({"p-1-py3-none-any.whl": zip_bytes([("ok.py", b"ok"), (info, b"")])}, want)
+        self.clean({"p-1-py3-none-any.whl": zip_bytes([
+            (zinfo("a.py"), b"ok"), (zinfo("tool.sh", mode=0o100755), b"ok"),
+            (zinfo("RECORD", mode=0o100664), b"ok"), (zinfo("d/", mode=0o040755, dos=0x10), b""),
+            (zinfo("bare", mode=0o644), b"ok"), (zinfo("link", mode=stat.S_IFLNK | 0o777), b"a.py"),
+            (zinfo("fat.txt", mode=0, system=0, dos=0x21), b"ok"), ("plain.py", b"ok")])})
+
+    # ---- operating-system litter ---------------------------------------------------
+    def test_os_junk_members(self) -> None:
+        junk = ("__MACOSX/._a.py", "__MACOSX/", ".DS_Store", "pkg/.DS_Store", "pkg/._a.py",
+                "pkg/Thumbs.db", "pkg/desktop.ini", ".AppleDouble/a.py", "pkg/.ds_store")
+        fine = ("pkg/a._b.py", "pkg/_.py", "pkg/DS_Store.py", "pkg/x__MACOSX/a.py",
+                "pkg/.DS_Store.md", "pkg/thumbs.db.py", "pkg/.hidden")
+        for name in junk:
+            with self.subTest(member=name):
+                self.fires({"p-1.tar.gz": tar_bytes([("p-1/a.py", b"ok"), (f"p-1/{name}", b"")], "gz"),
+                            "p-1.zip": zip_bytes([("a.py", b"ok"), (name, b"")])},
+                           [f"dist:p-1.tar.gz:p-1/{name}#name  builder-os-junk",
+                            f"dist:p-1.zip:{name}#name  builder-os-junk"])
+        self.clean({"p-1.tar.gz": tar_bytes([(f"p-1/{n}", b"ok") for n in fine], "gz"),
+                    "p-1.zip": zip_bytes([(n, b"ok") for n in fine])})
+
+    # ---- text members ----------------------------------------------------------------
+    def test_direct_url_json_with_a_local_url(self) -> None:
+        local = ('{"url": "file:///srv/' + BUILDER_HOST + '/src", "dir_info": {}}').encode()
+        for label, body in (("utf-8", local), ("upper case", local.replace(b"file:", b"FILE:")),
+                            ("utf-16", codecs.BOM_UTF16_LE + local.decode().encode("utf-16-le")),
+                            ("utf-16, no mark", local.decode().encode("utf-16-be"))):
+            with self.subTest(case=label):
+                self.fires({"p-1-py3-none-any.whl": zip_bytes(
+                    [("p-1.dist-info/direct_url.json", body)]),
+                    "p-1.tar.gz": tar_bytes([("p-1/src/direct_url.json", body)], "gz")},
+                    ["dist:p-1-py3-none-any.whl:p-1.dist-info/direct_url.json  builder-local-url",
+                     "dist:p-1.tar.gz:p-1/src/direct_url.json  builder-local-url"])
+        remote = b'{"url": "https://example.invalid/p.git", "vcs_info": {"vcs": "git"}}'
+        self.clean({"p-1-py3-none-any.whl": zip_bytes([
+            ("p-1.dist-info/direct_url.json", remote),
+            ("p-1.dist-info/METADATA", b"see file:///usr/share/doc for the format\n")])})
+
+    def test_home_path_in_generated_metadata(self) -> None:
+        """The existing home-path rule reaches every text file a build tool generates."""
+        utf16 = codecs.BOM_UTF16_BE + f"src = {HOME}/x\n".encode("utf-16-be")
+        whl = {"p-1.dist-info/RECORD": f"{HOME}/a.py,sha256=x,1\n".encode(),
+               "p-1.dist-info/METADATA": f"Home-page: {HOME}/site\n".encode(),
+               "p-1.dist-info/direct_url.json": ('{"url": "file://' + HOME + '"}').encode(),
+               "p-1.dist-info/WHEEL": utf16}
+        sdist = {"p-1/PKG-INFO": f"Description: built in {HOME}/x\n".encode(),
+                 "p-1/p.egg-info/SOURCES.txt": f"{HOME}/a.py\n".encode(),
+                 "p-1/setup.cfg": utf16}
+        rc, lines, _ = self.bscan({"p-1-py3-none-any.whl": zip_bytes(list(whl.items())),
+                                   "p-1.tar.gz": tar_bytes(list(sdist.items()), "gz")})
+        self.assertEqual(rc, 1)
+        self.assertEqual(lines, sorted(
+            [f"dist:p-1-py3-none-any.whl:{n}  home-path" for n in whl]
+            + [f"dist:p-1.tar.gz:{n}  home-path" for n in sdist]
+            + ["dist:p-1-py3-none-any.whl:p-1.dist-info/direct_url.json  builder-local-url"]))
+
+    def test_legitimate_metadata_passes_untouched(self) -> None:
+        meta = (b"Metadata-Version: 2.4\nName: p\nVersion: 1\nAuthor: Example Author\n"
+                b"Author-email: Example Author <author@example.invalid>\n"
+                b"Maintainer: Example Maintainer\nMaintainer-email: team@example.invalid\n"
+                b"License-Expression: MIT\nLicense-File: LICENSE\n"
+                b"Project-URL: Homepage, https://example.invalid/p\n")
+        wheel = (b"Wheel-Version: 1.0\nGenerator: setuptools (80.9.0)\nRoot-Is-Purelib: true\n"
+                 b"Tag: py3-none-any\nBuild: 1\n")
+        self.clean({
+            "p-1-py3-none-any.whl": zip_bytes([
+                (zinfo("p.py"), b"ok"), (zinfo("p-1.dist-info/METADATA"), meta),
+                (zinfo("p-1.dist-info/WHEEL"), wheel),
+                (zinfo("p-1.dist-info/licenses/LICENSE"), b"Copyright (c) Example Author\n"),
+                (zinfo("p-1.dist-info/RECORD", mode=0o100664), b"p.py,sha256=x,2\n")]),
+            "p-1.tar.gz": tar_bytes([
+                owned("p-1", b"", type=tarfile.DIRTYPE, mode=0o755, mtime=1700000000),
+                owned("p-1/PKG-INFO", meta, mode=0o644, mtime=1700000000),
+                owned("p-1/tool.sh", mode=0o755, mtime=1700000000),
+                ("p-1/p.egg-info/SOURCES.txt", b"PKG-INFO\np.py\n")], "gz")})
+
+    # ---- every archive type the scanner opens -----------------------------------------
+    def test_generic_tar_and_zip_archives(self) -> None:
+        bad_tar: list[TarMember] = [owned("p-1/a.py", uname=BUILDER_NAME, uid=BUILDER_UID,
+                                          pax_headers={"atime": "1.5"}), ("p-1/.DS_Store", b"")]
+        bad_zip: list[tuple[str | zipfile.ZipInfo, bytes]] = [
+            (zinfo("a.py", system=19, extra=extra_field(0x7875, b"\x01\x00\x00")), b"ok"),
+            (".DS_Store", b"")]
+        self.fires({"p-1.tar": tar_bytes(bad_tar), "p-1.tar.bz2": tar_bytes(bad_tar, "bz2"),
+                    "p-1.tar.xz": tar_bytes(bad_tar, "xz"), "p-1.tgz": tar_bytes(bad_tar, "gz"),
+                    "p-1.zip": zip_bytes(bad_zip, comment=b"x"),
+                    "p-1.egg": zip_bytes(bad_zip, comment=b"x")},
+                   [f"dist:{a}{tail}" for a in ("p-1.tar", "p-1.tar.bz2", "p-1.tar.xz", "p-1.tgz")
+                    for tail in ("#owner  builder-owner", "#owner  builder-uid", "#header  builder-pax",
+                                 ":p-1/.DS_Store#name  builder-os-junk")]
+                   + [f"dist:{a}{tail}" for a in ("p-1.zip", "p-1.egg")
+                      for tail in ("#extra  builder-zip-extra", "#attr  builder-zip-attr",
+                                   "#comment  builder-zip-comment", ":.DS_Store#name  builder-os-junk")])
+        ok_tar = [("p-1/a.py", b"ok")]
+        self.clean({"p-1.tar": tar_bytes(ok_tar), "p-1.tar.bz2": tar_bytes(ok_tar, "bz2"),
+                    "p-1.tar.xz": tar_bytes(ok_tar, "xz"), "p-1.tgz": tar_bytes(ok_tar, "gz"),
+                    "p-1.zip": zip_bytes([("a.py", b"ok")]), "p-1.egg": zip_bytes([("a.py", b"ok")])})
+
+    def test_git_archive_tarball_passes(self) -> None:
+        """`git archive` writes the fixed owner root/root, uid 0 and a comment record."""
+        self.commit({"a.txt": "ok\n", "tool.sh": "#!/bin/sh\n"})
+        d = Path(self._t.name) / "dist"
+        d.mkdir()
+        for fmt in ("tar", "tar.gz"):
+            git(self.repo, "archive", f"--format={fmt}", "--prefix=p-1/", "-o", str(d / f"p-1.{fmt}"), "HEAD")
+        with tarfile.open(d / "p-1.tar") as t:
+            first = t.next()
+            assert first is not None
+            self.assertEqual((first.uname, first.gname, first.uid, "comment" in first.pax_headers),
+                             ("root", "root", 0, True))
+        rc, out, _ = self.scan("--no-tracked", "--dist", str(d))
+        self.assertEqual((rc, out), (0, ""))
+
+    # ---- independence from the forbidden list, allowlisting, output ---------------------
+    def test_rules_do_not_depend_on_the_forbidden_list(self) -> None:
+        files = {"p-1.tar.gz": tar_bytes([owned("p-1/a.py", uname=BUILDER_NAME)], "gz")}
+        want = ["dist:p-1.tar.gz#owner  builder-owner"]
+        rc, lines, err = self.bscan(files)                    # no list at all
+        self.assertEqual((rc, lines), (1, want))
+        self.assertIn("WARNING: no forbidden list", err)
+        rc, lines, _ = self.bscan(files, "--require-patterns", env={cp.ENV_VAR: WORD})
+        self.assertEqual((rc, lines), (1, want))              # a list that does not name the owner
+        rc, lines, _ = self.bscan(files, env={cp.ENV_VAR: BUILDER_NAME})
+        self.assertEqual((rc, lines), (1, [*want, "dist:p-1.tar.gz#owner  forbidden-1"]))
+
+    def test_allowlist_takes_an_exact_path_never_a_glob(self) -> None:
+        files = {"p-1.tar.gz": tar_bytes([owned("p-1/a.py", uname=BUILDER_NAME, uid=BUILDER_UID),
+                                          ("p-1/pkg/.DS_Store", b"")], "gz")}
+        al = Path(self._t.name) / "allow"
+        al.write_text("builder-owner p-1.tar.gz   # reason\nbuilder-os-junk pkg/.DS_Store\n")
+        rc, lines, err = self.bscan(files, "--allowlist", str(al))
+        self.assertEqual((rc, lines), (1, ["dist:p-1.tar.gz#owner  builder-uid"]))   # not listed
+        self.assertIn("2 finding(s) suppressed by the allowlist", err)
+        al.write_text("builder-owner p-1.tar.gz\nbuilder-uid p-1.tar.gz\nbuilder-os-junk pkg/.DS_Store\n")
+        rc, lines, err = self.bscan(files, "--allowlist", str(al))
+        self.assertEqual((rc, lines), (0, []))
+        self.assertIn("3 finding(s) suppressed by the allowlist", err)
+        al.write_text("builder-owner p-2.tar.gz\nforbidden-1 p-1.tar.gz\nunscanned-archive p-1.tar.gz\n")
+        self.assertEqual(self.bscan(files, "--allowlist", str(al), env={cp.ENV_VAR: WORD})[0], 1)
+        for glob in ("*", "**", "*.tar.gz", "p-1.tar.g?", "p-[0-9].tar.gz", "pkg/*"):
+            for rule in ("builder-owner", "builder-uid", "builder-os-junk", "builder-gzip-header"):
+                with self.subTest(glob=glob, rule=rule):
+                    al.write_text(f"{rule} {glob}\n")
+                    rc, lines, err = self.bscan(files, "--allowlist", str(al))
+                    self.assertEqual((rc, lines), (2, []))
+                    self.assertNotIn("Traceback", err)
+        al.write_text("forbidden-1 *.py\n")                   # other rules keep their globs
+        self.assertEqual(self.bscan(files, "--allowlist", str(al))[0], 1)
+
+    def test_one_line_per_artifact_and_rule(self) -> None:
+        members = [owned(f"p-1/m{i}.py", uname=BUILDER_NAME, gid=20) for i in range(40)]
+        self.fires({"p-1.tar.gz": tar_bytes(members, "gz")},
+                   ["dist:p-1.tar.gz#owner  builder-owner", "dist:p-1.tar.gz#owner  builder-uid"])
+
+
+def _real_build_skip() -> str | None:
+    root = Path(__file__).resolve().parent
+    if not (root / "scripts" / "repro_build.py").is_file() or not (root / ".git").exists():
+        return "not a git checkout with scripts/repro_build.py (an unpacked sdist?)"
+    if importlib.util.find_spec("build") is None:
+        return "the 'build' package is not installed (pip install -r requirements-dev.txt)"
+    if shutil.which("git") is None or shutil.which("tar") is None:
+        return "git or tar is not installed"
+    return None
+
+
+class RealBuilds(unittest.TestCase):
+    """The real artifacts: scripts/repro_build.py must pass, a plain `python -m build` must not.
+
+    Needs git, the `build` package and network access for the build backend. Without them
+    the class is skipped with a message; POSTBOX_REQUIRE_BUILD_TESTS=1 (set where the tools
+    are known to be installed, as in CI) turns that skip into a failure.
+    """
+
+    ROOT = Path(__file__).resolve().parent
+    work: Path
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        why = _real_build_skip()
+        if why:
+            cls.unavailable(why)
+        tmp = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(tmp.cleanup)
+        cls.work = Path(tmp.name)
+        env = {k: v for k, v in os.environ.items() if k != cp.ENV_VAR}
+        r = subprocess.run([sys.executable, str(cls.ROOT / "scripts" / "repro_build.py"),
+                            "--outdir", str(cls.work / "repro")], env=env, text=True,
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        cls.check_build(r)
+        src = cls.work / "src"
+        src.mkdir()
+        tree = subprocess.run(["git", "-C", str(cls.ROOT), "archive", "--format=tar", "HEAD"],
+                              check=True, stdout=subprocess.PIPE).stdout
+        subprocess.run(["tar", "-x", "-f", "-", "-C", str(src)], input=tree, check=True)
+        r = subprocess.run([sys.executable, "-m", "build", "--outdir", str(cls.work / "plain"),
+                            str(src)], env=env, text=True, cwd=cls.work,
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        cls.check_build(r)
+
+    @classmethod
+    def unavailable(cls, why: str) -> None:
+        msg = f"real builds NOT scanned: {why}"
+        if os.environ.get("POSTBOX_REQUIRE_BUILD_TESTS") == "1":
+            raise AssertionError(msg)
+        print(f"\nSKIPPED: {msg}", file=sys.stderr)
+        raise unittest.SkipTest(msg)
+
+    @classmethod
+    def check_build(cls, r: subprocess.CompletedProcess[str]) -> None:
+        if r.returncode == 0:
+            return
+        if any(s in r.stdout for s in ("Could not find a version", "ConnectionError",
+                                       "Temporary failure in name resolution", "network")):
+            cls.unavailable("cannot fetch the build backend (no network)")
+        raise AssertionError(f"build failed ({r.returncode}):\n{r.stdout[-3000:]}")
+
+    def scan(self, d: Path) -> tuple[int, list[str], str]:
+        rc, out, err = run(["--root", str(self.ROOT), "--no-tracked", "--dist", str(d)])
+        return rc, sorted(out.splitlines()), err
+
+    def test_repro_build_artifacts_have_no_builder_findings(self) -> None:
+        names = sorted(p.name for p in (self.work / "repro").iterdir())
+        self.assertEqual([n.rsplit(".", 1)[-1] for n in names], ["SHA256SUMS", "whl", "gz"], names)
+        rc, lines, err = self.scan(self.work / "repro")
+        self.assertEqual((rc, lines), (0, []))
+        self.assertNotIn("builder-", err)
+
+    def test_plain_build_sdist_is_rejected(self) -> None:
+        rc, lines, err = self.scan(self.work / "plain")
+        self.assertEqual(rc, 1)
+        rules = {ln.rsplit("  ", 1)[1] for ln in lines}
+        sdists = [ln for ln in lines if ".tar.gz#" in ln]
+        self.assertEqual(len(sdists), len(lines), "only the sdist is at fault, never the wheel")
+        self.assertIn("builder-gzip-header", rules)           # file name and build time
+        user, group = pwd.getpwuid(os.getuid()).pw_name, grp.getgrgid(os.getgid()).gr_name
+        if os.getuid() or os.getgid():
+            self.assertIn("builder-uid", rules)
+        if user not in ("", "root") or group not in ("", "root"):
+            self.assertIn("builder-owner", rules)
+        self.assertLessEqual(rules, {"builder-gzip-header", "builder-uid", "builder-owner"})
+        # The account that ran this test is in that sdist; it must not be in the report.
+        for name in {user, group} - {"", "root"}:
+            for line in lines + err.splitlines():
+                self.assertNotIn(name, line)
 
 
 class Preflight(unittest.TestCase):

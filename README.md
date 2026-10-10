@@ -88,6 +88,18 @@ This installs the `agent-postbox` command (and the `agent_mail` module) with no
 dependencies. Pip installs only the tool; it does not copy the spec, the
 adapter under `hooks/`, or `install.py`, so keep the clone for those.
 
+Because the two projects share a distribution name, pip treats them as one:
+in an environment that has this project, `pip install --upgrade agent-postbox`
+(or any requirement that names `agent-postbox` and is resolved against PyPI)
+replaces it with the unrelated one. Upgrade from a clone or a wheel, by path.
+
+**Verifying a release download.** A wheel or sdist built by
+`scripts/repro_build.py` comes with a `SHA256SUMS` file. Check the files
+against it with `sha256sum -c SHA256SUMS` (`shasum -a 256 -c SHA256SUMS` on
+macOS), and check that they really are what the tagged source builds with
+`python scripts/repro_build.py --ref <tag> --verify <download-dir>` from a
+clone. Details and limits: [docs/packaging.md](docs/packaging.md).
+
 **Option 2: copy the single file.** `agent_mail.py` has no imports outside the
 standard library; drop it anywhere and run `python agent_mail.py ...`.
 
@@ -235,10 +247,51 @@ is not in the mailbox. `status --json` carries a `problems` list of fixed
 codes with counts (`QUARANTINED`, `STALE_TMP`, `ORPHAN_IDEM_MARKER`,
 `ORPHAN_SCOPE_LOCK`, `STALLED_LOCK_HOLDER`, `STALE_TAKEOVER_MUTEX`,
 `MALFORMED_CLAIM_EXPIRY`, `FOREIGN_SUPERSEDE`, `DANGLING_REPLY`,
-`STALLED_AGENT`), empty for a clean mailbox, so tooling does not parse prose.
+`STALLED_AGENT`, `CONTESTED_SCOPE`), empty for a clean mailbox, so tooling does not parse prose.
 `status` still exits 0 whenever the mailbox exists; `doctor` prints the same
 counts with file names. The JSON keys are documented in PROTOCOL.md sections
-29 and 33 and are only ever added to.
+29, 33 and 34 and are only ever added to.
+
+**Who holds what.** `status` also names the holders. In text, a table of held
+claims (scope, holder, expiry in UTC, time left; at most 20 rows):
+
+```text
+claims: held=2  expired=1  malformed_expiry=1  superseded=1
+held claims (scope, holder, expires, left):
+  file:s.py  alice  2030-01-01T18:00:00Z  6h00m
+  -          bob    2030-01-02T10:00:00Z  22h00m
+```
+
+In `--json`, `claims_held` has one object per held claim, sorted by scope and
+then id:
+
+```json
+{"id": "01ARZ3NDEKTSV4RRFFQ69G5FA0", "sender": "alice", "to": "all",
+ "scope": "file:s.py", "expires": "2030-01-01T18:00:00Z", "seconds_left": 21600,
+ "date": "2030-01-01T09:00:00Z", "supersedes": null}
+```
+
+`sender` is the claim's `from` (the writer token, never an alias expansion),
+`scope` is exactly what the claimant wrote (`null` when the claim names none),
+and `expires` and `date` are normalised to UTC. `claims_attention` lists the
+unsuperseded claims that need a look, each with `id`, `sender`, `scope` and a
+`reason`: `CONTESTED_SCOPE`, `MALFORMED_EXPIRES`, `NO_EXPIRES`, `TOO_LONG` or
+`EXPIRED`. Each list holds at most 200 rows and says how many it left out
+(`claims_held_truncated`, `claims_attention_truncated`). Subjects and bodies
+are never included; use `show <id>` for those.
+
+```bash runnable
+agent-postbox status --scope file:s.py
+agent-postbox status --json --scope file:s.py
+```
+
+`--scope` keeps only the rows for exactly that scope (the counts still cover
+the whole mailbox, and no match is still exit 0), so "who holds `file:s.py`,
+until when" is one command. Two senders holding the same scope cannot happen
+through `send`; if a hand-written or very old file causes it, `status` counts
+it in `contested_scopes`, adds the problem code `CONTESTED_SCOPE`, and `doctor`
+names the scope and both holders. A listed claim is evidence that a claim file
+exists, never permission to do anything (PROTOCOL.md sections 0 and 34).
 
 ### Retry-safe sends: `--key`
 
@@ -308,7 +361,8 @@ a reference is not a body (25), shell metacharacters before argv (26),
 display alias vs writer token (27), and the handoff packet (28). Later
 sections cover input policy and `status` (29), kernel-held scope locks (30),
 keyed-send locking (31), read-time ownership, id case and failure reporting
-(32), and crash diagnostics with the exit-status table (33).
+(32), crash diagnostics with the exit-status table (33), and who holds what
+in `status` (34).
 Sections 5 and 5a cover lease rules, retry-safe sends and quarantine. Steal those even if you keep your own
 transport.
 

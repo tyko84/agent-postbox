@@ -20,7 +20,11 @@ skipped with a message elsewhere, e.g. in an unpacked sdist) and pins what that
 script exists for: the sdist's tar headers name no builder (uid = gid = 0, empty
 user and group names), every timestamp is SOURCE_DATE_EPOCH, the gzip header
 has no timestamp and no file name, and no member of either artifact contains a
-path of the machine that built it.
+path of the machine that built it. It also pins the release side of that script:
+SHA256SUMS (format, content, determinism), `--verify` (passes on its own output,
+names the file when one byte of a copy is flipped), the pinned build backend
+(build-constraints.txt is honoured, and is deliberately not in the sdist) and a
+BUILDINFO block that names no builder.
 Positive controls: the same inspectors must FAIL on a tampered sdist and on
 planted bad names/text, owners, timestamps and paths. Skips with a message if
 `build` (or network access for the build backend) is unavailable. POSIX only.
@@ -29,12 +33,14 @@ Stdlib + `build`.
 from __future__ import annotations
 
 import fnmatch
+import getpass
 import hashlib
 import importlib.util
 import io
 import os
 import re
 import shutil
+import socket
 import struct
 import subprocess
 import sys
@@ -346,6 +352,8 @@ class ReproducibleBuild(unittest.TestCase):
     sdist: Path
     epoch: int
     log: str
+    out: Path
+    env: dict[str, str]
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -358,6 +366,7 @@ class ReproducibleBuild(unittest.TestCase):
         r = subprocess.run([sys.executable, str(REPRO), "--outdir", str(out)], cwd=base, env=env,
                            text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         cls.log = r.stdout
+        cls.out, cls.env = out, env
         if r.returncode != 0:
             net = re.search(r"Connection|Temporary failure|No matching distribution|"
                             r"Could not find a version|network", r.stdout, re.I)
@@ -406,6 +415,167 @@ class ReproducibleBuild(unittest.TestCase):
     def test_hashes_are_printed(self) -> None:
         for art in (self.wheel, self.sdist):
             self.assertIn(f"{hashlib.sha256(art.read_bytes()).hexdigest()}  {art.name}", self.log)
+
+    # ---- release side: SHA256SUMS, --verify, the pinned backend, BUILDINFO ----
+
+    def _repro(self, *argv: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run([sys.executable, str(REPRO), *argv], cwd=self.tmp.name, env=self.env,
+                              text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+
+    def _skip_if_offline(self, r: subprocess.CompletedProcess[str]) -> None:
+        if r.returncode == 2 and re.search(r"Connection|Temporary failure|No matching distribution|"
+                                           r"Could not find a version|network", r.stdout, re.I):
+            self.skipTest("cannot fetch the build backend (no network); NOT verified")
+
+    def _digests(self) -> dict[str, str]:
+        return {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in (self.wheel, self.sdist)}
+
+    def test_sha256sums_format(self) -> None:
+        raw = (self.out / "SHA256SUMS").read_bytes()
+        want = "".join(f"{h}  {n}\n" for n, h in sorted(self._digests().items()))
+        self.assertEqual(raw, want.encode("ascii"), "exactly '<hex>  <name>' per artifact, sorted by name")
+        self.assertNotIn(b"\r", raw)
+        self.assertNotIn(b"/", raw, "file names only, never a directory")
+        self.assertEqual(len(raw.splitlines()), 2)
+        self.assertEqual(int((self.out / "SHA256SUMS").stat().st_mtime), self.epoch)
+        self.assertEqual(sorted(p.name for p in self.out.iterdir()),
+                         sorted(["SHA256SUMS", self.wheel.name, self.sdist.name]))
+
+    def test_verify_passes_on_its_own_output_and_sums_are_deterministic(self) -> None:
+        again = Path(self.tmp.name) / "again"
+        r = self._repro("--verify", str(self.out), "--outdir", str(again))
+        self._skip_if_offline(r)
+        self.assertEqual(r.returncode, 0, r.stdout[-3000:])
+        self.assertIn("verified: identical to a rebuild of ", r.stdout)
+        self.assertNotIn("DIFFERENT", r.stdout)
+        for name in ("SHA256SUMS", self.wheel.name, self.sdist.name):  # a second, independent build
+            self.assertEqual((again / name).read_bytes(), (self.out / name).read_bytes(), name)
+
+    def test_verify_names_the_file_when_one_byte_is_flipped(self) -> None:
+        base = Path(self.tmp.name)
+        bad = base / "flipped"
+        shutil.copytree(self.out, bad)
+        blob = bytearray((bad / self.wheel.name).read_bytes())
+        blob[len(blob) // 2] ^= 0x01
+        (bad / self.wheel.name).write_bytes(bytes(blob))
+        r = self._repro("--verify", str(bad))
+        self._skip_if_offline(r)
+        self.assertEqual(r.returncode, 1, r.stdout[-3000:])
+        self.assertIn(f"DIFFERENT  {self.wheel.name}\n", r.stdout)
+        self.assertIn(f"  rebuilt  {self._digests()[self.wheel.name]}\n", r.stdout)
+        self.assertIn(f"  found    {hashlib.sha256(bytes(blob)).hexdigest()}\n", r.stdout)
+        self.assertIn(f"OK         {self.sdist.name}  {self._digests()[self.sdist.name]}", r.stdout,
+                      "the untouched sdist is still reported identical")
+        self.assertNotIn(f"DIFFERENT  {self.sdist.name}", r.stdout)
+        self.assertIn("NOT VERIFIED: 1 difference(s)", r.stdout)
+        self.assertFalse((base / "dist").exists(), "--verify alone writes nothing")
+
+    def test_verify_dir_cases(self) -> None:
+        """verify_dir() itself, against the artifacts already built (no rebuild needed)."""
+        spec = importlib.util.spec_from_file_location("repro_build_t", REPRO)
+        assert spec and spec.loader
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        built = self._digests()
+        base = Path(self.tmp.name) / "cases"
+
+        def case(name: str, files: tuple[str, ...], sums: str | None) -> list[str]:
+            d = base / name
+            d.mkdir(parents=True)
+            for f in files:
+                shutil.copy2(self.out / f, d / f)
+            if sums is not None:
+                (d / "SHA256SUMS").write_bytes(sums.encode())
+            return list(mod.verify_dir(d, built)[1])
+
+        good = (self.out / "SHA256SUMS").read_text()
+        w, t = self.wheel.name, self.sdist.name
+        self.assertEqual(case("control", (w, t), good), [], "control: an exact copy has no difference")
+        self.assertEqual(case("sums-only", (), good), [], "SHA256SUMS alone accounts for both")
+        self.assertEqual(case("files-only", (w, t), None), [], "the two files alone account for both")
+        self.assertEqual(case("crlf", (), good.replace("\n", "\r\n")), [], "CRLF is tolerated on input")
+        swapped = good.replace(built[w], "0" * 64)
+        bad = case("sums-edited", (w, t), swapped)
+        self.assertEqual(len(bad), 1, bad)
+        self.assertTrue(bad[0].startswith(f"DIFFERENT  {w} (its SHA256SUMS line)"), bad)
+        self.assertEqual([b.split()[0] for b in case("empty", (), None)], ["MISSING", "MISSING"])
+        self.assertEqual([b.split()[0] for b in case("one-missing", (w,), None)], ["MISSING"])
+        self.assertTrue(case("extra-line", (w, t), good + "0" * 64 + "  other-9.9.9.tar.gz\n")[0]
+                        .startswith("UNEXPECTED other-9.9.9.tar.gz"))
+        d = base / "extra-file"
+        d.mkdir()
+        (d / "agent_postbox-9.9.9-py3-none-any.whl").write_bytes(b"x")
+        shutil.copy2(self.out / "SHA256SUMS", d / "SHA256SUMS")
+        self.assertEqual([b.split()[0] for b in mod.verify_dir(d, built)[1]], ["UNEXPECTED"])
+        for label, text in (("path", good.replace("  ", "  dist/", 1)),
+                            ("upper", good.replace(built[w], built[w].upper())),
+                            ("twice", good + good)):
+            got = case("malformed-" + label, (w, t), text)
+            self.assertTrue(any(g.startswith("MALFORMED") for g in got), (label, got))
+        self.assertEqual(mod.sums_text(built), good)
+        self.assertEqual(mod.parse_sums(good), (built, []))
+
+    def test_constraints_are_honoured(self) -> None:
+        cons = subprocess.run(["git", "-C", str(ROOT), "show", "HEAD:build-constraints.txt"],
+                              capture_output=True).stdout
+        pin = re.search(rb"^setuptools==([0-9][0-9A-Za-z.]*)$", cons, re.M)
+        self.assertIsNotNone(pin, "build-constraints.txt pins exactly one setuptools version")
+        self.assertEqual([ln for ln in cons.decode().splitlines() if ln and not ln.startswith("#")],
+                         [pin.group(0).decode() if pin else ""], "and nothing else")
+        assert pin is not None
+        version = pin.group(1).decode()
+        wheel_file = next(d for n, d in wheel_members(self.wheel).items() if n.endswith("/WHEEL"))
+        self.assertIn(f"Generator: setuptools ({version})", wheel_file.decode())
+        self.assertIn(f"  setuptools: {version}\n", self.log)
+        self.assertIn(f"  constraints: build-constraints.txt sha256 {hashlib.sha256(cons).hexdigest()}\n",
+                      self.log)
+        # pyproject.toml's floor is a promise to people building from a clone: still a floor
+        self.assertIn('requires = ["setuptools>=77"]', (ROOT / "pyproject.toml").read_text())
+        # Control: it is the constraints file that decides. Another pin (the floor itself)
+        # gives another generator and another wheel hash, so the first result was no accident.
+        base = Path(self.tmp.name)
+        other = base / "floor-constraints.txt"
+        other.write_text("setuptools==77.0.3\n")
+        self.assertNotEqual(version, "77.0.3")
+        r = self._repro("--constraints", str(other), "--outdir", str(base / "floor"))
+        self._skip_if_offline(r)
+        self.assertEqual(r.returncode, 0, r.stdout[-3000:])
+        floor_wheel = next((base / "floor").glob("*.whl"))
+        floor_file = next(d for n, d in wheel_members(floor_wheel).items() if n.endswith("/WHEEL"))
+        self.assertIn("Generator: setuptools (77.0.3)", floor_file.decode())
+        self.assertIn("  constraints: --constraints override sha256 ", r.stdout)
+        self.assertIn("not the commit's reference hashes", r.stdout)
+        self.assertNotEqual(hashlib.sha256(floor_wheel.read_bytes()).hexdigest(),
+                            self._digests()[self.wheel.name])
+        self.assertEqual(sdist_owner_leaks(next((base / "floor").glob("*.tar.gz"))), [])
+
+    def test_constraints_file_is_not_in_the_sdist(self) -> None:
+        # Deliberate: it only means something to scripts/repro_build.py, which needs a git
+        # checkout and is not in the sdist either. MANIFEST.in stays an allow-list without it.
+        self.assertTrue((ROOT / "build-constraints.txt").is_file(), "control: the file exists")
+        self.assertEqual([n for n in sdist_members(self.sdist) if "constraints" in n], [])
+        self.assertNotIn("constraints", (ROOT / "MANIFEST.in").read_text())
+
+    def test_buildinfo_names_no_builder(self) -> None:
+        m = re.search(r"^BUILDINFO\n(.*?)^END BUILDINFO$", self.log, re.M | re.S)
+        self.assertIsNotNone(m, self.log[-2000:])
+        assert m is not None
+        block = m.group(1)
+        keys = [ln.split(":", 1)[0].strip() for ln in block.splitlines()]
+        self.assertEqual(keys, ["commit", "source_date_epoch", "python", "platform", "zlib",
+                                "deflate_probe", "setuptools", "build", "constraints"])
+        self.assertRegex(block, r"(?m)^  commit: [0-9a-f]{40}$")
+        self.assertIn(f"  source_date_epoch: {self.epoch}\n", block)
+        self.assertRegex(block, r"(?m)^  deflate_probe: [0-9a-f]{16}$")
+        for needle in _needles(self.tmp.name, ROOT, Path.home()):
+            self.assertNotIn(needle, block, "no directory of the build machine")
+        for who in (getpass.getuser(), socket.gethostname(), socket.gethostname().split(".")[0]):
+            if len(who) >= 3:  # the value is never printed, only whether it is there
+                self.assertIsNone(re.search(rf"(?<![A-Za-z0-9]){re.escape(who)}(?![A-Za-z0-9])", block, re.I),
+                                  "BUILDINFO names the user or the host")
+        # control: the same search does find a name that is planted
+        self.assertIsNotNone(re.search(r"(?<![A-Za-z0-9])builder(?![A-Za-z0-9])",
+                                       block + "  built-by: builder\n", re.I))
 
     # ---- positive controls: the inspectors must be able to fail ----
 

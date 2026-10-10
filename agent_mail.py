@@ -90,7 +90,7 @@ _ID_SORT_OLDEST = "\x00" * 26
 # storing a read receipt that could drift.
 FRESH_DAYS = 7
 
-__version__ = "0.2.2"
+__version__ = "0.3.0"
 
 _SLUG = re.compile(r"[^a-z0-9]+")
 
@@ -1899,8 +1899,11 @@ _IDEM_MUTEX_RE = re.compile(r"^\.idem\.[0-9a-f]{24}\.takeover$")
 PROBLEM_CODES = (
     "QUARANTINED", "STALE_TMP", "ORPHAN_IDEM_MARKER", "ORPHAN_SCOPE_LOCK", "STALLED_LOCK_HOLDER",
     "STALE_TAKEOVER_MUTEX", "MALFORMED_CLAIM_EXPIRY", "FOREIGN_SUPERSEDE", "DANGLING_REPLY",
-    "STALLED_AGENT",
+    "STALLED_AGENT", "CONTESTED_SCOPE",
 )
+CLAIMS_LIST_CAP = 200    # rows per list in status --json (PROTOCOL.md section 34)
+CLAIMS_TEXT_ROWS = 20    # rows of the held-claims table in text status
+CLAIM_ATTENTION_REASONS = ("CONTESTED_SCOPE", "MALFORMED_EXPIRES", "NO_EXPIRES", "TOO_LONG", "EXPIRED")
 
 
 def _probe_holder(path: Path) -> tuple[str, bytes]:
@@ -2020,8 +2023,91 @@ def dangling_replies(everything: list[Message], now: dt.datetime) -> list[str]:
     return out
 
 
+def _utc_text(when: dt.datetime) -> str:
+    """`when` as UTC, YYYY-MM-DDTHH:MM:SSZ. An instant UTC cannot represent (a
+    hand-written year 9999 with a negative offset, or year 1 with a positive
+    one) is reported as the nearest representable second instead of raising."""
+    try:
+        return when.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    except (OverflowError, ValueError):
+        return "9999-12-31T23:59:59Z" if when.year > 5000 else "0001-01-01T00:00:00Z"
+
+
+def claim_report(everything: list[Message], idx: _Index, now: dt.datetime,
+                 scope_filter: str | None = None) -> dict[str, Any]:
+    """Who holds what (PROTOCOL.md section 34). Pure: reads headers only, never
+    a body or a subject, and derives everything from (messages, now).
+
+    Returns the six keys section 34 adds to `status --json`, plus `contested`
+    (scope -> [(sender, id)], for `doctor`; never serialised by `status`).
+    """
+    held: list[tuple[Message, str, dt.datetime]] = []
+    flagged: list[tuple[str, Message, str]] = []
+    holders: dict[str, set[str]] = {}
+    for m in everything:
+        if m.type != "CLAIM" or idx.is_superseded(m.id):
+            continue
+        scope = (m.meta.get("scope") or "").strip()
+        exp = m.expires_at
+        if exp is None:
+            raw = (m.meta.get("expires") or "").strip()
+            flagged.append(("MALFORMED_EXPIRES" if raw else "NO_EXPIRES", m, scope))
+        elif exp > now:
+            held.append((m, scope, exp))
+            if scope:
+                holders.setdefault(scope, set()).add(m.sender)
+            if exp - now > dt.timedelta(hours=MAX_CLAIM_HOURS):
+                flagged.append(("TOO_LONG", m, scope))
+        else:
+            flagged.append(("EXPIRED", m, scope))
+    contested: dict[str, list[tuple[str, str]]] = {
+        s: [] for s, who in holders.items() if len(who) > 1}
+    for m, scope, _exp in held:
+        if scope in contested:
+            contested[scope].append((m.sender, m.id))
+            flagged.append(("CONTESTED_SCOPE", m, scope))
+
+    def shown(scope: str) -> dict[str, Any]:
+        # As stored, never shortened; one longer than `send` accepts is withheld.
+        if len(scope) > MAX_FIELD_CHARS:
+            return {"scope": None, "scope_oversize": True}
+        return {"scope": scope or None}
+
+    def order(row: dict[str, Any]) -> tuple[bool, str, str]:
+        return (row["scope"] is None, row["scope"] or "", str(row["id"]).upper())
+
+    held_rows: list[dict[str, Any]] = []
+    for m, scope, exp in held:
+        if scope_filter is not None and scope != scope_filter:
+            continue
+        sent = m.sent_at
+        held_rows.append({
+            "id": m.id, "sender": m.sender, "to": m.to, **shown(scope),
+            "expires": _utc_text(exp),
+            "seconds_left": max(0, int((exp - now).total_seconds())),
+            "date": _utc_text(sent) if sent is not None else None,
+            "supersedes": m.supersedes or None,
+        })
+    held_rows.sort(key=order)
+    rank = {reason: n for n, reason in enumerate(CLAIM_ATTENTION_REASONS)}
+    attention = [{"id": m.id, "sender": m.sender, **shown(scope), "reason": reason}
+                 for reason, m, scope in flagged
+                 if scope_filter is None or scope == scope_filter]
+    attention.sort(key=lambda row: (rank[row["reason"]], *order(row)))
+    return {
+        "claims_held": held_rows[:CLAIMS_LIST_CAP],
+        "claims_held_truncated": max(0, len(held_rows) - CLAIMS_LIST_CAP),
+        "claims_attention": attention[:CLAIMS_LIST_CAP],
+        "claims_attention_truncated": max(0, len(attention) - CLAIMS_LIST_CAP),
+        "contested_scopes": len(contested),
+        "scope_filter": scope_filter,
+        "contested": {s: sorted(v, key=lambda p: (p[0], p[1].upper())) for s, v in contested.items()},
+    }
+
+
 def build_status(everything: list[Message], rejects: list[str], box: Path,
-                 now: dt.datetime, stalled_hours: float = DEFAULT_STALLED_HOURS) -> dict[str, Any]:
+                 now: dt.datetime, stalled_hours: float = DEFAULT_STALLED_HOURS,
+                 scope_filter: str | None = None) -> dict[str, Any]:
     """Pure, read-only summary of a mailbox. Deterministic for a given (files, now).
 
     Stable JSON key set (STATUS_SCHEMA = 1; keys are only ever added, never
@@ -2056,6 +2142,17 @@ def build_status(everything: list[Message], rejects: list[str], box: Path,
       foreign_supersedes     messages whose supersedes cites a CLAIM they may not supersede
       dangling_replies       fresh messages whose reply_to names no message here
       problems               [{code, count}] for count > 0, in PROBLEM_CODES order
+
+    Added by PROTOCOL.md section 34 (schema still 1), see claim_report():
+
+      claims_held            [{id, sender, to, scope, expires, seconds_left, date,
+                             supersedes}] for held CLAIMs, by scope then id, at most 200
+      claims_held_truncated  held claims left out by the cap
+      claims_attention       [{id, sender, scope, reason}], reason one of
+                             CLAIM_ATTENTION_REASONS, at most 200
+      claims_attention_truncated  rows left out by the cap
+      contested_scopes       scopes held by more than one sender
+      scope_filter           the --scope the two lists were filtered by, or null
     """
     idx = _Index(everything)
     by_type = {t: 0 for t in sorted(KNOWN_TYPES)}
@@ -2104,13 +2201,14 @@ def build_status(everything: list[Message], rejects: list[str], box: Path,
         agents.append({
             "agent": name,
             "state": "stalled" if age > stalled_hours * 3600 else "active",
-            "last_message_at": when.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "last_message_at": _utc_text(when),
             "age_seconds": age,
         })
     hidden = scan_hidden(box, now.timestamp())
     stale_tmp = len(hidden["stale_tmp"])
     stalled = [str(a["agent"]) for a in agents if a["state"] == "stalled"]
     dangling = len(dangling_replies(everything, now))
+    report = claim_report(everything, idx, now, scope_filter)
     counts = {
         "QUARANTINED": len(rejects),
         "STALE_TMP": stale_tmp,
@@ -2122,6 +2220,7 @@ def build_status(everything: list[Message], rejects: list[str], box: Path,
         "FOREIGN_SUPERSEDE": len(idx.foreign_supersedes),
         "DANGLING_REPLY": dangling,
         "STALLED_AGENT": len(stalled),
+        "CONTESTED_SCOPE": report["contested_scopes"],
     }
     return {
         "schema": STATUS_SCHEMA,
@@ -2142,7 +2241,34 @@ def build_status(everything: list[Message], rejects: list[str], box: Path,
         "foreign_supersedes": len(idx.foreign_supersedes),
         "dangling_replies": dangling,
         "problems": [{"code": c, "count": counts[c]} for c in PROBLEM_CODES if counts[c] > 0],
+        **{k: v for k, v in report.items() if k != "contested"},
     }
+
+
+def _held_table(st: dict[str, Any]) -> list[str]:
+    """Text `status` lines for the held claims (section 34). For people: a long
+    scope is shortened here and only here; `--json` reports it as stored."""
+    rows = st["claims_held"]
+    if not rows:
+        return []
+
+    def scope_text(row: dict[str, Any]) -> str:
+        if row.get("scope_oversize"):
+            return "(oversize)"
+        scope = row["scope"]
+        if scope is None:
+            return "-"
+        return str(scope) if len(scope) <= 48 else scope[:45] + "..."
+
+    cells = [(scope_text(r), str(r["sender"])[:32], str(r["expires"]), _fmt_age(r["seconds_left"]))
+             for r in rows[:CLAIMS_TEXT_ROWS]]
+    w0, w1 = max(len(c[0]) for c in cells), max(len(c[1]) for c in cells)
+    out = ["held claims (scope, holder, expires, left):"]
+    out += [f"  {c[0]:<{w0}}  {c[1]:<{w1}}  {c[2]}  {c[3]}" for c in cells]
+    more = len(rows) - len(cells) + int(st["claims_held_truncated"])
+    if more:
+        out.append(f"  ... and {more} more")
+    return out
 
 
 def _fmt_age(seconds: object) -> str:
@@ -2169,8 +2295,14 @@ def cmd_status(args: argparse.Namespace) -> int:
     if args.stalled_hours <= 0:
         print("--stalled-hours must be positive", file=sys.stderr)
         return 2
+    scope_filter: str | None = None
+    if getattr(args, "scope", None) is not None:
+        scope_filter = args.scope.strip()
+        if not scope_filter:
+            print("--scope must not be empty", file=sys.stderr)
+            return 2
     everything, rejects = load_messages()
-    st = build_status(everything, rejects, box, now, args.stalled_hours)
+    st = build_status(everything, rejects, box, now, args.stalled_hours, scope_filter)
     if args.json:
         print(json.dumps(st, indent=2, sort_keys=True))
         return 0
@@ -2181,6 +2313,8 @@ def cmd_status(args: argparse.Namespace) -> int:
     print(f"asks: open={asks['open']}  oldest_open_age={_fmt_age(asks['oldest_open_age_seconds'])}"
           + (f"  ({asks['oldest_open_id']})" if asks["oldest_open_id"] else ""))
     print("claims: " + "  ".join(f"{k}={v}" for k, v in claims.items()))
+    for line in _held_table(st):
+        print(line)
     print(f"quarantined: {st['quarantined']}  stale_tmp: {st['stale_tmp']}")
     print("scope_locks: " + "  ".join(f"{k}={v}" for k, v in st["scope_locks"].items()))
     print("idem_markers: " + "  ".join(f"{k}={v}" for k, v in st["idem_markers"].items()))
@@ -2252,10 +2386,18 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         c = hidden[key]
         print(f"{key}: {c['total']} (" + ", ".join(f"{k} {v}" for k, v in c.items() if k != "total")
               + ")" + "".join(f"\n  - {n}" for n in hidden[names][:20]))
-    foreign = _Index(everything).foreign_supersedes
+    idx = _Index(everything)
+    foreign = idx.foreign_supersedes
     print(f"foreign_supersedes: {len(foreign)}" + "".join(f"\n  - {i}" for i in foreign[:20]))
     dangling = dangling_replies(everything, now)
     print(f"dangling_replies: {len(dangling)}" + "".join(f"\n  - {i}" for i in dangling[:20]))
+    # PROTOCOL.md section 34: reported, never a new reason to FAIL.
+    contested = claim_report(everything, idx, now)["contested"]
+    print(f"contested_scopes: {len(contested)}")
+    for scope in sorted(contested)[:20]:
+        label = (repr(scope) if len(scope) <= MAX_FIELD_CHARS
+                 else f"(oversize scope, {len(scope)} characters)")
+        print(f"  - {label}: " + ", ".join(f"{who} ({mid})" for who, mid in contested[scope][:20]))
 
     canary = find_live_canary(everything, now=now)
     if canary is None:
@@ -2589,6 +2731,8 @@ def main(argv: list[str] | None = None) -> int:
                                         "claims, quarantine, stalled agents")
     stp.add_argument("--json", action="store_true", help="stable machine-readable output")
     stp.add_argument("--now", default="", help="evaluate at this ISO-8601 instant (tests)")
+    stp.add_argument("--scope", default=None,
+                     help="list only the claims on exactly this scope (counts still cover the mailbox)")
     stp.add_argument("--stalled-hours", type=float, default=DEFAULT_STALLED_HOURS,
                      help=f"flag agents silent longer than this (default {DEFAULT_STALLED_HOURS:g})")
     stp.set_defaults(func=cmd_status)
@@ -2637,4 +2781,12 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        _rc = main()
+        sys.stdout.flush()
+    except BrokenPipeError:
+        # The reader went away (`list | head`): not worth a traceback. Point
+        # stdout at /dev/null so the interpreter's flush at exit stays quiet.
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        _rc = 141  # 128 + SIGPIPE, what a shell reports for a writer killed by it
+    raise SystemExit(_rc)

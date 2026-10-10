@@ -1,0 +1,234 @@
+name: release
+# Builds the wheel and the sdist of a version tag reproducibly, scans them, and attaches
+# them with SHA256SUMS to a DRAFT GitHub release. A person reviews and publishes the draft.
+# Nothing is uploaded to PyPI. See docs/release-process.md.
+#
+# Runs only for a pushed tag named vX.Y.Z. There is no manual trigger: re-running the
+# tag's own run is the only way to repeat a release, and a repeat cannot replace an asset.
+# The workflow never creates, moves or deletes a tag.
+#
+# Every gate is in `build`, which can read the repository and nothing else. `publish`
+# holds the write permissions and only handles files that passed every gate.
+on:
+  push:
+    tags:
+      - "v*.*.*"
+permissions: {}
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+defaults:
+  run:
+    shell: bash # bash -eo pipefail: a failing command, also inside a pipe, fails the step
+jobs:
+  build:
+    if: github.repository == 'tyko84/agent-postbox'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: "gate: an annotated tag vX.Y.Z on a commit of main"
+        env:
+          GH_TOKEN: ${{ github.token }} # read-only here; used for one GET
+        run: |
+          fail() { echo "::error::$1"; exit 1; }
+          [ "$GITHUB_REF_TYPE" = tag ] || fail "not a tag push"
+          tag="$GITHUB_REF_NAME"
+          [[ "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] \
+            || fail "the tag is not of the form vX.Y.Z"
+          # A checkout of a tag may leave refs/tags/NAME pointing straight at the commit.
+          # Take every tag object from the remote again (a public repository: no credentials),
+          # so the annotation is what is checked and what the publication scan reads.
+          git fetch --quiet --force --no-tags origin '+refs/tags/*:refs/tags/*'
+          [ "$(git cat-file -t "refs/tags/$tag")" = tag ] \
+            || fail "the tag is lightweight; a release tag must be annotated (git tag -a)"
+          remote="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" --jq '.object.type + " " + .object.sha')"
+          [ "$remote" = "tag $(git rev-parse "refs/tags/$tag")" ] \
+            || fail "the local tag object is not the one on the remote"
+          commit="$(git rev-parse "refs/tags/$tag^{commit}")"
+          [ "$(git rev-parse HEAD)" = "$commit" ] || fail "the checkout is not the tagged commit"
+          git merge-base --is-ancestor "$commit" refs/remotes/origin/main \
+            || fail "the tagged commit is not on main"
+          echo "VERSION=${tag#v}" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12" # the reference interpreter for the published hashes
+
+      - name: "gate: __version__ and the changelog name this version"
+        run: |
+          fail() { echo "::error::$1"; exit 1; }
+          got="$(python -c 'import agent_mail; print(agent_mail.__version__)')"
+          [ "$got" = "$VERSION" ] || fail "agent_mail.__version__ is not the tag without its v"
+          # The section between '## [X.Y.Z]' and the next heading becomes the release notes.
+          awk -v head="## [$VERSION]" '
+            index($0, head) == 1 { found = 1; on = 1; next }
+            on && (/^## / || /^\[[^]]+\]: /) { on = 0 }
+            on { print }
+            END { exit !found }' CHANGELOG.md > "$RUNNER_TEMP/release-notes.md" \
+            || fail "CHANGELOG.md has no '## [$VERSION]' heading"
+          grep -q '[^[:space:]]' "$RUNNER_TEMP/release-notes.md" \
+            || fail "the CHANGELOG.md section for $VERSION is empty"
+
+      - run: python -m pip install -r requirements-dev.txt
+
+      - name: "gate: the whole test list"
+        env:
+          POSTBOX_REQUIRE_BUILD_TESTS: "1" # the real-build tests may not skip here
+        run: |
+          for t in selftest.py stress_test.py test_hardening.py test_field.py test_adversarial.py \
+                   test_handoff.py test_readme_examples.py test_publication.py test_packaging.py; do
+            echo "::group::$t"
+            python "$t"
+            echo "::endgroup::"
+          done
+
+      - name: "gate: two independent builds are byte-identical"
+        # The build backend is pinned by build-constraints.txt, read from the tagged commit.
+        # The script also writes dist/SHA256SUMS and prints a BUILDINFO block.
+        run: python scripts/repro_build.py --check --outdir dist | tee "$RUNNER_TEMP/build.log"
+
+      - name: "gate: twine check"
+        run: python -m twine check dist/*.whl dist/*.tar.gz
+
+      - name: "gate: exactly one wheel, one sdist and SHA256SUMS, named for this version"
+        run: |
+          want="SHA256SUMS agent_postbox-$VERSION-py3-none-any.whl agent_postbox-$VERSION.tar.gz"
+          got="$(ls -A dist | LC_ALL=C sort | tr '\n' ' ')"
+          [ "${got% }" = "$want" ] || { echo "::error::unexpected files in dist: $got"; exit 1; }
+
+      - name: "gate: publication scan of tracked files, artifacts, history and tags"
+        # The forbidden list is visible to this step only, and only through the environment:
+        # never an argument, never echoed, no `set -x`, nothing written to the summary.
+        # --require-patterns: without the list the step fails instead of passing on the
+        # generic detectors alone. The allowlist is an empty file outside the checkout, so
+        # nothing committed can silence the scan.
+        env:
+          POSTBOX_FORBIDDEN: ${{ secrets.POSTBOX_FORBIDDEN }}
+        run: |
+          : > "$RUNNER_TEMP/empty-allowlist"
+          python check_publication.py --require-patterns --allowlist "$RUNNER_TEMP/empty-allowlist" --dist dist --git-log
+
+      - name: SHA256SUMS
+        run: |
+          cd dist
+          # written by scripts/repro_build.py; it must be exactly what sha256sum would write
+          sha256sum "agent_postbox-$VERSION-py3-none-any.whl" "agent_postbox-$VERSION.tar.gz" | cmp - SHA256SUMS \
+            || { echo "::error::SHA256SUMS is not what sha256sum computes for the two artifacts"; exit 1; }
+          sha256sum --check --strict SHA256SUMS
+          # what is shipped is what the two builds agreed on
+          while IFS= read -r line; do
+            grep -Fxq -- "$line" "$RUNNER_TEMP/build.log" \
+              || { echo "::error::a checksum is not one the reproducible build printed"; exit 1; }
+          done < SHA256SUMS
+          {
+            echo
+            echo "### Verifying a download"
+            echo
+            echo "SHA-256, as in the attached \`SHA256SUMS\` (check with \`sha256sum -c SHA256SUMS\`):"
+            echo
+            echo '```'
+            cat SHA256SUMS
+            echo '```'
+            echo
+            echo "Built by \`scripts/repro_build.py\` from tag \`$GITHUB_REF_NAME\` with:"
+            echo
+            echo '```'
+            sed -n '/^BUILDINFO$/,/^END BUILDINFO$/p' "$RUNNER_TEMP/build.log"
+            echo '```'
+            echo
+            echo "How to rebuild and compare: docs/release-process.md. This project is not on PyPI;"
+            echo "install the attached wheel or a clone, never a bare package name."
+          } >> "$RUNNER_TEMP/release-notes.md"
+          cat SHA256SUMS >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-dist
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-notes
+          path: ${{ runner.temp }}/release-notes.md
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    needs: build
+    if: github.repository == 'tyko84/agent-postbox'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # create a draft release, or add assets to an existing one
+      id-token: write # the signing identity for the build provenance
+      attestations: write # store the build provenance
+    steps:
+      # No checkout: this job runs no code from the repository.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-dist
+          path: dist
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-notes
+          path: notes
+
+      - name: the three files, intact
+        run: |
+          fail() { echo "::error::$1"; exit 1; }
+          tag="$GITHUB_REF_NAME"
+          [ "$GITHUB_REF_TYPE" = tag ] || fail "not a tag push"
+          [[ "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] \
+            || fail "the tag is not of the form vX.Y.Z"
+          version="${tag#v}"
+          want="SHA256SUMS agent_postbox-$version-py3-none-any.whl agent_postbox-$version.tar.gz"
+          got="$(ls -A dist | LC_ALL=C sort | tr '\n' ' ')"
+          [ "${got% }" = "$want" ] || fail "unexpected files from the build job: $got"
+          [ "$(wc -l < dist/SHA256SUMS)" -eq 2 ] || fail "SHA256SUMS does not list two files"
+          (cd dist && sha256sum --check --strict SHA256SUMS)
+          [ -s notes/release-notes.md ] || fail "no release notes from the build job"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: build provenance for the wheel and the sdist
+        # Verify with: gh attestation verify <file> -R tyko84/agent-postbox
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: dist/SHA256SUMS
+
+      - name: attach to a draft release (or to the release that already exists)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          fail() { echo "::error::$1"; exit 1; }
+          tag="$GITHUB_REF_NAME" # checked against ^vX.Y.Z$ above
+          files=("dist/agent_postbox-$VERSION-py3-none-any.whl" "dist/agent_postbox-$VERSION.tar.gz" dist/SHA256SUMS)
+          # Drafts included (the token can write). A failed listing fails the step.
+          ids="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+                   --jq ".[] | select(.tag_name == \"$tag\") | .id")"
+          count="$(printf '%s' "$ids" | grep -c . || true)"
+          if [ "$count" -eq 0 ]; then
+            # A draft: nothing is public until a person publishes it. --verify-tag: never
+            # create a tag. If an upload fails, gh removes the draft it has just made.
+            gh release create "$tag" --verify-tag --draft --title "$tag" \
+              --notes-file notes/release-notes.md "${files[@]}"
+          elif [ "$count" -eq 1 ]; then
+            # Never replace an asset: refuse before uploading anything, and no --clobber.
+            have="$(gh api "repos/$GITHUB_REPOSITORY/releases/$ids" --jq '.assets[].name')"
+            for f in "${files[@]}"; do
+              if printf '%s\n' "$have" | grep -Fxq -- "$(basename "$f")"; then
+                fail "the release for $tag already has $(basename "$f"); assets are never replaced"
+              fi
+            done
+            gh release upload "$tag" "${files[@]}"
+          else
+            fail "more than one release exists for $tag; remove the stray draft by hand"
+          fi

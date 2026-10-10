@@ -6,21 +6,29 @@ constant, and races are forced by running real subprocesses against one mailbox.
 Interrupted writers are real children SIGKILLed at a chokepoint; the parent only
 polls for their ready-file in bounded 0.05 s steps. File ages are set with utime.
 Each negative check has a positive control in the same mailbox.
+
+Bounded: every child is waited for with a timeout (STEP_TIMEOUT seconds), and a
+watchdog dumps every thread's stack and exits non-zero if the whole run has not
+finished after WATCHDOG seconds, so a hang is a loud failure, not a stalled job.
 """
 from __future__ import annotations
 
 import datetime as dt
+import faulthandler
 import json
 import os
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 TOOL = str(HERE / "agent_mail.py")
+STEP_TIMEOUT = 120   # seconds; any single child
+WATCHDOG = 900       # seconds; the whole run
 FAILS: list[str] = []
 
 
@@ -36,7 +44,7 @@ def run(box: Path, *argv: str, env_extra: dict[str, str] | None = None
     env.pop("AGENT_MAIL_IDEM_WAIT", None)  # the suite pins the default; never inherit one
     env.update(env_extra or {})
     return subprocess.run([sys.executable, "-I", TOOL, *argv],
-                          capture_output=True, text=True, env=env)
+                          capture_output=True, text=True, env=env, timeout=STEP_TIMEOUT)
 
 
 def soon(hours: float) -> str:
@@ -59,6 +67,7 @@ def mid(cp: subprocess.CompletedProcess[str]) -> str:
 
 
 def main() -> int:
+    faulthandler.dump_traceback_later(WATCHDOG, exit=True)
     with tempfile.TemporaryDirectory() as td:
         box = Path(td) / "mail"
         box.mkdir()
@@ -267,7 +276,8 @@ def main() -> int:
         V33_KEYS = ["dangling_replies", "foreign_supersedes", "idem_markers", "problems",
                     "scope_locks", "takeover_mutexes"]  # added by PROTOCOL.md section 33
         check("documented key set is exactly stable",
-              sorted(st) == sorted(V1_KEYS + V33_KEYS)
+              sorted(st) == sorted(V1_KEYS + V33_KEYS + ["claims_attention", "claims_attention_truncated", "claims_held",
+                                                          "claims_held_truncated", "contested_scopes", "scope_filter"])  # PROTOCOL.md section 34
               and sorted(st.get("scope_locks", {})) == ["held", "in_flight", "orphaned", "total"]
               and sorted(st.get("idem_markers", {})) == ["held", "in_flight", "orphaned", "resolved", "total"]
               and sorted(st.get("takeover_mutexes", {})) == ["stale", "total"]
@@ -349,7 +359,7 @@ def main() -> int:
             [sys.executable, "-I", "-c",
              "import sys, runpy; sys.version_info = (3, 9, 18, 'final', 0); "
              f"sys.argv = ['agent_mail.py', '--version']; runpy.run_path({TOOL!r}, run_name='__main__')"],
-            capture_output=True, text=True)
+            capture_output=True, text=True, timeout=STEP_TIMEOUT)
         check("python 3.9 -> exit 2, one readable line, no traceback",
               old.returncode == 2 and len(old.stderr.strip().splitlines()) == 1
               and "requires Python 3.10" in old.stderr and "Traceback" not in old.stderr,
@@ -357,11 +367,12 @@ def main() -> int:
         imp = subprocess.run(
             [sys.executable, "-I", "-c",
              "import sys; sys.version_info = (3, 8, 0, 'final', 0); sys.path.insert(0, "
-             f"{str(HERE)!r}); import agent_mail"], capture_output=True, text=True)
+             f"{str(HERE)!r}); import agent_mail"], capture_output=True, text=True, timeout=STEP_TIMEOUT)
         check("importing under an old python raises ImportError (hook swallows it)",
               imp.returncode == 1 and "ImportError: agent_mail requires Python 3.10" in imp.stderr,
               imp.stderr[-200:])
-        cur = subprocess.run([sys.executable, "-I", TOOL, "--version"], capture_output=True, text=True)
+        cur = subprocess.run([sys.executable, "-I", TOOL, "--version"], capture_output=True, text=True,
+                             timeout=STEP_TIMEOUT)
         check("control: the current interpreter passes the guard",
               cur.returncode == 0 and "agent-postbox" in cur.stdout, cur.stderr)
 
@@ -381,6 +392,7 @@ def main() -> int:
             go.unlink(missing_ok=True)
             code = (
                 "import os, signal, sys, time\n"
+                f"signal.alarm({WATCHDOG})\n"  # a parked child never outlives a dead harness
                 f"sys.path.insert(0, {str(HERE)!r})\n"
                 "import agent_mail\n"
                 "def block(*_a, **_k):\n"
@@ -408,12 +420,12 @@ def main() -> int:
             chokepoint, child returncode, child stderr)."""
             proc, ready = blocked_send(box, patch, *argv)
             proc.kill()
-            _, err = proc.communicate()
+            _, err = proc.communicate(timeout=STEP_TIMEOUT)
             return ready.exists(), proc.returncode, err
 
         def hook(box: Path, me: str) -> subprocess.CompletedProcess[str]:
             return subprocess.run([sys.executable, "-I", HOOK], capture_output=True, text=True,
-                                  env=dict(os.environ, AGENT_MAIL_DIR=str(box), AGENT_MAIL_IDENTITY=me))
+                                  timeout=STEP_TIMEOUT, env=dict(os.environ, AGENT_MAIL_DIR=str(box), AGENT_MAIL_IDENTITY=me))
 
         def rows(box: Path, needle: str) -> int:
             return sum(1 for ln in run(box, "list").stdout.splitlines() if needle in ln)
@@ -572,7 +584,7 @@ def main() -> int:
               rival.returncode == 3 and "being claimed right now" in rival.stderr
               and locks[0].exists(), rival.stdout + rival.stderr + str(hidden(r4)))
         holder.kill()
-        _, err4 = holder.communicate()
+        _, err4 = holder.communicate(timeout=STEP_TIMEOUT)
         check("holder SIGKILLed; its lock file is left behind", holder.returncode == -9
               and locks[0].exists() and not list(r4.glob("*.md")), err4[-300:] + str(hidden(r4)))
         rival2 = run(r4, "send", "--from", "bob", *CLM)
@@ -1040,8 +1052,8 @@ def main() -> int:
               busy.returncode == 3 and stuck_k.poll() is None and stuck_c.poll() is None, busy.stderr)
         stuck_k.kill()
         stuck_c.kill()
-        stuck_k.communicate()
-        stuck_c.communicate()
+        stuck_k.communicate(timeout=STEP_TIMEOUT)
+        stuck_c.communicate(timeout=STEP_TIMEOUT)
         check("once they are killed the same files count as orphaned",
               stj(r12)["scope_locks"] == {"total": 2, "in_flight": 0, "held": 0, "orphaned": 2}
               and stj(r12)["idem_markers"] == {"total": 3, "resolved": 1, "in_flight": 0, "held": 0, "orphaned": 2}
@@ -1087,6 +1099,120 @@ def main() -> int:
               and "PROBLEMS" not in run(r5.with_name("rec11"), "status").stdout.replace("STALLED", ""),
               txt12.stdout + run(r5.with_name("rec11"), "status").stdout)
 
+        print("13. the status probe window: a reader's shared lock against a claimant and a keyed retry")
+        # `status` and `doctor` ask the kernel about a lock or marker older than
+        # 60 s by taking a shared, non-blocking flock on it for an instant
+        # (PROTOCOL.md section 33). A claimant or a keyed retry that tries its
+        # exclusive lock in that instant is told "retry" (exit 3) although
+        # nobody holds the scope or the key. First the mechanism, deterministic,
+        # with the reader's lock held by this test; then how often a real
+        # `status` loop hits it.
+        import fcntl  # noqa: PLC0415
+        import hashlib as hl13  # noqa: PLC0415
+
+        def plant_lock(box: Path, scope: str) -> Path:
+            """What a claimant SIGKILLed two minutes ago leaves behind."""
+            lock = box / f".scope.{hl13.sha256(scope.encode()).hexdigest()[:24]}.lock"
+            lock.write_text("99999\n")
+            age(lock, 120)
+            return lock
+
+        def plant_marker(box: Path, key: str) -> Path:
+            """What a keyed sender of NOTE SIGKILLed two minutes ago leaves behind."""
+            marker = box / (".idem." + hl13.sha256(f"alice\0bob\0{key}".encode()).hexdigest()[:24])
+            marker.write_text("01ARZ3NDEKTSV4RRFFQ69GZZZZ\n"
+                              + hl13.sha256(b"NOTICE\0cut\0whole body").hexdigest() + "\nflock\n")
+            age(marker, 120)
+            return marker
+
+        def shared(path: Path) -> int:
+            """Exactly the lock _probe_holder takes; the caller closes it."""
+            fd = os.open(path, os.O_RDONLY)
+            fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            return fd
+
+        def claim13(box: Path, scope: str) -> subprocess.CompletedProcess[str]:
+            return run(box, "send", "--type", "CLAIM", "--from", "alice", "--to", "all", "--subject",
+                       "c", "--body", "b", "--expires", soon(1), "--scope", scope)
+
+        r13 = Path(td) / "rec13"
+        r13.mkdir()
+        lock13, marker13 = plant_lock(r13, "file:13.py"), plant_marker(r13, "k13")
+        st13 = stj(r13)
+        check("control: status probes the planted files and finds both orphaned",
+              st13["scope_locks"]["orphaned"] == 1 and st13["idem_markers"]["orphaned"] == 1,  # type: ignore[index]
+              str(st13))
+        fd13 = shared(lock13)
+        cp = claim13(r13, "file:13.py")
+        check("a reader's shared lock on an orphaned scope lock: the claimant is told to retry "
+              "(exit 3), nothing written",
+              cp.returncode == 3 and "is being claimed right now; retry" in cp.stderr
+              and not list(r13.glob("*.md")), cp.stderr)
+        os.close(fd13)
+        cp = claim13(r13, "file:13.py")
+        check("...and the same claim succeeds as soon as the reader lets go; the lock file is gone",
+              cp.returncode == 0 and not lock13.exists(), cp.stderr)
+        fd13 = shared(marker13)
+        seen13 = marker13.read_bytes()
+        cp = run(r13, *NOTE, "--key", "k13", "--key-wait", "0")
+        check("a reader's shared lock on an orphaned key marker, --key-wait 0: exit 3 'retry', "
+              "nothing written, marker untouched",
+              cp.returncode == 3 and "nothing written; retry" in cp.stderr and rows(r13, "cut") == 0
+              and marker13.read_bytes() == seen13, cp.stderr)
+        os.close(fd13)
+        cp = run(r13, *NOTE, "--key", "k13", "--key-wait", "0")
+        check("...and the same retry takes the orphan over as soon as the reader lets go",
+              cp.returncode == 0 and "wrote " in cp.stdout and rows(r13, "cut") == 1, cp.stderr)
+
+        N13 = 20
+        r13b = Path(td) / "rec13b"
+        r13b.mkdir()
+        for i in range(N13):
+            plant_lock(r13b, f"file:w{i}.py")
+            plant_marker(r13b, f"w{i}")
+        stop13 = threading.Event()
+        probes13, orphans13, crashed13 = [0], [0], []
+
+        def status_loop() -> None:
+            while not stop13.is_set():
+                cp = run(r13b, "status", "--json")
+                try:
+                    st = json.loads(cp.stdout)
+                    orphans13[0] += st["scope_locks"]["orphaned"] + st["idem_markers"]["orphaned"]
+                    probes13[0] += 1
+                except (ValueError, KeyError):
+                    crashed13.append(cp.stderr[-200:])
+
+        loops13 = [threading.Thread(target=status_loop) for _ in range(2)]
+        for t in loops13:
+            t.start()
+        spurious13, final13 = 0, []
+        try:
+            for i in range(N13):
+                for argv13 in (None, [*NOTE, "--key", f"w{i}", "--key-wait", "0"]):
+                    for _attempt in range(6):   # bounded; no sleep between attempts
+                        cp = claim13(r13b, f"file:w{i}.py") if argv13 is None else run(r13b, *argv13)
+                        if cp.returncode != 3:
+                            break
+                        spurious13 += 1
+                    final13.append(cp.returncode)
+        finally:
+            stop13.set()
+            for t in loops13:
+                t.join(STEP_TIMEOUT * 2)
+        check("control: two `status` loops ran throughout, never failed, and were probing orphans",
+              probes13[0] >= 4 and orphans13[0] > 0 and not crashed13,
+              f"passes={probes13[0]} orphans seen={orphans13[0]} {crashed13[:2]}")
+        check(f"{N13} claims and {N13} keyed retries (--key-wait 0) over probed orphans all succeed "
+              "within 6 attempts",
+              final13 == [0] * (2 * N13) and rows(r13b, "cut") == N13
+              and not list(r13b.glob(".scope.*")), f"{final13} left={hidden(r13b)[:4]}")
+        check(f"the status loop cost at most {N13 // 2} spurious exit-3 answers in {2 * N13} sends",
+              spurious13 <= N13 // 2, f"spurious={spurious13}")
+        print(f"        (spurious exit 3 under two status loops: {spurious13} of "
+              f"{2 * N13 + spurious13} attempts; status ran {probes13[0]} times)")
+
+    faulthandler.cancel_dump_traceback_later()
     if FAILS:
         print("\nFAILED:")
         for f in FAILS:

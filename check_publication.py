@@ -9,6 +9,9 @@ Scans, for configurable forbidden patterns plus generic secret/path shapes:
     name and its link text are scanned.
   * every file in a directory of built artifacts    --dist DIR
     (file name, member names, contents, link targets, tar owner names, zip comments)
+    and, whatever the forbidden list says, the metadata a build copies from the machine
+    it ran on: tar owner names and ids, pax records, the gzip header, zip extra fields,
+    comments and attributes, operating-system litter (rule ids builder-*, see below)
   * git history: author/committer name+email, messages  --git-log
     plus every tag name and, for annotated tags, tagger name+email and message
 
@@ -28,9 +31,28 @@ and is reported as forbidden-N-split.
 Anything the scanner was asked to cover but could not look inside is a finding named
 unscanned-<reason> (exit 1), never a silent pass; see docs/publication-safety.md.
 
+Builder identity (always on for --dist, independent of the forbidden list). An artifact
+must not say who or what built it. Reported once per artifact and rule, value never shown:
+  builder-owner        tar user/group name other than "" or "root"
+  builder-uid          tar uid or gid other than 0
+  builder-pax          pax record other than path, linkpath, size, mtime, comment,
+                       charset, hdrcharset (so: uname, gname, uid, gid, atime, ctime,
+                       SCHILY.*, LIBARCHIVE.*, GNU.*, extended attributes, ...)
+  builder-gzip-header  gzip member header with a file name, comment, extra field,
+                       reserved flag or non-zero timestamp
+  builder-zip-extra    zip extra field other than zip64 (unix uid/gid, timestamps, ...),
+                       in the central directory or in a local header
+  builder-zip-comment  non-empty zip archive or member comment
+  builder-zip-attr     zip member not marked as made on unix or FAT, or with external
+                       attributes beyond a file type and permission bits
+  builder-os-junk      member named like operating-system litter (__MACOSX/, .DS_Store,
+                       AppleDouble ._*, Thumbs.db, ...)
+  builder-local-url    a direct_url.json member holding a file: URL
+scripts/repro_build.py produces artifacts with none of these.
+
 Allowlist (--allowlist FILE, default .publication-allowlist if present): lines of
 "<rule-id> <path-glob>   # reason". A finding is suppressed only when both match; the
-number suppressed is reported.
+number suppressed is reported. A builder-* rule takes an exact path, never a glob.
 
 Exit status: 0 clean, 1 findings, 2 usage/environment error (the scan could not run).
 Without a forbidden list the generic detectors still run and a clean result exits 0 with a
@@ -43,12 +65,15 @@ import fnmatch
 import hashlib
 import os
 import re
+import posixpath
 import stat
+import struct
 import subprocess
 import sys
 import tarfile
 import unicodedata
 import zipfile
+import zlib
 from pathlib import Path
 
 ENV_VAR = "POSTBOX_FORBIDDEN"
@@ -74,6 +99,23 @@ _GENERIC: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("home-path", re.compile(r"(?:/home/|/Users/)(?!(?:user|you|name|username|runner)\b)"
                              r"[A-Za-z0-9._-]+/|[A-Za-z]:\\Users\\(?!(?:user|you|name)\b)\w+")),
 )
+
+# ---- builder identity: what a build copies from the machine it ran on -------------
+# Rule ids start with BUILDER; every one is on for --dist whatever the forbidden list is.
+BUILDER = "builder-"
+# "" is what scripts/repro_build.py writes. "root" is the fixed name `git archive` and
+# `tar --owner=root` write on every system: with uid/gid 0 it names no account of the
+# builder. Anything else ("wheel", "staff", a login) describes the build machine.
+_TAR_NAMES_OK = ("", "root")
+# pax records that describe the member itself. "comment" is free text (git archive puts
+# the commit id there) and is scanned like content. Everything else is refused: owner
+# names and ids, access/change times, vendor records and extended attributes.
+_PAX_OK = frozenset(("path", "linkpath", "size", "mtime", "comment", "charset", "hdrcharset"))
+_ZIP_EXTRA_OK = frozenset((0x0001,))  # zip64 sizes; no other extra field is needed
+_ZIP_DOS_BITS = 0x31  # read-only, directory, archive: all a DOS attribute byte may say
+_OS_JUNK = re.compile(r"(?:^|/)(?:__MACOSX|\.DS_Store|\._[^/]*|\.AppleDouble|\.Spotlight-V100"
+                      r"|\.Trashes|\.fseventsd|Thumbs\.db|desktop\.ini)(?:/|$)", re.IGNORECASE)
+_GLOB_CHARS = frozenset("*?[")
 
 Finding = tuple[str, str]  # (location, rule-id)
 
@@ -150,8 +192,74 @@ def load_allowlist(path: str | None) -> list[tuple[str, str]]:
         if len(parts) == 2:
             if not parts[1].strip("*"):
                 raise ScanError(f"allowlist line {n} matches every path; name the path")
+            if parts[0].startswith(BUILDER) and _GLOB_CHARS.intersection(parts[1]):
+                # One named artifact (its file name carries the version) or member at a
+                # time: a glob would exempt every future build as well.
+                raise ScanError(f"allowlist line {n}: a {BUILDER}* rule takes an exact "
+                                "path, not a glob")
             out.append((parts[0], parts[1]))
     return out
+
+
+def _zip_extra_ok(extra: bytes) -> bool:
+    """True when every extra field is on the allow-list and the block parses completely."""
+    pos = 0
+    while pos < len(extra):
+        if len(extra) - pos < 4:
+            return False  # stray bytes: not a field, so nothing vouches for them
+        field, size = struct.unpack_from("<HH", extra, pos)
+        pos += 4 + size
+        if field not in _ZIP_EXTRA_OK or pos > len(extra):
+            return False
+    return True
+
+
+def _zip_attr_ok(info: zipfile.ZipInfo) -> bool:
+    """True when a member carries a file type and permission bits and nothing else."""
+    mode, dos = info.external_attr >> 16, info.external_attr & 0xFFFF
+    if dos & ~_ZIP_DOS_BITS:
+        return False
+    if info.create_system == 0:  # FAT: no mode at all
+        return mode == 0
+    if info.create_system != 3:  # not unix either: the field names the builder's system
+        return False
+    kind = stat.S_IFMT(mode)
+    return kind in (0, stat.S_IFREG, stat.S_IFDIR, stat.S_IFLNK) and not mode & 0o7000
+
+
+def _gzip_headers_ok(path: Path) -> bool:
+    """False when a gzip member header of `path` names a file, a time or anything else.
+
+    Every member of the stream is checked, not only the first. A file that is not gzip
+    (plain, bzip2 or xz tar: formats with no such header fields) is fine.
+    """
+    with open(path, "rb") as f:
+        if f.peek(2)[:2] != b"\x1f\x8b":
+            return True
+        while True:
+            head = f.read(10)
+            if len(head) != 10 or head[:3] != b"\x1f\x8b\x08":
+                raise ScanError("gzip member header unreadable")
+            flags = head[3]
+            if flags & 0xFC or head[4:8] != b"\0\0\0\0":
+                # FEXTRA 0x04, FNAME 0x08, FCOMMENT 0x10, reserved 0xE0, or MTIME set.
+                return False
+            if flags & 0x02:
+                f.read(2)  # FHCRC: a checksum of the header, nothing of the builder
+            inflate = zlib.decompressobj(-zlib.MAX_WBITS)
+            while not inflate.eof:
+                chunk = f.read(1 << 16)
+                if not chunk:
+                    raise ScanError("gzip stream ends inside a member")
+                while chunk and not inflate.eof:  # bounded output: discard as we go
+                    inflate.decompress(chunk, 1 << 20)
+                    chunk = inflate.unconsumed_tail
+            f.seek(-len(inflate.unused_data), os.SEEK_CUR)
+            f.read(8)  # CRC32 and length, verified by the tar read
+            while (pad := f.peek(1)[:1]) == b"\0":
+                f.read(1)
+            if not pad:
+                return True
 
 
 class Scanner:
@@ -302,15 +410,61 @@ class Scanner:
             elif art.name.endswith(_TAR_SUFFIXES):
                 self._tar(art)
                 archives += 1
+            elif art.name == "SHA256SUMS" and art.is_file() and not art.is_symlink():
+                self._sums(d, art)
             else:
                 self._add(loc, "unscanned-unknown-artifact", art.name)
         if not archives:
             raise ScanError("--dist holds no sdist or wheel")
 
+    def _sums(self, d: Path, sums: Path) -> None:
+        """A SHA256SUMS file beside the artifacts (scripts/repro_build.py writes one) is
+        read as text and checked: `<64 hex>  <bare name>` lines only, every line names a
+        file of the directory with that hash, and every archive of the directory is listed.
+        A checksum file that does not describe what is beside it is a finding, not a pass."""
+        loc = f"dist:{sums.name}"
+        if sums.stat().st_size > MAX_BYTES:
+            self._add(loc, "unscanned-too-large", sums.name)
+            return
+        data = sums.read_bytes()
+        self._count("checksum file(s)")
+        self.scan_bytes(loc, data, allow_loc=sums.name)
+        listed: set[str] = set()
+        for line in data.decode("utf-8", "replace").splitlines():
+            m = re.fullmatch(r"([0-9a-f]{64}) [ *]([^/\\\x00-\x1f]+)", line)
+            target = d / m.group(2) if m else None
+            if (m is None or target is None or m.group(2) in (".", "..", sums.name)
+                    or m.group(2) in listed or target.is_symlink() or not target.is_file()):
+                self._add(loc, "checksum-malformed", sums.name)
+                continue
+            listed.add(m.group(2))
+            digest = hashlib.sha256()
+            with open(target, "rb") as fh:
+                for block in iter(lambda: fh.read(1 << 20), b""):
+                    digest.update(block)
+            if digest.hexdigest() != m.group(1):
+                self._add(loc, "checksum-mismatch", sums.name)
+        for art in d.iterdir():
+            if art.name.endswith(_ZIP_SUFFIXES + _TAR_SUFFIXES) and art.name not in listed:
+                self._add(loc, "checksum-unlisted", sums.name)
+
+    def _builder(self, art: str, part: str, rule: str) -> None:
+        """One finding per artifact and rule: the remedy is always to rebuild the artifact."""
+        self._add(f"dist:{art}#{part}", BUILDER + rule, art)
+
+    def _member_extras(self, loc: str, name: str, data: bytes, allow_loc: str) -> None:
+        """Builder checks that depend on what a member is called and holds."""
+        if posixpath.basename(name) == "direct_url.json" and \
+                b"file:" in data.replace(b"\0", b"").lower():
+            # Written by an installer for a local install; the URL is a path on that machine.
+            self._add(loc, BUILDER + "local-url", allow_loc)
+
     def _zip(self, art: Path) -> None:
-        with zipfile.ZipFile(art) as z:
+        with zipfile.ZipFile(art) as z, open(art, "rb") as raw:
             self.scan_text(f"dist:{art.name}#comment", z.comment.decode("utf-8", "replace"),
                            allow_loc=art.name)
+            if z.comment:
+                self._builder(art.name, "comment", "zip-comment")
             # infolist(), not namelist(): two members may share a name, and reading by name
             # returns only the last of them.
             for info in z.infolist():
@@ -319,6 +473,22 @@ class Scanner:
                 self.scan_text(loc + "#name", info.filename, allow_loc=info.filename)
                 self.scan_text(loc + "#comment", info.comment.decode("utf-8", "replace"),
                                allow_loc=info.filename)
+                if info.comment:
+                    self._builder(art.name, "comment", "zip-comment")
+                if _OS_JUNK.search(info.filename):
+                    self._add(loc + "#name", BUILDER + "os-junk", info.filename)
+                # The local header has its own copy of the extra field, and tools put more
+                # there (access times) than in the central directory zipfile reads.
+                raw.seek(info.header_offset)
+                head = raw.read(30)
+                if len(head) != 30 or head[:4] != b"PK\x03\x04":
+                    raise ScanError("zip member has no readable local header")
+                name_len, extra_len = struct.unpack("<HH", head[26:30])
+                raw.seek(name_len, os.SEEK_CUR)
+                if not (_zip_extra_ok(info.extra) and _zip_extra_ok(raw.read(extra_len))):
+                    self._builder(art.name, "extra", "zip-extra")
+                if not _zip_attr_ok(info):
+                    self._builder(art.name, "attr", "zip-attr")
                 if info.is_dir():
                     continue
                 if info.flag_bits & 0x1:
@@ -326,7 +496,9 @@ class Scanner:
                 elif info.file_size > MAX_BYTES:
                     self._add(loc, "unscanned-too-large", info.filename)
                 else:
-                    self.scan_bytes(loc, z.read(info), allow_loc=info.filename)
+                    data = z.read(info)
+                    self.scan_bytes(loc, data, allow_loc=info.filename)
+                    self._member_extras(loc, info.filename, data, info.filename)
 
     def _tar(self, art: Path) -> None:
         with tarfile.open(art) as t:
@@ -341,6 +513,14 @@ class Scanner:
                                allow_loc=art.name)
                 self.scan_text(loc + "#header", "\n".join(
                     f"{k}={v}" for k, v in m.pax_headers.items() if k not in _PAX_SEEN), allow_loc=rel)
+                if m.uname not in _TAR_NAMES_OK or m.gname not in _TAR_NAMES_OK:
+                    self._builder(art.name, "owner", "owner")
+                if m.uid or m.gid:
+                    self._builder(art.name, "owner", "uid")
+                if not _PAX_OK.issuperset(m.pax_headers):
+                    self._builder(art.name, "header", "pax")
+                if _OS_JUNK.search(m.name):
+                    self._add(loc + "#name", BUILDER + "os-junk", rel)
                 if m.issym() or m.islnk():
                     self.scan_text(loc + "#target", m.linkname, allow_loc=rel)  # not followed
                 elif m.isdir():
@@ -351,7 +531,9 @@ class Scanner:
                     self._add(loc, "unscanned-too-large", rel)
                 else:
                     fobj = t.extractfile(m)
-                    self.scan_bytes(loc, fobj.read() if fobj else b"", allow_loc=rel)
+                    data = fobj.read() if fobj else b""
+                    self.scan_bytes(loc, data, allow_loc=rel)
+                    self._member_extras(loc, m.name, data, rel)
             # tarfile stops quietly at a damaged header, so anything after the last member
             # it understood must be padding. Reading to the end also checks the gzip CRC.
             raw = t.fileobj
@@ -362,6 +544,9 @@ class Scanner:
                 if chunk.strip(b"\0"):
                     self._add(f"dist:{art.name}", "unscanned-trailing-data", art.name)
                     break
+        # After the read above, which has already rejected a damaged or truncated stream.
+        if not _gzip_headers_ok(art):
+            self._builder(art.name, "gzip", "gzip-header")
 
     def scan_git_log(self, root: Path, rev: str) -> None:
         if _git(root, "rev-parse", "--is-shallow-repository").strip() == b"true":
@@ -470,6 +655,10 @@ def main(argv: list[str] | None = None, env: dict[str, str] | None = None) -> in
     print(f"check_publication: scanned {scanned}", file=sys.stderr)
     if sc.suppressed:
         print(f"check_publication: {len(sc.suppressed)} finding(s) suppressed by the allowlist",
+              file=sys.stderr)
+    if any(rule.startswith(BUILDER) for _, rule in sc.findings):
+        print("check_publication: builder-* finding(s): an artifact records the machine that "
+              "built it; rebuild with scripts/repro_build.py (docs/publication-safety.md)",
               file=sys.stderr)
     if sc.findings:
         print(f"check_publication: FAIL ({len(sc.findings)} finding(s))", file=sys.stderr)

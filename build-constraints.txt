@@ -1,0 +1,9 @@
+# The build backend used by scripts/repro_build.py, and only by it: one exact
+# setuptools release. It makes a commit's artifact hashes depend on files in the
+# repository instead of on the day of the build (docs/packaging.md).
+# pyproject.toml's `setuptools>=77` is the floor for everyone else and is not
+# changed by this file. To move the pin: change the version, run
+# `python scripts/repro_build.py --check`, and record the new hashes.
+# No `--hash=` here on purpose: pip before 26 then refuses the build, because
+# pyproject.toml asks for a range and hash-checking mode wants `==` everywhere.
+setuptools==84.0.0

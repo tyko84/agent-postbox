@@ -1490,6 +1490,275 @@ def main() -> int:
               r.returncode == 0 and "scope_locks: 1 (in_flight 0, held 0, orphaned 1)" in r.stdout
               and r.stdout.rstrip().endswith("PASS"), r.stdout + r.stderr)
 
+        print("\nstatus names who holds what (PROTOCOL.md §34)")
+        NOW34 = "2030-01-01T12:00:00Z"
+        P34 = "01ARZ3NDEKTSV4RRFFQ69G5F"
+
+        def claim34(b: Path, tail: str, sender: str, expires: str | None, scope: str | None = None,
+                    date: str | None = "2030-01-01T09:00:00Z", supersedes: str = "",
+                    mtype: str = "CLAIM", mid: str = "", subject: str = "SUBJ34-TOKEN") -> str:
+            mid = mid or P34 + tail
+            lines = ["---", f"id: {mid}", f"type: {mtype}", f"from: {sender}", "to: all"]
+            if date is not None:
+                lines.append(f"date: {date}")
+            lines.append(f"subject: {subject}")
+            if supersedes:
+                lines.append(f"supersedes: {supersedes}")
+            if expires is not None:
+                lines.append(f"expires: {expires}")
+            if scope is not None:
+                lines.append(f"scope: {scope}")
+            (b / f"{mid.upper()}-x.md").write_text(
+                "\n".join(lines + ["---", "", "BODY34-TOKEN", ""]), encoding="utf-8")
+            return mid
+
+        def st34(b: Path, *extra: str) -> dict:
+            r = tool(b, "status", "--json", "--now", NOW34, *extra)
+            return json.loads(r.stdout) if r.returncode == 0 else {}
+
+        def box34(name: str) -> Path:
+            b = Path(tmp) / name
+            b.mkdir()
+            return b
+
+        NEW34 = ["claims_attention", "claims_attention_truncated", "claims_held",
+                 "claims_held_truncated", "contested_scopes", "scope_filter"]
+        ebox = box34("s34-example")
+        claim34(ebox, "A0", "alice", "2030-01-01T18:00:00Z", "file:s.py")
+        claim34(ebox, "A1", "bob", "2030-01-01T20:00:00Z", "docs/guide.md", date="2030-01-01T08:00:00Z")
+        claim34(ebox, "A2", "bob", "2030-01-02T12:00:00+02:00", date="2030-01-01T10:00:00Z",
+                supersedes=P34 + "A1")
+        claim34(ebox, "A3", "carol", "2029-12-31T12:00:00Z", "file:t.py", date="2029-12-31T09:00:00Z")
+        claim34(ebox, "A4", "carol", "tomorrow", "db:schema")
+        before34 = snapshot(ebox)
+        r = tool(ebox, "status", "--json", "--now", NOW34)
+        st = json.loads(r.stdout) if r.returncode == 0 else {}
+        check("the §34 example: the six added keys have exactly the documented values",
+              {k: st.get(k, "MISSING") for k in NEW34} == {
+                  "claims_attention": [
+                      {"id": P34 + "A4", "reason": "MALFORMED_EXPIRES", "scope": "db:schema", "sender": "carol"},
+                      {"id": P34 + "A3", "reason": "EXPIRED", "scope": "file:t.py", "sender": "carol"}],
+                  "claims_attention_truncated": 0,
+                  "claims_held": [
+                      {"date": "2030-01-01T09:00:00Z", "expires": "2030-01-01T18:00:00Z", "id": P34 + "A0",
+                       "scope": "file:s.py", "seconds_left": 21600, "sender": "alice", "supersedes": None,
+                       "to": "all"},
+                      {"date": "2030-01-01T10:00:00Z", "expires": "2030-01-02T10:00:00Z", "id": P34 + "A2",
+                       "scope": None, "seconds_left": 79200, "sender": "bob", "supersedes": P34 + "A1",
+                       "to": "all"}],
+                  "claims_held_truncated": 0, "contested_scopes": 0, "scope_filter": None},
+              repr({k: st.get(k, "MISSING") for k in NEW34}))
+        check("control: the counts of §29 are unchanged beside them, schema still 1, problems as before",
+              st.get("claims") == {"held": 2, "expired": 1, "malformed_expiry": 1, "superseded": 1}
+              and st.get("schema") == 1
+              and st.get("problems") == [{"code": "MALFORMED_CLAIM_EXPIRY", "count": 1}],
+              repr((st.get("claims"), st.get("problems"))))
+        check("status --json is deterministic for a fixed --now and wrote nothing",
+              r.stdout == tool(ebox, "status", "--json", "--now", NOW34).stdout and snapshot(ebox) == before34)
+        txt = tool(ebox, "status", "--now", NOW34)
+        check("text status: a held-claims table with scope, holder, expiry and time left",
+              txt.returncode == 0 and "claims: held=2  expired=1  malformed_expiry=1  superseded=1" in txt.stdout
+              and "held claims (scope, holder, expires, left):" in txt.stdout
+              and any(ln.split() == ["file:s.py", "alice", "2030-01-01T18:00:00Z", "6h00m"]
+                      for ln in txt.stdout.splitlines())
+              and any(ln.split() == ["-", "bob", "2030-01-02T10:00:00Z", "22h00m"]
+                      for ln in txt.stdout.splitlines()), txt.stdout)
+        doc = tool(ebox, "doctor")
+        check("no status or doctor output carries a subject or a body (control: the tokens are on disk)",
+              all("SUBJ34-TOKEN" not in o and "BODY34-TOKEN" not in o
+                  for o in (r.stdout, r.stderr, txt.stdout, txt.stderr, doc.stdout, doc.stderr))
+              and "SUBJ34-TOKEN" in tool(ebox, "list").stdout
+              and any(b"BODY34-TOKEN" in f.read_bytes() for f in ebox.iterdir()),
+              txt.stdout)
+        check("doctor prints contested_scopes: 0 for it", "contested_scopes: 0" in doc.stdout, doc.stdout)
+        empty34 = box34("s34-empty")
+        st = st34(empty34)
+        check("an empty mailbox has all six keys, empty", {k: st.get(k, "MISSING") for k in NEW34} == {
+            "claims_attention": [], "claims_attention_truncated": 0, "claims_held": [],
+            "claims_held_truncated": 0, "contested_scopes": 0, "scope_filter": None}, repr(st))
+        check("and its text status prints no held-claims table",
+              "held claims" not in tool(empty34, "status", "--now", NOW34).stdout)
+
+        obox = box34("s34-odd")
+        FUT = "2030-01-02T12:00:00Z"
+        claim34(obox, "B0", "alice", FUT, "file:s.py")                      # held, then superseded by B1
+        claim34(obox, "B1", "alice", FUT, "file:s.py", supersedes=P34 + "B0")  # the renewal: held
+        claim34(obox, "B2", "bob", "2029-12-31T00:00:00Z", "old")              # expired
+        claim34(obox, "B3", "bob", None, "noexp")                              # no expires
+        claim34(obox, "B4", "bob", "soon", "badexp")                           # unreadable expires
+        claim34(obox, "B5", "carol", FUT, "kept")                              # held: only foreign cites
+        claim34(obox, "B6", "mallory", None, supersedes=P34 + "B5", mtype="NOTICE")
+        claim34(obox, "B7", "mallory", FUT, "other", supersedes=P34 + "B5")    # foreign CLAIM: itself held
+        claim34(obox, "B8", "carol", FUT)                                      # no scope
+        claim34(obox, "", "carol", FUT, "lower", mid=(P34 + "B9").lower())     # lower-case id
+        claim34(obox, "BA", "Carol", "2030-01-01T13:00:00", "h\u00e9llo/\u30d5\u30a1\u30a4\u30eb.py", date=None)
+        claim34(obox, "BB", "team", FUT, "alias-scope")                        # from is an alias token (§27)
+        claim34(obox, "BC", "dave", "2030-01-09T12:00:01Z", "long-lease")      # held, over 168 h
+        claim34(obox, "BD", "erin", FUT, "X" * 5000)                           # scope longer than send allows
+        r = tool(obox, "status", "--json", "--now", NOW34)
+        st = json.loads(r.stdout) if r.returncode == 0 else {}
+        held = {h["id"].upper()[-2:]: h for h in st.get("claims_held", [])}
+        check("listed as held: renewal, foreign-cited claim, the foreign CLAIM itself, no scope, lower-case id, "
+              "non-ASCII scope, alias sender, long lease, oversize scope",
+              r.returncode == 0 and sorted(held) == ["B1", "B5", "B7", "B8", "B9", "BA", "BB", "BC", "BD"]
+              and len(st["claims_held"]) == st["claims"]["held"] == 9, repr(sorted(held)) + r.stderr[-300:])
+        check("not listed as held: the superseded claim, the expired one, the two without a usable expiry",
+              not {"B0", "B2", "B3", "B4"} & set(held) and st.get("claims", {}).get("superseded") == 1
+              and st["claims"]["expired"] == 1 and st["claims"]["malformed_expiry"] == 2, repr(st.get("claims")))
+        check("every held row has exactly the documented keys (plus scope_oversize on the oversize one only)",
+              bool(held) and all(sorted(h) == ["date", "expires", "id", "scope", "seconds_left", "sender",
+                                               "supersedes", "to"]
+                                 for k, h in held.items() if k != "BD")
+              and sorted(held.get("BD", {})) == ["date", "expires", "id", "scope", "scope_oversize",
+                                                 "seconds_left", "sender", "supersedes", "to"],
+              repr([sorted(h) for h in held.values()][:2]))
+        check("a claim cited only by a foreign supersede is still held by its own sender; supersedes is as stored",
+              held.get("B5", {}).get("sender") == "carol" and held["B5"]["supersedes"] is None
+              and held.get("B7", {}).get("supersedes") == P34 + "B5" and st.get("foreign_supersedes") == 2,
+              repr((held.get("B5"), st.get("foreign_supersedes"))))
+        check("no scope is null; a lower-case id is reported as stored",
+              held.get("B8", {"scope": 0})["scope"] is None and held.get("B9", {}).get("id") == (P34 + "B9").lower(),
+              repr((held.get("B8"), held.get("B9"))))
+        check("non-ASCII scope as stored; zone-less expiry reads as UTC; missing date is null; from is lower-cased",
+              held.get("BA") == {"date": None, "expires": "2030-01-01T13:00:00Z", "id": P34 + "BA",
+                                 "scope": "h\u00e9llo/\u30d5\u30a1\u30a4\u30eb.py", "seconds_left": 3600,
+                                 "sender": "carol", "supersedes": None, "to": "all"}, repr(held.get("BA")))
+        check("an alias token in from is reported as the writer token it is, not expanded",
+              held.get("BB", {}).get("sender") == "team" and "agent-a" not in r.stdout, repr(held.get("BB")))
+        check("an oversize scope is never printed or shortened: null plus scope_oversize",
+              held.get("BD", {"scope": 0})["scope"] is None and held["BD"].get("scope_oversize") is True
+              and "XXXX" not in r.stdout and len(r.stdout) < 20000, repr(len(r.stdout)))
+        order = [h["id"].upper()[-2:] for h in st.get("claims_held", [])]
+        check("claims_held is sorted by scope (code point), then id; no-scope and oversize rows last",
+              order == ["BB", "B1", "BA", "B5", "BC", "B9", "B7", "B8", "BD"], repr(order))
+        att = [(a["id"].upper()[-2:], a["reason"], a["scope"]) for a in st.get("claims_attention", [])]
+        check("claims_attention: reasons in the documented order, each row id/sender/scope/reason",
+              att == [("B4", "MALFORMED_EXPIRES", "badexp"), ("B3", "NO_EXPIRES", "noexp"),
+                      ("BC", "TOO_LONG", "long-lease"), ("B2", "EXPIRED", "old")]
+              and all(sorted(a) == ["id", "reason", "scope", "sender"] for a in st["claims_attention"])
+              and st.get("claims_attention_truncated") == 0 and st.get("contested_scopes") == 0,
+              repr(att))
+        check("control: a lease of exactly 168 hours is not TOO_LONG",
+              claim34(obox, "BE", "dave", "2030-01-08T12:00:00Z", "week") != ""
+              and all(a["id"] != P34 + "BE" for a in st34(obox).get("claims_attention", [{"id": P34 + "BE"}])))
+        txt = tool(obox, "status", "--now", NOW34)
+        check("text status with odd records: exit 0, no traceback, the oversize scope is not dumped",
+              txt.returncode == 0 and "Traceback" not in txt.stderr and "X" * 60 not in txt.stdout
+              and "h\u00e9llo/\u30d5\u30a1\u30a4\u30eb.py" in txt.stdout, txt.stdout[-600:] + txt.stderr[-300:])
+        r = tool(obox, "status", "--json", "--now", NOW34, "--scope", "kept")
+        fs = json.loads(r.stdout) if r.returncode == 0 else {}
+        check("--scope keeps exactly the matching rows and says so; the counts still cover the whole mailbox",
+              [h["id"] for h in fs.get("claims_held", [])] == [P34 + "B5"] and fs.get("claims_attention") == []
+              and fs.get("scope_filter") == "kept" and fs.get("claims") == st34(obox).get("claims")
+              and sorted(fs) == sorted(st34(obox)), repr(fs.get("claims_held")))
+        fs = st34(obox, "--scope", "old")
+        check("--scope filters claims_attention too",
+              fs.get("claims_held") == [] and [a["reason"] for a in fs.get("claims_attention", [])] == ["EXPIRED"],
+              repr(fs.get("claims_attention")))
+        r = tool(obox, "status", "--json", "--now", NOW34, "--scope", "no-such-scope")
+        check("--scope with no match is not an error: exit 0, empty lists",
+              r.returncode == 0 and json.loads(r.stdout)["claims_held"] == []
+              and json.loads(r.stdout)["claims_attention"] == [], r.stderr)
+        check("--scope is exact and case-sensitive (control: 'kept' matched above)",
+              st34(obox, "--scope", "KEPT").get("claims_held") == []
+              and st34(obox, "--scope", "kep").get("claims_held") == [])
+        r = tool(obox, "status", "--scope", "")
+        check("an empty --scope is refused with exit 2", r.returncode == 2 and "--scope" in r.stderr, r.stderr)
+        r = tool(obox, "status", "--now", NOW34, "--scope", "kept")
+        check("text status --scope prints only that scope's row",
+              r.returncode == 0 and sum(1 for ln in r.stdout.splitlines() if ln.startswith("  ") and FUT in ln) == 1
+              and any(ln.split()[:2] == ["kept", "carol"] for ln in r.stdout.splitlines()), r.stdout)
+
+        cbox = box34("s34-contested")
+        claim34(cbox, "C0", "alice", FUT, "file:s.py")
+        claim34(cbox, "C1", "alice", FUT, "file:s.py")   # the same sender twice: allowed, not a contest
+        claim34(cbox, "C2", "carol", FUT, "file:u.py")
+        st = st34(cbox)
+        check("control: one sender holding its own scope twice is not contested, and no problem is reported",
+              st.get("contested_scopes") == 0 and st.get("claims_attention") == [] and st.get("problems") == []
+              and st.get("claims", {}).get("held") == 3, repr((st.get("contested_scopes"), st.get("problems"))))
+        claim34(cbox, "C3", "bob", FUT, "file:s.py")     # hand-written rival on the same scope
+        st = st34(cbox)
+        check("two senders holding one scope: contested_scopes 1, a CONTESTED_SCOPE row per claim on it",
+              st.get("contested_scopes") == 1
+              and [(a["id"][-2:], a["sender"], a["scope"], a["reason"]) for a in st.get("claims_attention", [])]
+              == [("C0", "alice", "file:s.py", "CONTESTED_SCOPE"), ("C1", "alice", "file:s.py", "CONTESTED_SCOPE"),
+                  ("C3", "bob", "file:s.py", "CONTESTED_SCOPE")], repr(st.get("claims_attention")))
+        check("problems gains CONTESTED_SCOPE with the number of scopes; all four claims are still held",
+              st.get("problems") == [{"code": "CONTESTED_SCOPE", "count": 1}] and st["claims"]["held"] == 4
+              and len(st["claims_held"]) == 4, repr(st.get("problems")))
+        r = tool(cbox, "status", "--now", NOW34)
+        check("text status PROBLEMS line names it and status still exits 0",
+              r.returncode == 0 and "PROBLEMS: CONTESTED_SCOPE=1" in r.stdout, r.stdout)
+        later = json.loads(tool(cbox, "status", "--json", "--now", "2030-01-03T00:00:00Z").stdout)
+        check("once the leases have expired the scope is no longer contested",
+              later.get("contested_scopes") == 0 and later.get("problems") == []
+              and all(a["reason"] == "EXPIRED" for a in later.get("claims_attention", [{"reason": ""}])),
+              repr(later.get("claims_attention")))
+        dbox = box34("s34-doctor")
+        subprocess.run([sys.executable, str(HERE / "agent_mail.py"), "canary", "--from", "alice",
+                        "--to", "alice", "--hours", "1"], capture_output=True, text=True,
+                       env={**os.environ, "AGENT_MAIL_DIR": str(dbox)})
+        claim34(dbox, "D0", "alice", iso(1), "file:s.py")
+        r = tool(dbox, "doctor")
+        check("control: doctor on an uncontested mailbox prints contested_scopes: 0 and PASSes",
+              r.returncode == 0 and "contested_scopes: 0" in r.stdout and r.stdout.rstrip().endswith("PASS"),
+              r.stdout)
+        claim34(dbox, "D1", "bob", iso(1), "file:s.py")
+        r = tool(dbox, "doctor")
+        check("doctor names the contested scope and both holders with their ids; reported, not a reason to FAIL",
+              r.returncode == 0 and "contested_scopes: 1" in r.stdout
+              and f"  - 'file:s.py': alice ({P34}D0), bob ({P34}D1)" in r.stdout
+              and r.stdout.rstrip().endswith("PASS"), r.stdout)
+
+        xbox = box34("s34-limits")
+        big = "file:" + "s" * 4091   # 4096 characters: the longest --scope `send` accepts (§29)
+        r = send(xbox, "--type", "CLAIM", "--from", "alice", "--to", "all", "--subject", "max scope",
+                 "--body", "b", "--scope", big, "--expires", iso(1))
+        r2 = send(xbox, "--type", "CLAIM", "--from", "alice", "--to", "all", "--subject", "too long",
+                  "--body", "b", "--scope", big + "s", "--expires", iso(1))
+        st = status_json(xbox)   # a real send is dated now, so this one is read at the real now
+        check("a claim written by send with the longest scope send accepts (4096) is reported in full",
+              r.returncode == 0 and r2.returncode == 2 and "--scope is longer than 4096" in r2.stderr
+              and len(st.get("claims_held", [])) == 1
+              and st["claims_held"][0]["scope"] == big and "scope_oversize" not in st["claims_held"][0]
+              and st["claims_held"][0]["id"] == new_id(r) and st["claims_held"][0]["sender"] == "alice",
+              repr((r.returncode, r2.returncode, r.stderr[-200:])))
+        claim34(xbox, "E0", "bob", "9999-12-31T23:59:59-12:00", "far")
+        claim34(xbox, "E1", "carol", "2030-01-02T12:00:00Z", "early", date="0001-01-01T00:00:00+14:00")
+        r = tool(xbox, "status", "--json", "--now", NOW34)
+        st = json.loads(r.stdout) if r.returncode == 0 else {}
+        far = {h["scope"]: h for h in st.get("claims_held", [])}
+        check("an expiry or date UTC cannot represent is clamped to the nearest second, never a traceback",
+              r.returncode == 0 and far.get("far", {}).get("expires") == "9999-12-31T23:59:59Z"
+              and far.get("early", {}).get("date") == "0001-01-01T00:00:00Z"
+              and tool(xbox, "status", "--now", NOW34).returncode == 0, r.stderr[-300:])
+
+        kbox = box34("s34-cap")
+        for n in range(201):
+            claim34(kbox, "", "alice" if n % 2 else "bob", FUT, f"file:m{n:03d}.py",
+                    mid=f"01ARZ3NDEKTSV4RRFFQ69H{n:04d}")
+        st = st34(kbox)
+        check("201 held claims: 200 rows, claims_held_truncated 1, the count is still 201",
+              len(st.get("claims_held", [])) == 200 and st.get("claims_held_truncated") == 1
+              and st.get("claims", {}).get("held") == 201
+              and st["claims_held"][0]["scope"] == "file:m000.py"
+              and st["claims_held"][-1]["scope"] == "file:m199.py",
+              repr((len(st.get("claims_held", [])), st.get("claims_held_truncated"))))
+        fs = st34(kbox, "--scope", "file:m200.py")
+        check("--scope is applied before the cap: the 201st claim is reachable",
+              [h["scope"] for h in fs.get("claims_held", [])] == ["file:m200.py"]
+              and fs.get("claims_held_truncated") == 0, repr(fs.get("claims_held")))
+        r = tool(kbox, "status", "--now", NOW34)
+        check("text status caps the table at 20 rows and says how many more",
+              sum(1 for ln in r.stdout.splitlines() if ln.startswith("  file:m")) == 20
+              and "  ... and 181 more" in r.stdout, r.stdout[-400:])
+        later = json.loads(tool(kbox, "status", "--json", "--now", "2030-01-03T00:00:00Z").stdout)
+        check("201 expired claims: claims_attention holds 200 rows and claims_attention_truncated is 1",
+              len(later.get("claims_attention", [])) == 200 and later.get("claims_attention_truncated") == 1
+              and later.get("claims_held") == [] and later["claims"]["expired"] == 201,
+              repr(later.get("claims_attention_truncated")))
+
     print("\nversion")
     rv = subprocess.run([sys.executable, str(HERE / "agent_mail.py"), "--version"],
                         capture_output=True, text=True)

@@ -29,6 +29,8 @@ jobs:
       - run: python test_hardening.py
       - run: python test_field.py
       - run: python test_adversarial.py
+        env:
+          EXPECT_QUIET_SIGPIPE: "1" # list | head must end quietly
       - run: python test_handoff.py
       - run: python test_readme_examples.py
       - run: python test_publication.py
@@ -81,7 +83,10 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
+      - run: python -m pip install -r requirements-dev.txt
       - run: python test_publication.py
+        env:
+          POSTBOX_REQUIRE_BUILD_TESTS: "1" # the real-build tests may not skip here
       - name: warn when no forbidden list is configured
         env:
           POSTBOX_FORBIDDEN: ${{ secrets.POSTBOX_FORBIDDEN }}
@@ -89,10 +94,9 @@ jobs:
           if [ -z "$POSTBOX_FORBIDDEN" ]; then
             echo "::warning::POSTBOX_FORBIDDEN secret is unavailable (unset, or a fork/Dependabot run): only the generic detectors ran"
           fi
-      - run: python -m pip install -r requirements-dev.txt
       # the reproducible, ownerless build: the artifacts scanned are the ones a release would hand out
       - run: python scripts/repro_build.py --outdir "$RUNNER_TEMP/dist"
-      - run: python -m twine check "$RUNNER_TEMP/dist"/*
+      - run: python -m twine check "$RUNNER_TEMP/dist"/*.whl "$RUNNER_TEMP/dist"/*.tar.gz
       - name: scan tracked files, built artifacts and git history
         # The secret is visible to this step only. An empty allowlist from outside the
         # checkout means a committed .publication-allowlist cannot silence the scan.
@@ -108,3 +112,51 @@ jobs:
             require="--require-patterns"
           fi
           python check_publication.py $require --allowlist "$RUNNER_TEMP/empty-allowlist" --dist "$RUNNER_TEMP/dist" --git-log
+
+  reproducible:
+    # The same commit built on Linux and on macOS must give the same bytes. Not a
+    # required check: it exists to confirm, or to show exactly where, the claim in
+    # docs/packaging.md stops holding.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r requirements-dev.txt
+      - run: |
+          mkdir -p "$RUNNER_TEMP/out"
+          python scripts/repro_build.py --outdir "$RUNNER_TEMP/out" | tee "$RUNNER_TEMP/BUILDINFO.txt"
+          cp "$RUNNER_TEMP/BUILDINFO.txt" "$RUNNER_TEMP/out/BUILDINFO.txt"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: repro-${{ matrix.os }}
+          path: |
+            ${{ runner.temp }}/out/SHA256SUMS
+            ${{ runner.temp }}/out/BUILDINFO.txt
+          if-no-files-found: error
+          retention-days: 7
+
+  reproducible-compare:
+    needs: reproducible
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: repro
+      - run: |
+          cat repro/repro-ubuntu-latest/SHA256SUMS
+          if ! diff repro/repro-ubuntu-latest/SHA256SUMS repro/repro-macos-latest/SHA256SUMS; then
+            echo "::error::Linux and macOS builds of this commit differ"
+            diff repro/repro-ubuntu-latest/BUILDINFO.txt repro/repro-macos-latest/BUILDINFO.txt || true
+            exit 1
+          fi
+          echo "Linux and macOS builds are byte-identical" >> "$GITHUB_STEP_SUMMARY"

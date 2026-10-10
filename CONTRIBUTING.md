@@ -14,7 +14,7 @@ Code changes:
   `python test_packaging.py` must pass
   (the last skips, loudly, if the `build` package is unavailable), and so must
   `ruff check .` and
-  `mypy agent_mail.py install.py hooks/agent_mail_check.py check_handoff.py check_publication.py`
+  `mypy agent_mail.py install.py hooks/agent_mail_check.py check_handoff.py check_publication.py test_publication.py`
   (`ci.yml` is the source of truth for what CI runs). The pinned tool versions
   CI uses are in `requirements-dev.txt`:
   `python -m pip install -r requirements-dev.txt`.
