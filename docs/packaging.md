@@ -3,7 +3,9 @@
 `pyproject.toml` is the only packaging config. The version has a single
 source, `__version__` in `agent_mail.py`; setuptools reads it statically.
 The wheel contains `agent_mail.py` and metadata only. The sdist is an explicit
-allow-list in `MANIFEST.in`; anything not listed does not ship.
+allow-list in `MANIFEST.in`; anything not listed does not ship (apart from the
+metadata setuptools itself generates: `PKG-INFO`, `setup.cfg` and
+`agent_postbox.egg-info/`).
 
 Build and check, in a throwaway virtualenv (never your project's):
 
@@ -21,4 +23,6 @@ package and network access to fetch the build backend; without `build` it
 skips with a message.
 
 Releasing (tagging, publishing) is a maintainer decision and is not
-automated here. POSIX only: the packaging is not tested on Windows.
+automated here; the steps are in [release-process.md](release-process.md).
+The package is not published on PyPI: install it from a clone or from a wheel
+you built yourself. POSIX only: the packaging is not tested on Windows.

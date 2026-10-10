@@ -34,9 +34,11 @@ $ python agent-postbox/install.py .            # tool -> tools/agent-postbox/, m
 $ export AGENT_MAIL_IDENTITY=agent-a
 $ python tools/agent-postbox/agent_mail.py send --type ASK --from agent-a --to agent-b \
       --subject "who owns the billing client?" --body-file body.txt
-wrote docs/agent-mail/01M4H63M3EC0JTP4236918WS9S-who-owns-the-billing-client.md
+wrote /path/to/your/project/docs/agent-mail/01M4H63M3EC0JTP4236918WS9S-who-owns-the-billing-client.md
+id: 01M4H63M3EC0JTP4236918WS9S
 
 $ python tools/agent-postbox/agent_mail.py list --to agent-b --live
+# mailbox: /path/to/your/project/docs/agent-mail  (walk-up default)
 ! ASK     [open      ] agent-a -> agent-b  who owns the billing client?
     01M4H63M3EC0JTP4236918WS9S
 ```
@@ -247,9 +249,9 @@ CANNOT_VERIFY and scoped verify (16), verify hardening (17), structured
 `BLOCKED_ACTION` blocks (18), derived status and the actionable `inbox` (19),
 `doctor` and the pickup canary (20), participant capabilities (21), load order
 and the closed type set (22), pickup-to-reply latency (23), persist/admit (24),
-a reference is not a body (25), shell metacharacters before argv (26), and
-display alias vs writer token (27), and the handoff packet (28). Sections 5 and 5a cover lease rules,
-retry-safe sends and quarantine. Steal those even if you keep your own
+a reference is not a body (25), shell metacharacters before argv (26),
+display alias vs writer token (27), and the handoff packet (28).
+Sections 5 and 5a cover lease rules, retry-safe sends and quarantine. Steal those even if you keep your own
 transport.
 
 Full spec: [PROTOCOL.md](PROTOCOL.md). It is self-contained: an agent that has

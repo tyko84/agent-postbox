@@ -7,6 +7,9 @@ behaviour).
 
 ## [Unreleased]
 
+Changes merged or proposed since v0.2.0 and not yet released. None of them
+changes runtime behaviour; there is no breaking change and no migration.
+
 ### Added
 
 - `check_publication.py` / `test_publication.py` and a `publication` CI job: scans tracked
@@ -16,6 +19,8 @@ behaviour).
   files, dist and git log); reads the forbidden list from `POSTBOX_FORBIDDEN` or
   `~/.config/agent-postbox/forbidden`.
 - `test_publication.py` joins the CI selftest matrix.
+- `docs/release-process.md`: how a release is cut, including the pre-release
+  privacy preflight.
 
 ### Changed
 
@@ -25,10 +30,20 @@ behaviour).
 - `test_packaging.py` no longer embeds any real name; it uses synthetic placeholder terms and the
   same run-time mechanism as `check_publication.py`.
 - `check_publication.py` prints an explicit warning when no forbidden list was supplied.
+- CI: `actions/setup-python` 5 -> 7 and `actions/checkout` 4 -> 7 (Dependabot, #1 and #2).
+
+### Fixed
+
+- `CHANGELOG.md` listed 0.2.0 as unreleased; it was released on 2026-10-10.
+- `CONTRIBUTING.md` now lists every check `ci.yml` runs (`test_adversarial.py`,
+  `mypy` on `check_handoff.py`); the README's 30-second demo shows the tool's
+  actual output.
 
 ## [0.2.0] - 2026-10-10
 
-Everything since the `v0.1.0` tag.
+Everything since the `v0.1.0` tag. History was re-created from a clean tree for
+this release and the earlier `v0.1.0` tag was not carried over, so `v0.2.0` is
+the first tag in the current repository.
 
 ### Added
 
@@ -85,3 +100,6 @@ Everything since the `v0.1.0` tag.
 
 - Breaking a stale (older than 60 seconds) scope lock is not atomic; see the
   README "Security and limitations".
+
+[Unreleased]: https://github.com/tyko84/agent-postbox/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/tyko84/agent-postbox/releases/tag/v0.2.0
