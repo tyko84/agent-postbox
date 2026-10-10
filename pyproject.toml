@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-postbox"
+dynamic = ["version"]
+description = "Inter-agent mail for a code repo, with delivery that does not depend on the agent remembering to look."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "TyKo Sales LLC" }]
+keywords = ["agents", "mail", "coordination", "llm", "protocol"]
+dependencies = []
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: POSIX",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+
+[project.urls]
+Homepage = "https://github.com/tyko84/agent-postbox"
+Issues = "https://github.com/tyko84/agent-postbox/issues"
+
+[project.scripts]
+agent-postbox = "agent_mail:main"
+
+[tool.setuptools]
+py-modules = ["agent_mail"]
+
+[tool.setuptools.dynamic]
+# Single source of truth: __version__ in agent_mail.py (read statically, not imported).
+version = { attr = "agent_mail.__version__" }

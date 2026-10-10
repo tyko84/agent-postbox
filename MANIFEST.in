@@ -1,0 +1,9 @@
+# sdist contents are an explicit allow-list. Nothing else ships.
+include LICENSE README.md CHANGELOG.md CONTRIBUTING.md PROTOCOL.md SECURITY.md
+include PARTICIPANTS.md PARTICIPANTS.template.md handoff_template.md
+include install.py check_handoff.py selftest.py stress_test.py
+include test_*.py ruff.toml mypy.ini
+recursive-include hooks *.py
+recursive-include docs *.md
+prune .github
+global-exclude __pycache__ *.py[cod] *.bak .DS_Store

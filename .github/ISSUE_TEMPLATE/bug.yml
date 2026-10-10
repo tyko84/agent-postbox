@@ -1,0 +1,21 @@
+name: Bug
+description: The tool did something other than what PROTOCOL.md says.
+labels: [bug]
+body:
+  - type: textarea
+    id: repro
+    attributes:
+      label: Smallest repro
+      description: Commands, in order, starting from an empty mailbox.
+    validations: {required: true}
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs actual
+    validations: {required: true}
+  - type: input
+    id: env
+    attributes:
+      label: Version, Python, OS
+      placeholder: "agent-postbox 0.1.0, Python 3.12, macOS 15"
+    validations: {required: true}

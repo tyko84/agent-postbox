@@ -1,0 +1,12 @@
+target-version = "py310"
+line-length = 100
+
+[lint]
+# Real-bug classes only: pyflakes, pycodestyle errors, bugbear, upgrade hints.
+select = ["F", "E", "W", "B", "UP"]
+ignore = ["E501"]
+
+[lint.per-file-ignores]
+# Compact one-liners in the test scripts are deliberate.
+"selftest.py" = ["E741", "E702"]
+"stress_test.py" = ["E741", "E702"]

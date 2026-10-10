@@ -1,0 +1,21 @@
+name: Field report
+description: A message did not arrive, arrived and was ignored, or was believed when it should not have been.
+labels: [field-report]
+body:
+  - type: textarea
+    id: happened
+    attributes:
+      label: What happened
+      description: What you expected versus what you saw. Exact output if short.
+    validations: {required: true}
+  - type: textarea
+    id: mechanism
+    attributes:
+      label: Pickup mechanism
+      description: How was mail supposed to reach this agent (hook, poll, host)? See PARTICIPANTS.md.
+    validations: {required: true}
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: "`python agent_mail.py --version`, host, OS, and the smallest repro. Do not paste real mailbox contents."
