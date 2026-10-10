@@ -5,8 +5,9 @@ Builds a COPY of the tree (the checkout stays clean) with `python -m build`,
 then:
   * wheel holds agent_mail.py + dist-info only; sdist holds only allow-listed
     files (no __pycache__, .git, .github, stray/private files);
-  * no artifact file mentions the private names below (the intended LICENSE
-    holder and the public repo owner are the only exceptions);
+  * no artifact member name or content trips check_publication.py: the generic
+    detectors always, plus any forbidden list supplied at run time through the same
+    mechanism (POSTBOX_FORBIDDEN); no real name is stored in this file;
   * the single version source (agent_mail.__version__) is what the metadata says;
   * the wheel installs into a clean venv, `agent-postbox --version` works and a
     real send/list/canary/doctor round trip succeeds with AGENT_MAIL_DIR in a
@@ -34,14 +35,20 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 
-# Built from pieces so this file does not trip its own scan when shipped in the sdist.
-PRIVATE = re.compile("acme-" + "private|widget " + "corp", re.IGNORECASE)
-ALLOWED_MENTIONS = ("TyKo Sales LLC", "ty" + "ko84")  # LICENSE/author metadata, public repo owner
+sys.path.insert(0, str(ROOT))
+import check_publication  # noqa: E402  (the scanner is the single source of the matching rules)
+
+# Synthetic stand-ins used by the positive controls. Real forbidden names are never stored
+# here; they arrive at run time via POSTBOX_FORBIDDEN, exactly as for check_publication.py.
+SYNTHETIC = ("acme-private", "widget corp")
+# Generic by design: substrings stripped from content before scanning (e.g. an intended
+# copyright holder). Empty here; real exceptions belong in the run-time list's allowlist.
+ALLOWED_MENTIONS: tuple[str, ...] = ()
 
 SDIST_ALLOWED = (
     "LICENSE", "README.md", "CHANGELOG.md", "CONTRIBUTING.md", "PROTOCOL.md", "SECURITY.md",
     "PARTICIPANTS.md", "PARTICIPANTS.template.md", "handoff_template.md",
-    "install.py", "check_handoff.py", "selftest.py", "stress_test.py", "agent_mail.py",
+    "install.py", "check_handoff.py", "check_publication.py", "selftest.py", "stress_test.py", "agent_mail.py",
     "test_*.py", "ruff.toml", "mypy.ini", "pyproject.toml", "MANIFEST.in",
     "PKG-INFO", "setup.cfg", "hooks/*.py", "docs/*.md", "*.egg-info/*",
 )
@@ -61,11 +68,18 @@ def unexpected(names: list[str], allowed: tuple[str, ...], strip_top: bool) -> l
     return out
 
 
-def private_mentions(name: str, data: bytes) -> list[str]:
+def private_mentions(name: str, data: bytes,
+                     patterns: tuple[str, ...] | None = None) -> list[str]:
+    """Findings as "<name>  <rule-id>" (never the matched text). `patterns` defaults to the
+    run-time list (POSTBOX_FORBIDDEN); generic detectors always run."""
+    pats = list(check_publication.load_patterns(dict(os.environ), None)
+                if patterns is None else patterns)
     text = data.decode("utf-8", "replace")
     for ok in ALLOWED_MENTIONS:
         text = text.replace(ok, "")
-    return [f"{name}: {m.group(0)!r}" for m in PRIVATE.finditer(text)]
+    sc = check_publication.Scanner(pats, [])
+    sc.scan_text(name, text)
+    return [f"{loc}  {rule}" for loc, rule in sc.findings]
 
 
 def sdist_members(path: Path) -> dict[str, bytes]:
@@ -83,10 +97,10 @@ def wheel_members(path: Path) -> dict[str, bytes]:
         return {n: z.read(n) for n in z.namelist()}
 
 
-def scan(members: dict[str, bytes]) -> list[str]:
+def scan(members: dict[str, bytes], patterns: tuple[str, ...] | None = None) -> list[str]:
     hits: list[str] = []
     for n, d in members.items():
-        hits += private_mentions(n, d) + private_mentions(n, n.encode())
+        hits += private_mentions(n, d, patterns) + private_mentions(n, n.encode(), patterns)
     return hits
 
 
@@ -202,20 +216,34 @@ class Packaging(unittest.TestCase):
             top = src.getnames()[0].split("/")[0]
             for name, data in (("notes-internal.txt", b"x"),
                                ("__pycache__/agent_mail.cpython-312.pyc", b"x"),
-                               ("docs/leak.md", ("Acme-" + "Private memo").encode())):
+                               ("docs/leak.md", b"internal notes from Acme-Private")):
                 ti = tarfile.TarInfo(f"{top}/{name}")
                 ti.size = len(data)
                 dst.addfile(ti, io.BytesIO(data))
         members = sdist_members(tampered)
         bad = unexpected(list(members), SDIST_ALLOWED, strip_top=True)
         self.assertEqual(len(bad), 2, bad)  # docs/leak.md is allow-listed by name...
-        self.assertTrue(scan(members), "...so only the content scan can catch it")
+        self.assertTrue(scan(members, SYNTHETIC), "...so only the content scan can catch it")
+        self.assertEqual(scan(members, ()), [], "control: no pattern supplied, nothing to find")
 
     def test_control_planted_names_and_text(self) -> None:
         self.assertEqual(unexpected(["pkg-1/secret.txt", "pkg-1/agent_mail.py"],
                                     SDIST_ALLOWED, True), ["pkg-1/secret.txt"])
-        self.assertTrue(private_mentions("x", ("WIDGET " + "CORP holdings").encode()))
-        self.assertEqual(private_mentions("LICENSE", b"Copyright (c) 2026 TyKo Sales LLC"), [])
+        self.assertTrue(private_mentions("x", b"WIDGET CORP internal", SYNTHETIC))
+        self.assertEqual(private_mentions("LICENSE", b"Copyright (c) 2026 Example LLC",
+                                          SYNTHETIC), [])
+        # the generic detectors fire even when no list is supplied
+        self.assertTrue(private_mentions("x", b"see /ho" + b"me/someone/project/", ()))
+        # a pattern supplied through the environment mechanism is honoured
+        saved = os.environ.get(check_publication.ENV_VAR)
+        os.environ[check_publication.ENV_VAR] = "acme-private"
+        try:
+            self.assertTrue(private_mentions("x", b"ACME-PRIVATE"))
+        finally:
+            if saved is None:
+                del os.environ[check_publication.ENV_VAR]
+            else:
+                os.environ[check_publication.ENV_VAR] = saved
 
 
 if __name__ == "__main__":

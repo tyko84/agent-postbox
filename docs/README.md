@@ -6,3 +6,4 @@
 * [packaging.md](packaging.md): building and checking the wheel and sdist.
 * [handoff-example.md](handoff-example.md): a filled-in handoff packet
   (validated by `test_handoff.py`).
+* [publication-safety.md](publication-safety.md): the pre-publication scanner and how to configure it.

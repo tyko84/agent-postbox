@@ -5,7 +5,28 @@ All notable changes to this project are recorded here. The format follows
 [Semantic Versioning](https://semver.org/) (while 0.x, minor versions may change
 behaviour).
 
-## [0.2.0] - unreleased
+## [Unreleased]
+
+### Added
+
+- `check_publication.py` / `test_publication.py` and a `publication` CI job: scans tracked
+  files, built artifacts and git history for operator-supplied forbidden patterns and generic
+  secret/home-path shapes (docs/publication-safety.md).
+- `scripts/preflight.sh`: local pre-publication gate (tests, build, publication scan of tracked
+  files, dist and git log); reads the forbidden list from `POSTBOX_FORBIDDEN` or
+  `~/.config/agent-postbox/forbidden`.
+- `test_publication.py` joins the CI selftest matrix.
+
+### Changed
+
+- The `publication` CI job reads the forbidden list from the repository **secret**
+  `POSTBOX_FORBIDDEN` (log-masked) instead of a plain-text variable; a missing value warns and
+  runs the generic detectors only.
+- `test_packaging.py` no longer embeds any real name; it uses synthetic placeholder terms and the
+  same run-time mechanism as `check_publication.py`.
+- `check_publication.py` prints an explicit warning when no forbidden list was supplied.
+
+## [0.2.0] - 2026-10-10
 
 Everything since the `v0.1.0` tag.
 
