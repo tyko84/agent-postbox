@@ -7,7 +7,33 @@ behaviour).
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+
+- Correction to 0.3.0: "`list | head` now exits 141 quietly" was true only for
+  `python agent_mail.py` and `python -m agent_mail`. The installed `agent-postbox`
+  command still printed a `BrokenPipeError` traceback and exited 120 (or 1). It is
+  now quiet on every entry point, including `agent_mail.main(argv)` called from
+  another program (PROTOCOL.md section 35).
+- Read-only commands (`list`, `inbox`, `show`, `status`, `doctor`, `latency`,
+  `verify`, `capability`, `--help`, `--version`) whose reader goes away stop at once
+  and exit 141; what was delivered is always a prefix of the full output.
+- `send`, `ask` and `canary` whose reader goes away finish and exit with the status
+  of the send (0 once the mail is published) instead of 120 or 141. With unbuffered
+  output, `ask` to several recipients used to stop after the first, and a keyed
+  retry reported `send failed: cannot write to the mailbox: Broken pipe`.
+- `python agent_mail.py send ... >&-` exited 1 with an `AttributeError` after a
+  successful send (introduced in 0.3.0).
+- The pickup adapter exited 120 with a line on stderr when its reader went away; it
+  exits 0 silently, as its contract says.
+- A diagnostic whose stderr reader is gone no longer turns the exit status into 120,
+  and with stderr closed (`2>&-`) it is no longer printed on stdout.
+
+### Changed
+
+- Exit status 141 is documented for read-only commands (README table, PROTOCOL.md
+  section 35).
+- The `EXPECT_QUIET_SIGPIPE` test switch is gone: the check always runs, including
+  in the release gate, and `test_packaging.py` exercises the installed command.
 
 ## [0.3.0] - 2026-10-10
 
