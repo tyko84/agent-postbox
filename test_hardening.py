@@ -3,6 +3,8 @@
 
 No sleeps: expiry boundaries are fixed ISO strings relative to a far-future/past
 constant, and races are forced by running real subprocesses against one mailbox.
+Interrupted writers are real children SIGKILLed at a chokepoint; the parent only
+polls for their ready-file in bounded 0.05 s steps. File ages are set with utime.
 Each negative check has a positive control in the same mailbox.
 """
 from __future__ import annotations
@@ -13,6 +15,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -329,6 +332,227 @@ def main() -> int:
         cur = subprocess.run([sys.executable, "-I", TOOL, "--version"], capture_output=True, text=True)
         check("control: the current interpreter passes the guard",
               cur.returncode == 0 and "agent-postbox" in cur.stdout, cur.stderr)
+
+        print("recovery after an interrupted write (writer SIGKILLed at each dangerous point)")
+        HOOK = str(HERE / "hooks" / "agent_mail_check.py")
+
+        def killed_send(box: Path, patch: str, *argv: str) -> tuple[bool, int | None, str]:
+            """Run the real send path in a child whose `patch` makes one chokepoint
+            write a ready-file and block (signal.pause); SIGKILL it there. Returns
+            (reached the chokepoint, child returncode, child stderr). The parent
+            polls in bounded 0.05 s steps; it never sleeps a fixed time."""
+            ready = box.with_name(box.name + ".ready")
+            code = (
+                "import os, signal, sys\n"
+                f"sys.path.insert(0, {str(HERE)!r})\n"
+                "import agent_mail\n"
+                "def block(*_a, **_k):\n"
+                f"    open({str(ready)!r}, 'w').close()\n"
+                "    signal.pause()\n"
+                f"{patch}\n"
+                f"sys.exit(agent_mail.main({list(argv)!r}))\n")
+            proc = subprocess.Popen([sys.executable, "-I", "-c", code],
+                                    env=dict(os.environ, AGENT_MAIL_DIR=str(box)),
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            for _ in range(400):  # 20 s hard cap
+                if ready.exists() or proc.poll() is not None:
+                    break
+                time.sleep(0.05)
+            proc.kill()
+            _, err = proc.communicate()
+            return ready.exists(), proc.returncode, err
+
+        def hook(box: Path, me: str) -> subprocess.CompletedProcess[str]:
+            return subprocess.run([sys.executable, "-I", HOOK], capture_output=True, text=True,
+                                  env=dict(os.environ, AGENT_MAIL_DIR=str(box), AGENT_MAIL_IDENTITY=me))
+
+        def rows(box: Path, needle: str) -> int:
+            return sum(1 for ln in run(box, "list").stdout.splitlines() if needle in ln)
+
+        def hidden(box: Path) -> list[str]:
+            return sorted(p.name for p in box.iterdir() if p.name.startswith("."))
+
+        def age(path: Path, seconds: int) -> None:
+            t = time.time() - seconds
+            os.utime(path, (t, t))
+
+        NOTE = ["send", "--type", "NOTICE", "--from", "alice", "--to", "bob",
+                "--subject", "cut", "--body", "whole body"]
+
+        print("1. killed after the temp file is written, before os.link")
+        r1 = Path(td) / "rec1"
+        r1.mkdir()
+        reached, rc, err = killed_send(r1, "os.link = block", *NOTE)
+        check("writer reached os.link and was SIGKILLed there", reached and rc == -9,
+              f"rc={rc} {err[-300:]}")
+        tmps = list(r1.glob(".*.tmp"))
+        check("one hidden .tmp left, no *.md published",
+              len(tmps) == 1 and tmps[0].name.endswith(".tmp") and not list(r1.glob("*.md")),
+              str(sorted(p.name for p in r1.iterdir())))
+        dead = next((x.split(": ", 1)[1] for x in tmps[0].read_text().splitlines()
+                     if x.startswith("id: ")), "")
+        check("the temp already holds the complete message (id + body)",
+              len(dead) == 26 and "whole body" in tmps[0].read_text(), tmps[0].read_text()[:200])
+        lst = run(r1, "list")
+        check("list: header only, no REJECT, exit 0",
+              lst.returncode == 0 and lst.stderr == "" and lst.stdout.startswith("# mailbox:")
+              and len(lst.stdout.splitlines()) == 1, lst.stdout + lst.stderr)
+        sh = run(r1, "show", dead)
+        check("show <dead id>: 'no message', exit 1, no traceback",
+              sh.returncode == 1 and f"no message with id {dead}" in sh.stderr
+              and "Traceback" not in sh.stderr, sh.stderr)
+        hk = hook(r1, "bob")
+        check("hook: silent, exit 0", hk.returncode == 0 and hk.stdout == "" and hk.stderr == "",
+              hk.stdout + hk.stderr)
+        sj = run(r1, "status", "--json")
+        st1 = json.loads(sj.stdout) if sj.returncode == 0 else {}
+        check("status --json: 0 messages, 0 quarantined, fresh tmp not yet stale",
+              sj.returncode == 0 and st1.get("messages", {}).get("total") == 0
+              and st1.get("quarantined") == 0 and st1.get("stale_tmp") == 0, sj.stdout[:300] + sj.stderr)
+        d = run(r1, "doctor").stdout
+        check("doctor: messages 0, fresh tmp not yet counted", "messages: 0" in d and "stale_tmp: 0" in d, d)
+        age(tmps[0], 601)
+        d = run(r1, "doctor").stdout
+        check("doctor counts and names the tmp once it is older than 600 s",
+              "stale_tmp: 1" in d and f"  - {tmps[0].name}" in d, d)
+        check("status --json stale_tmp follows",
+              json.loads(run(r1, "status", "--json").stdout)["stale_tmp"] == 1)
+        again = run(r1, *NOTE)
+        check("the same send retried succeeds", again.returncode == 0 and "wrote " in again.stdout,
+              again.stderr)
+        check("retried message listed exactly once; stale tmp is not a second copy",
+              rows(r1, "alice -> bob  cut") == 1 and len(list(r1.glob("*.md"))) == 1
+              and tmps[0].exists(), run(r1, "list").stdout)
+        hk = hook(r1, "bob")
+        check("control: hook now shows the one message",
+              "Agent mail - 1 live message(s) addressed to 'bob'" in hk.stdout
+              and f"id: {mid(again)}" in hk.stdout, hk.stdout)
+
+        print("2. killed after os.link, before the temp is unlinked")
+        r2 = Path(td) / "rec2"
+        r2.mkdir()
+        reached, rc, err = killed_send(
+            r2, "_link = os.link\ndef late(*a):\n    _link(*a)\n    block()\nos.link = late", *NOTE)
+        check("writer linked the final name and was SIGKILLed before cleanup", reached and rc == -9,
+              f"rc={rc} {err[-300:]}")
+        mds, tmps = list(r2.glob("*.md")), list(r2.glob(".*.tmp"))
+        check("one *.md and one stray .tmp with identical bytes",
+              len(mds) == 1 and len(tmps) == 1 and mds[0].read_bytes() == tmps[0].read_bytes(),
+              str(sorted(p.name for p in r2.iterdir())))
+        lst = run(r2, "list")
+        check("list: exactly one row, no REJECT, exit 0",
+              lst.returncode == 0 and lst.stderr == "" and rows(r2, "alice -> bob  cut") == 1,
+              lst.stdout + lst.stderr)
+        linked = mds[0].stem.split("-", 1)[0] if mds else ""
+        sh = run(r2, "show", linked)
+        check("show prints the complete message", sh.returncode == 0 and "subject: cut" in sh.stdout
+              and sh.stdout.rstrip().endswith("whole body"), sh.stdout + sh.stderr)
+        check("hook delivers it once", hook(r2, "bob").stdout.count("NOTICE from alice") == 1)
+        d = run(r2, "doctor").stdout
+        check("doctor: messages 1, fresh tmp not yet counted", "messages: 1" in d and "stale_tmp: 0" in d, d)
+        age(tmps[0], 601)
+        d = run(r2, "doctor").stdout
+        check("doctor counts the orphaned tmp once stale",
+              "stale_tmp: 1" in d and f"  - {tmps[0].name}" in d, d)
+        check("control: a later send is not blocked by the stray tmp",
+              run(r2, *NOTE).returncode == 0 and len(list(r2.glob("*.md"))) == 2)
+
+        print("3. killed with --key after the idempotency marker is reserved, before publish")
+        r3 = Path(td) / "rec3"
+        r3.mkdir()
+        KEYED = [*NOTE, "--key", "K"]
+        reached, rc, err = killed_send(r3, "agent_mail._publish = block", *KEYED)
+        check("writer reserved the key and was SIGKILLed before publish", reached and rc == -9,
+              f"rc={rc} {err[-300:]}")
+        marks = list(r3.glob(".idem.*"))
+        check("orphan marker on disk, nothing published, nothing listed",
+              len(marks) == 1 and not list(r3.glob("*.md")) and rows(r3, "alice -> bob") == 0,
+              str(hidden(r3)))
+        orphan_text = marks[0].read_text() if marks else ""
+        # agent_mail.py _idem_claim: `if old_content != content: return "CONFLICT"` is checked
+        # before the orphan wait/takeover, so a dead writer's key still pins its content.
+        diff = run(r3, *NOTE[:-1], "DIFFERENT", "--key", "K")
+        check("same key, different content: CONFLICT (exit 2) even though the original never landed",
+              diff.returncode == 2 and "idempotency key 'K' was already used with different content"
+              in diff.stderr and not list(r3.glob("*.md")), diff.stdout + diff.stderr)
+        check("the refused retry left the orphan marker untouched",
+              marks[0].exists() and marks[0].read_text() == orphan_text, str(hidden(r3)))
+        same = run(r3, *KEYED)  # ~5 s: _idem_claim waits 100 x 0.05 s for the dead writer first
+        check("same key, same content: takes over the orphan and writes (exit 0)",
+              same.returncode == 0 and "wrote " in same.stdout and "duplicate of" not in same.stdout,
+              same.stdout + same.stderr)
+        check("listed exactly once under a fresh id; the dead writer's id never appears",
+              rows(r3, "alice -> bob  cut") == 1 and len(list(r3.glob("*.md"))) == 1
+              and same.returncode == 0 and mid(same) != orphan_text.split("\n")[0]
+              and not list(r3.glob(orphan_text.split("\n")[0] + "*")), run(r3, "list").stdout)
+        check("marker now names the published message; takeover mutex released",
+              hidden(r3) == [marks[0].name]
+              and marks[0].read_text().split("\n")[0] == (mid(same) if same.returncode == 0 else "?"),
+              str(hidden(r3)))
+        dup = run(r3, *KEYED)
+        check("control: a further retry is now an ordinary duplicate of the recovered id",
+              dup.returncode == 0 and same.returncode == 0 and f"duplicate of {mid(same)}" in dup.stdout
+              and len(list(r3.glob("*.md"))) == 1, dup.stdout)
+
+        print("4. killed holding a CLAIM --scope lock, before publish")
+        r4 = Path(td) / "rec4"
+        r4.mkdir()
+        CLM = ["--type", "CLAIM", "--to", "all", "--subject", "s", "--body", "b",
+               "--expires", soon(1), "--scope", "file:s.py"]
+        reached, rc, err = killed_send(r4, "agent_mail._publish = block",
+                                       "send", "--from", "alice", *CLM)
+        check("writer took the scope lock and was SIGKILLed before publish", reached and rc == -9,
+              f"rc={rc} {err[-300:]}")
+        locks = list(r4.glob(".scope.*.lock"))
+        check("lock left behind, no claim on disk", len(locks) == 1 and not list(r4.glob("*.md")),
+              str(hidden(r4)))
+        rival = run(r4, "send", "--from", "bob", *CLM)
+        check("rival within 60 s: refused, exit 3, 'being claimed right now; retry'",
+              rival.returncode == 3 and "scope 'file:s.py' is being claimed right now; retry"
+              in rival.stderr and not list(r4.glob("*.md")), rival.stdout + rival.stderr)
+        check("the refused rival did not steal or drop the dead holder's lock",
+              locks[0].exists(), str(hidden(r4)))
+        age(locks[0], 61)
+        rival2 = run(r4, "send", "--from", "bob", *CLM)
+        check("rival after the lock is 61 s old: breaks it and wins (exit 0)",
+              rival2.returncode == 0 and "wrote " in rival2.stdout, rival2.stdout + rival2.stderr)
+        check("exactly one held claim on disk, by the rival; lock released",
+              rows(r4, "[held      ] bob -> all  s") == 1 and len(list(r4.glob("*.md"))) == 1
+              and not list(r4.glob(".scope.*.lock")), run(r4, "list").stdout + str(hidden(r4)))
+        check("control: the dead holder's identity gets an ordinary 'held by bob' refusal, not a lock",
+              "is already held by bob" in run(r4, "send", "--from", "alice", *CLM).stderr)
+
+        print("5. truncated final file (non-atomic copy by a foreign tool)")
+        r5 = Path(td) / "rec5"
+        r5.mkdir()
+        whole = run(r5, *NOTE)
+        check("control: the complete file is admitted", whole.returncode == 0
+              and rows(r5, "alice -> bob  cut") == 1, whole.stderr)
+        text = next(r5.glob("*.md")).read_text()
+        half = text[:len(text) // 2]
+        check("setup: the cut lands inside the frontmatter", half.startswith("---\nid: ")
+              and "\n---\n" not in half[3:], repr(half))
+        bad = r5 / "01ARZ3NDEKTSV4RRFFQ69G5HLF-half.md"
+        bad.write_text(half)
+        lst = run(r5, "list")
+        check("list: the half file is loudly REJECTed, exit 2, no traceback",
+              lst.returncode == 2 and "REJECT 01ARZ3NDEKTSV4RRFFQ69G5HLF-half.md: missing id" in lst.stderr
+              and "Traceback" not in lst.stderr, lst.stderr)
+        check("the complete message is still listed once; the half one never",
+              lst.stdout.count("alice -> bob  cut") == 1 and "half" not in lst.stdout, lst.stdout)
+        sh = run(r5, "show", "01ARZ3NDEKTSV4RRFFQ69G5HLF")
+        check("show of the half file: 'no message', exit 1",
+              sh.returncode == 1 and "no message with id" in sh.stderr and "Traceback" not in sh.stderr,
+              sh.stderr)
+        hk = hook(r5, "bob")
+        check("hook delivers only the complete message",
+              hk.stdout.count("NOTICE from alice") == 1 and f"id: {mid(whole)}" in hk.stdout, hk.stdout)
+        st5 = json.loads(run(r5, "status", "--json").stdout)
+        check("status: 1 message, 1 quarantined", st5["messages"]["total"] == 1 and st5["quarantined"] == 1,
+              str(st5))
+        d = run(r5, "doctor").stdout
+        check("doctor lists the reject and keeps the evidence on disk",
+              "rejects: 1" in d and "01ARZ3NDEKTSV4RRFFQ69G5HLF-half.md: missing id" in d and bad.exists(), d)
 
     if FAILS:
         print("\nFAILED:")
