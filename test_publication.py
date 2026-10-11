@@ -384,6 +384,29 @@ class Surfaces(Base):
                 self.assertNotIn(WORD, r.stdout + r.stderr)
                 self.assertNotIn("Traceback", r.stderr)
 
+    def test_runs_isolated_and_without_site(self) -> None:
+        """CI runs the scanner as `python -I -S` in the job that holds the forbidden list:
+        nothing but the standard library and the script may load. Control: the same
+        planted startup hook does run when the two flags are left out."""
+        self.commit({"a.txt": f"{WORD}\n"})
+        script = str(Path(cp.__file__).resolve())
+        hook = Path(self._t.name) / "hook"
+        hook.mkdir()
+        marker = Path(self._t.name) / "hook-ran"
+        (hook / "sitecustomize.py").write_text(
+            f"import pathlib\npathlib.Path({str(marker)!r}).write_text('x')\n", encoding="utf-8")
+        env = {**os.environ, "PYTHONPATH": str(hook)}
+        for env_val, want in ((WORD2, 0), (WORD, 1)):
+            with self.subTest(want=want):
+                r = subprocess.run([sys.executable, "-I", "-S", script, "--root", str(self.repo),
+                                    "--require-patterns", "--git-log"], capture_output=True,
+                                   text=True, env={**env, cp.ENV_VAR: env_val})
+                self.assertEqual(r.returncode, want, r.stderr)
+                self.assertIn("1 tracked path(s), 1 commit(s)", r.stderr)
+                self.assertFalse(marker.exists(), "a startup hook ran in isolated mode")
+        subprocess.run([sys.executable, "-c", "pass"], env=env, check=True)
+        self.assertTrue(marker.exists(), "control: without -I -S the planted hook must run")
+
     def test_error_messages_never_echo_a_pattern(self) -> None:
         self.commit({"a.txt": "ok\n"})
         al = Path(self._t.name) / "al"
@@ -1426,6 +1449,102 @@ class Preflight(unittest.TestCase):
         self.assertNotIn(WORD, text)
         scan = [c for c in calls if c[0] == "check_publication.py"][0]
         self.assertEqual(scan[scan.index("--patterns-file") + 1], str(cfg / "forbidden"))
+
+
+class Workflows(unittest.TestCase):
+    """Properties of .github/workflows that a review cannot be trusted to keep: the job
+    that holds the forbidden list installs nothing, the required check cannot be skipped,
+    the names branch protection requires still exist, and every action is pinned.
+    Read as text (standard library only). Not shipped in the sdist, so skipped there."""
+    WF = Path(__file__).resolve().parent / ".github" / "workflows"
+    REQUIRED = ("lint", "packaging", "publication", "selftest")
+    INSTALLS = ("pip ", "pip3", "-m build", "repro_build", "-m venv", "ensurepip", "twine",
+                "curl ", "wget ", "npm ", "requirements")
+
+    def setUp(self) -> None:
+        if not self.WF.is_dir():
+            self.skipTest("no .github/workflows here (e.g. unpacked sdist)")
+
+    def jobs(self, name: str) -> dict[str, str]:
+        """Job id -> the text of that job, comment lines removed."""
+        text = (self.WF / name).read_text(encoding="utf-8")
+        body = text[text.index("\njobs:\n") + len("\njobs:\n"):]
+        out: dict[str, str] = {}
+        current = ""
+        for line in body.splitlines():
+            if line.startswith("  ") and not line.startswith("   ") and line.rstrip().endswith(":") \
+                    and not line.lstrip().startswith("#"):
+                current = line.strip()[:-1]
+                out[current] = ""
+            elif current and not line.lstrip().startswith("#"):
+                out[current] += line + "\n"
+        return out
+
+    def test_the_parser_sees_the_jobs(self) -> None:
+        self.assertLessEqual({"build", "scan", "publish"}, set(self.jobs("release.yml")))
+        for job in self.REQUIRED + ("publication-build",):
+            self.assertIn(job, self.jobs("ci.yml"))
+
+    def test_a_job_that_references_a_secret_installs_nothing(self) -> None:
+        holders = []
+        for name in sorted(p.name for p in self.WF.glob("*.yml")):
+            for job, text in self.jobs(name).items():
+                if "secrets." not in text:
+                    continue
+                holders.append(f"{name}:{job}")
+                for word in self.INSTALLS:
+                    self.assertNotIn(word, text, f"{name}: job {job} holds a secret and has {word!r}")
+                self.assertIn("python -I -S check_publication.py", text)
+                self.assertNotIn("python check_publication.py", text)
+        self.assertEqual(holders, ["ci.yml:publication", "release.yml:scan"])
+        # control: the same word list does describe the jobs that install
+        self.assertTrue(any(w in self.jobs("ci.yml")["publication-build"] for w in self.INSTALLS))
+        self.assertTrue(any(w in self.jobs("release.yml")["build"] for w in self.INSTALLS))
+
+    def test_the_required_scan_cannot_be_skipped(self) -> None:
+        ci = self.jobs("ci.yml")
+        pub = ci["publication"]
+        self.assertIn("    needs: publication-build\n", pub)
+        self.assertIn("    if: ${{ always() }}\n", pub)
+        self.assertIn("BUILD_RESULT: ${{ needs.publication-build.result }}", pub)
+        self.assertIn('if [ "$BUILD_RESULT" != success ]; then', pub)
+        for job in self.REQUIRED:
+            if job != "publication":  # no other required job may wait on, or be gated by, anything
+                self.assertNotIn("    needs:", ci[job], job)
+                self.assertNotIn("\n    if:", "\n" + ci[job], job)
+        rel = self.jobs("release.yml")
+        self.assertIn("    needs: build\n", rel["scan"])
+        self.assertIn("    needs: [build, scan]\n", rel["publish"])
+        for job in ("scan", "publish"):  # a status function here would run the job after a failure
+            for fn in ("always()", "failure()", "cancelled()", "success()"):
+                self.assertNotIn(fn, rel[job], job)
+
+    def test_required_check_names_are_unchanged(self) -> None:
+        ci = self.jobs("ci.yml")
+        for job in self.REQUIRED:
+            self.assertNotIn("\n    name:", "\n" + ci[job], f"{job}: a name: renames the required check")
+        self.assertIn("        os: [ubuntu-latest, macos-latest]\n", ci["selftest"])
+        self.assertIn('        python: ["3.10", "3.11", "3.12", "3.13"]\n', ci["selftest"])
+        self.assertIn("    runs-on: ${{ matrix.os }}\n", ci["selftest"])
+        for job in ("lint", "packaging", "publication"):
+            self.assertNotIn("matrix", ci[job], job)
+
+    def test_every_action_is_github_owned_and_pinned_to_a_commit(self) -> None:
+        seen = 0
+        for path in sorted(self.WF.glob("*.yml")):
+            for line in path.read_text(encoding="utf-8").splitlines():
+                code = line.split("#", 1)[0]
+                if "uses:" not in code:
+                    continue
+                seen += 1
+                ref = code.split("uses:", 1)[1].strip()
+                owner = ref.split("/", 1)[0]
+                self.assertIn(owner, ("actions", "github"), f"{path.name}: {ref}")
+                sha = ref.rpartition("@")[2]
+                self.assertTrue(len(sha) == 40 and all(c in "0123456789abcdef" for c in sha),
+                                f"{path.name}: {ref} is not pinned to a full commit id")
+                self.assertRegex(line, r"# v\d+\.\d+\.\d+", f"{path.name}: {ref} has no version comment")
+        self.assertGreater(seen, 15)
 
 
 class OwnRepo(unittest.TestCase):

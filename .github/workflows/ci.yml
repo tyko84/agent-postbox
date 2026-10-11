@@ -8,6 +8,9 @@ permissions:
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+defaults:
+  run:
+    shell: bash # bash -eo pipefail: a failing command, also inside a pipe, fails the step
 jobs:
   selftest:
     strategy:
@@ -61,16 +64,11 @@ jobs:
       - run: ruff check .
       - run: mypy agent_mail.py install.py hooks/agent_mail_check.py check_handoff.py check_publication.py test_publication.py
 
-  publication:
-    # Scans tracked files, built sdist/wheel and git history.
-    # The forbidden-name list is the repository SECRET POSTBOX_FORBIDDEN (Settings >
-    # Secrets and variables > Actions > Secrets). Secrets are log-masked; a repository
-    # *variable* is plain text readable by anyone with repo read access and is NOT masked,
-    # so it must not hold the list. Secrets are not passed to fork PRs or Dependabot runs:
-    # there the job warns and runs only the generic detectors.
-    # The value reaches the scanner only through the environment: never in arguments,
-    # never echoed, no `set -x`, nothing written to the step summary.
-    # See docs/publication-safety.md.
+  publication-build:
+    # The half of the publication check that needs code from PyPI: the pinned dev tools
+    # and, inside the isolated build, setuptools. It builds the artifacts and hands them
+    # to `publication` as a workflow artifact. No secret is referenced in this job, so
+    # nothing installed here can read one.
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -85,6 +83,66 @@ jobs:
       - run: python test_publication.py
         env:
           POSTBOX_REQUIRE_BUILD_TESTS: "1" # the real-build tests may not skip here
+      # the reproducible, ownerless build: the artifacts scanned are the ones a release would hand out
+      - run: python scripts/repro_build.py --outdir "$RUNNER_TEMP/dist"
+      - run: python -m twine check "$RUNNER_TEMP/dist"/*.whl "$RUNNER_TEMP/dist"/*.tar.gz
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: publication-dist
+          path: ${{ runner.temp }}/dist/
+          if-no-files-found: error
+          retention-days: 3
+
+  publication:
+    # Scans tracked files, the artifacts built by `publication-build`, git history and
+    # the tree of every tag.
+    #
+    # SECRET ISOLATION. This is the only job in this workflow that references a secret,
+    # and it installs nothing: no `pip`, no build, no package from PyPI. It runs
+    # check_publication.py (standard library plus git) from the checkout with
+    # `python -I -S`: no PYTHON* environment variable, no user site, no site-packages
+    # and no .pth file is honoured, so the interpreter loads the standard library and
+    # that one script. The artifacts come from `publication-build` as data: they are
+    # downloaded outside the checkout and only read, never installed or executed.
+    #
+    # A REQUIRED CHECK THAT CANNOT BE SKIPPED. GitHub reports a skipped job as passed,
+    # and a job is skipped when a job it needs fails. `if: always()` makes this job run
+    # whatever happened before, and its first step fails unless `publication-build`
+    # succeeded. Keep the two together, and keep the job id: the required check is
+    # named after it.
+    #
+    # The forbidden-name list is the repository SECRET POSTBOX_FORBIDDEN (Settings >
+    # Secrets and variables > Actions > Secrets). Secrets are log-masked; a repository
+    # *variable* is plain text readable by anyone with repo read access and is NOT masked,
+    # so it must not hold the list. Secrets are not passed to fork PRs or Dependabot runs:
+    # there the job warns and runs only the generic detectors.
+    # The value reaches the scanner only through the environment: never in arguments,
+    # never echoed, no `set -x`, nothing written to the step summary.
+    # See docs/publication-safety.md.
+    needs: publication-build
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: publication-build succeeded
+        env:
+          BUILD_RESULT: ${{ needs.publication-build.result }}
+        run: |
+          if [ "$BUILD_RESULT" != success ]; then
+            echo "::error::publication-build ended as '$BUILD_RESULT', so nothing was scanned"
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the whole history and every tag
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: publication-dist
+          path: ${{ runner.temp }}/dist # outside the checkout
       - name: warn when no forbidden list is configured
         env:
           POSTBOX_FORBIDDEN: ${{ secrets.POSTBOX_FORBIDDEN }}
@@ -92,12 +150,9 @@ jobs:
           if [ -z "$POSTBOX_FORBIDDEN" ]; then
             echo "::warning::POSTBOX_FORBIDDEN secret is unavailable (unset, or a fork/Dependabot run): only the generic detectors ran"
           fi
-      # the reproducible, ownerless build: the artifacts scanned are the ones a release would hand out
-      - run: python scripts/repro_build.py --outdir "$RUNNER_TEMP/dist"
-      - run: python -m twine check "$RUNNER_TEMP/dist"/*.whl "$RUNNER_TEMP/dist"/*.tar.gz
       - name: scan tracked files, built artifacts and git history
-        # The secret is visible to this step only. An empty allowlist from outside the
-        # checkout means a committed .publication-allowlist cannot silence the scan.
+        # An empty allowlist from outside the checkout means a committed
+        # .publication-allowlist cannot silence the scan.
         env:
           POSTBOX_FORBIDDEN: ${{ secrets.POSTBOX_FORBIDDEN }}
         # A push to this repository always has the secret: there a missing list is an
@@ -109,7 +164,44 @@ jobs:
           if [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REPOSITORY" = tyko84/agent-postbox ]; then
             require="--require-patterns"
           fi
-          python check_publication.py $require --allowlist "$RUNNER_TEMP/empty-allowlist" --dist "$RUNNER_TEMP/dist" --git-log
+          python -I -S check_publication.py $require --allowlist "$RUNNER_TEMP/empty-allowlist" --dist "$RUNNER_TEMP/dist" --git-log
+      - name: scan the tree of every tag
+        # The scan above reads the files of this commit and the metadata of the history.
+        # A file that an older release shipped and a later commit removed is in neither,
+        # but it is in that release's tag for good. Each tag's tree is archived and
+        # scanned like an artifact. `git archive` writes owner "root" with uid 0, which
+        # the builder-identity rules accept. A finding is located as
+        # dist:<n>-<tag>.tar.gz:<path>.
+        env:
+          POSTBOX_FORBIDDEN: ${{ secrets.POSTBOX_FORBIDDEN }}
+        run: |
+          : > "$RUNNER_TEMP/empty-allowlist"
+          require=""
+          if [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REPOSITORY" = tyko84/agent-postbox ]; then
+            require="--require-patterns"
+          fi
+          trees="$RUNNER_TEMP/tag-trees"
+          mkdir "$trees"
+          # This file outranks every committed .gitattributes: no tree can keep a path
+          # out of its archive (export-ignore) or have its bytes rewritten on the way
+          # (export-subst, ident, a filter, a re-encoding, line-ending conversion).
+          mkdir -p "$(git rev-parse --git-path info)"
+          printf '* -export-ignore -export-subst -ident -filter -working-tree-encoding -text\n' \
+            > "$(git rev-parse --git-path info/attributes)"
+          tags="$(git for-each-ref --format='%(refname:strip=2)' refs/tags)"
+          n=0
+          while IFS= read -r t; do
+            [ -n "$t" ] || continue
+            n=$((n + 1))
+            safe="$(printf '%s' "$t" | LC_ALL=C tr -c 'A-Za-z0-9._-' '_')"
+            git archive --format=tar.gz -o "$trees/$n-$safe.tar.gz" "refs/tags/$t"
+          done <<< "$tags"
+          if [ "$n" -eq 0 ]; then
+            echo "::notice::this repository has no tags: no tag tree to scan"
+            exit 0
+          fi
+          echo "scanning the tree of $n tag(s)"
+          python -I -S check_publication.py $require --no-tracked --allowlist "$RUNNER_TEMP/empty-allowlist" --dist "$trees"
 
   reproducible:
     # The same commit built on Linux and on macOS must give the same bytes. Not a
@@ -149,6 +241,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
+          pattern: repro-* # one directory per artifact; not the publication-dist artifact
           path: repro
       - run: |
           cat repro/repro-ubuntu-latest/SHA256SUMS

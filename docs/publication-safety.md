@@ -52,7 +52,75 @@ scanner itself never prints matched text or patterns.
 
 Missing list: the scanner warns, still runs the generic detectors, and exits 0 only
 if those pass. `--require-patterns` makes a missing list exit 2 instead;
-`scripts/preflight.sh` always uses it.
+`scripts/preflight.sh` always uses it, the release workflow always uses it, and
+`ci.yml` uses it for a push to this repository.
+
+## In CI: the job that holds the list installs nothing
+
+The forbidden list is the only secret this repository has, and a secret is
+readable by every program that runs in the same job as the step that receives
+it: a later step is not needed, an earlier one can leave a `.pth` file behind,
+edit the checkout, or keep a process running. The development tools come from
+PyPI, pinned by version but not by hash, with dependencies of their own, and the
+isolated build fetches setuptools. So the work is split, in `ci.yml` and in
+`release.yml` alike:
+
+| Job | Installs from PyPI | References the secret | Does |
+|---|---|---|---|
+| `publication-build` (`ci.yml`), `build` (`release.yml`) | the pinned dev tools; setuptools inside the isolated build | no | tests, the reproducible build, `twine check`; hands the files on as a workflow artifact |
+| `publication` (`ci.yml`), `scan` (`release.yml`) | **nothing** | yes, in the scan steps | checks out the full history and every tag, downloads the artifact, runs `check_publication.py` |
+
+The scanning job runs no `pip` and no build. It runs
+`python -I -S check_publication.py ...`: `-I` ignores every `PYTHON*` environment
+variable and the user site directory and keeps the script's own directory off
+the import path; `-S` skips the `site` module, so `site-packages` is not on the
+path and no `.pth` file is processed. What is loaded is the standard library and
+that one file from the checkout (`test_publication.py` runs the scanner under
+both flags, so it stays importable that way). The artifacts
+arrive as data: they are downloaded to a directory outside the checkout, and the
+scanner opens them as archives and reads them; nothing in them is installed,
+imported or executed.
+
+What this does not change: the scanner and the workflow file are the ones of the
+commit under test, so a pull request from a branch of this repository runs its
+own version of both with the secret available. Only people with write access
+can open such a pull request; pull requests from forks do not receive the
+secret. And a job that passes hands on no proof beyond its own result: the
+release workflow's `publish` job starts only if `scan` succeeded.
+
+`publication` is a required status check, and GitHub counts a skipped required
+job as passed. A job is skipped when a job it needs fails, so `publication` has
+`if: always()` and a first step that fails unless `publication-build` ended in
+`success`. The two belong together; removing either makes the check passable
+without a scan.
+
+### Every tag's tree
+
+The same job then archives the tree of every tag and scans the archives like
+artifacts (the recipe under Limits, run on every push, pull request and release):
+
+```sh
+git archive --format=tar.gz -o "$RUNNER_TEMP/tag-trees/<n>-<tag>.tar.gz" refs/tags/<tag>
+python -I -S check_publication.py --no-tracked --allowlist <empty file> --dist "$RUNNER_TEMP/tag-trees"
+```
+
+This is what finds a file that an earlier release shipped and a later commit
+removed: it is in no tracked file and in no commit message, but it is in that
+release's tag, and with it in the source archive GitHub serves for the tag. A
+finding reads `dist:<n>-<tag>.tar.gz:<path>  <rule-id>`. Before archiving, the
+job writes `* -export-ignore -export-subst -ident -filter -working-tree-encoding -text`
+to `.git/info/attributes`, which outranks every committed `.gitattributes`, so
+no tree can keep a path out of its own archive or have its bytes rewritten on
+the way. A repository without tags has nothing to archive and the step says so
+(in the release workflow, which a tag started, that is an error). The tags of
+this repository take well under a second.
+
+Release tags are permanent here, so a finding in an old tag cannot be removed
+by moving the tag. If a term is added to the list later and an old tag contains
+it, this step fails on every run until someone decides what to do: the term has
+been public since that tag was pushed, so treat it as published, and change the
+step in a pull request (the pull request runs its own workflow file) only once
+that is understood.
 
 ## Local preflight
 
@@ -254,7 +322,10 @@ allowlisting it.
   rotate anything that was a secret: once a term has reached a public remote it has
   to be treated as published, whatever the scanner says afterwards. To audit what a
   release exposed, run `--git-log=--all` for every ref and tag, then scan the tree
-  of each release tag, which is what the source archive of that tag contains:
+  of each release tag, which is what the source archive of that tag contains (CI
+  and the release workflow do the second part on every run, see Every tag's tree;
+  a commit that was never tagged and whose file was later removed is still only
+  found by reading that commit):
 
   ```sh
   mkdir /tmp/pb-audit

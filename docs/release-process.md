@@ -3,7 +3,8 @@
 A release is decided and published by a maintainer; the building is done by a
 workflow. In one line: merge the release pull request, push an annotated tag
 `vX.Y.Z`, and `.github/workflows/release.yml` builds the wheel and the sdist
-reproducibly, scans them, and attaches both with a `SHA256SUMS` file to a
+reproducibly, scans them in a separate job that installs nothing, and attaches
+both with a `SHA256SUMS` file to a
 **draft** GitHub release (or to the release that already exists for the tag). A
 person reviews the draft and publishes it.
 
@@ -46,34 +47,72 @@ On a branch off `main`:
 
 ### Required checks
 
-Branch protection on `main` is expected to require these status checks, all
-reported by GitHub Actions from `ci.yml`: `lint`, `packaging`, `publication`, and
-all eight `selftest` cells (Linux and macOS, Python 3.10 to 3.13), to require a
-pull request, and to apply to administrators as well. The required names embed
-the matrix labels, so the matrix and the required list change together.
+Branch protection on `main` requires a pull request (no approving review is
+required, and the history must be linear), applies to administrators as well,
+and requires these eleven status checks, each bound to GitHub Actions as the
+reporting app:
+
+* `lint`
+* `packaging`
+* `publication`
+* `selftest (ubuntu-latest, 3.10)`, `selftest (ubuntu-latest, 3.11)`,
+  `selftest (ubuntu-latest, 3.12)`, `selftest (ubuntu-latest, 3.13)`
+* `selftest (macos-latest, 3.10)`, `selftest (macos-latest, 3.11)`,
+  `selftest (macos-latest, 3.12)`, `selftest (macos-latest, 3.13)`
+
+A check is named after the job id in `ci.yml` plus, for `selftest`, the matrix
+values in order. Renaming a job, giving it a `name:`, or changing the `os` or
+`python` lists therefore changes the names and leaves the old ones waiting
+forever: change the required list in the same pull request. This is also why
+`runs-on` stays `ubuntu-latest` and `macos-latest` and is not pinned to an image
+version such as `ubuntu-24.04`: for `selftest` the label is part of the eight
+required names. The price is that a new runner image arrives without a commit;
+the `reproducible` job and the BUILDINFO block show what it changed.
+`test_publication.py` (class `Workflows`) fails if the ids, the matrix or the
+shape described below change.
+
 `publication` is the job that runs `check_publication.py` with the forbidden list
 from the repository secret; if it were not in the required list, a pull request
-could be merged with that scan failing. This is the expected configuration, not a
-guarantee: it lives in the repository settings, which this document cannot
-enforce and anyone with admin rights can change. Whoever cuts a release checks
-it first:
+could be merged with that scan failing. GitHub treats a **skipped** required job
+as passed, and skips a job when a job it needs has failed. `publication` needs
+`publication-build` (which installs the dev tools and builds, and is not itself
+a required check), so it runs under `if: always()` and its first step fails
+unless `publication-build` succeeded: a broken build makes the required check
+red, never grey. None of the other required jobs has a `needs:` or an `if:`.
+
+Not required, and why: `publication-build` (covered by `publication`),
+`reproducible` and `reproducible-compare` (they exist to show where the
+byte-for-byte claim stops holding across operating systems), and the `codeql`
+workflow (its findings arrive as code scanning alerts).
+
+What runs where: only `lint`, `packaging`, `publication-build` and
+`reproducible` install the dev tools, all on Python 3.12. The eight `selftest`
+cells install nothing, so `test_packaging.py` is not in their list and the
+real-build tests of `test_publication.py` skip there. The test that installs the
+built wheel into a fresh environment and runs the installed `agent-postbox`
+script is in `test_packaging.py`, and so runs in `packaging` only: Ubuntu,
+Python 3.12 (and again in the release workflow's `build`).
+
+This is the expected configuration, not a guarantee: it lives in the repository
+settings, which this document cannot enforce and anyone with admin rights can
+change. Whoever cuts a release checks it first:
 
 ```sh
-gh api repos/tyko84/agent-postbox/branches/main/protection/required_status_checks --jq '.contexts'
+gh api repos/tyko84/agent-postbox/branches/main/protection/required_status_checks --jq '.checks[] | "\(.context) app=\(.app_id)"'
 gh api repos/tyko84/agent-postbox/branches/main/protection/enforce_admins --jq '.enabled'
+gh api repos/tyko84/agent-postbox/branches/main/protection/required_pull_request_reviews --jq '.url'
 ```
 
-The first must include `publication`; the second must print `true` (required
-checks then bind administrators too). The check name is the job id in `ci.yml`,
-so renaming that job, giving it a `name:` or a matrix changes the name and leaves
-the old one waiting forever; update the required list in the same change. Pull
+The first must print the eleven names above, each with `app=15368` (GitHub
+Actions; a check bound to an app cannot be satisfied by a status that some other
+integration posts under the same name); the second must print `true` (required
+checks then bind administrators too); the third must print a URL and not fail
+with 404 (a pull request is required). Pull
 requests from forks and from Dependabot do not receive the secret: there the job
 runs the generic detectors only and still reports success, so requiring it does
 not block them, and the full scan of their content first happens on the push to
 `main` after the merge. Run `scripts/preflight.sh` on such a branch before merging
-it. Administrators can bypass required checks unless "Do not allow bypassing the
-above settings" is enabled for the branch, which is what the second command
-above reports.
+it.
 
 ## 3. Privacy preflight (before every tag)
 
@@ -127,10 +166,18 @@ things. The workflow never creates, moves or deletes a tag either.
 ## 5. What the release workflow does
 
 `.github/workflows/release.yml` runs for a pushed tag matching `v*.*.*` and for
-nothing else; it has no manual trigger. It has two jobs.
+nothing else; it has no manual trigger. It has three jobs, run one after the
+other, and each job has one kind of power:
 
-`build` can read the repository and nothing more. Every gate is here, and each
-one stops the run:
+| Job | Can | Cannot |
+|---|---|---|
+| `build` | read the repository; install the pinned dev tools from PyPI; run the tests and the build | read a secret (it references none); write anywhere |
+| `scan` | read the repository and the one secret, the forbidden list | install anything: no `pip`, no build, no package from PyPI |
+| `publish` | write the draft release and the provenance | run code from the repository: it checks out nothing |
+
+Each gate stops the run, and a job that fails skips every job after it.
+
+`build`, in this order:
 
 1. the ref is a tag named exactly `vX.Y.Z` (no suffix), the tag object is
    **annotated**, it is the same object the remote has, the checkout is the
@@ -144,23 +191,33 @@ one stops the run:
 5. `python scripts/repro_build.py --check --outdir dist` builds twice and the two
    results are byte-identical;
 6. `twine check` passes;
-7. `dist` holds exactly `tyko84_agent_postbox-X.Y.Z-py3-none-any.whl` and
-   `tyko84_agent_postbox-X.Y.Z.tar.gz`;
-8. `check_publication.py --require-patterns --allowlist <empty file> --dist dist
-   --git-log` passes: tracked files, both artifacts (forbidden list, generic
-   detectors and the builder-identity rules), the history of the tagged commit,
-   and every tag. The forbidden list comes from the repository secret
-   `POSTBOX_FORBIDDEN` and is visible to that one step only; without the secret
-   the step fails;
-9. `SHA256SUMS` is written with `sha256sum` over the two files, verified with
-   `sha256sum --check`, and must equal the hashes the reproducible build printed.
+7. `dist` holds exactly `tyko84_agent_postbox-X.Y.Z-py3-none-any.whl`,
+   `tyko84_agent_postbox-X.Y.Z.tar.gz` and `SHA256SUMS`;
+8. `SHA256SUMS` is what `sha256sum` computes for the two files, passes
+   `sha256sum --check`, and equals the hashes the reproducible build printed.
 
-The three files and the notes are handed to the second job as workflow
-artifacts (kept 14 days).
+The three files and the notes leave `build` as two workflow artifacts,
+`release-dist` and `release-notes` (kept 14 days).
 
-`publish` runs only if `build` succeeded. It checks out nothing and runs no
-code from the repository. It verifies the three files against `SHA256SUMS`
-again, records build provenance for the wheel and the sdist
+`scan` then checks out the tagged commit with its whole history, fetches every
+tag object again (so annotated tags are scanned with their tagger and message),
+checks that the tag is annotated and is the commit it checked out, downloads
+`release-dist` to a directory outside the checkout, and runs the scanner as
+`python -I -S check_publication.py` (see
+[publication-safety.md](publication-safety.md), In CI):
+
+9. `--require-patterns --allowlist <empty file> --dist <release-dist> --git-log`
+   passes: tracked files, both artifacts and `SHA256SUMS` (forbidden list,
+   generic detectors, builder-identity rules, checksums that match), the history
+   of the tagged commit, and every tag. The forbidden list comes from the
+   repository secret `POSTBOX_FORBIDDEN`; without the secret the step fails;
+10. the tree of **every tag**, the new one included, is archived with
+    `git archive` and scanned the same way (`--no-tracked --dist`), so a file
+    that an earlier release shipped and a later commit removed is still found.
+
+`publish` runs only if `build` and `scan` both succeeded. It checks out nothing
+and runs no code from the repository. It verifies the three files against
+`SHA256SUMS` again, records build provenance for the wheel and the sdist
 (`actions/attest-build-provenance`), and then:
 
 * **no release exists for the tag:** `gh release create vX.Y.Z --verify-tag
@@ -178,18 +235,48 @@ finishes selects the second path, and if that release is already published the
 assets are public the moment they are uploaded, without the review step. Leave
 the release to the workflow unless there is a reason not to.
 
-Permissions: the workflow has none by default (`permissions: {}`); `build` has
-`contents: read`; `publish` has `contents: write` for the release and
+Permissions: the workflow has none by default (`permissions: {}`); `build` and
+`scan` have `contents: read`; `publish` has `contents: write` for the release and
 `id-token: write` plus `attestations: write` for the provenance. Every action is
 pinned to a full commit SHA, all of them published by GitHub (`actions/*`);
 credentials are not persisted in the checkout; one run per tag at a time, never
 cancelled part-way.
 
-A failed gate leaves no release and no assets: `build` cannot write, and
-`publish` does not start. A run that failed for a transient reason (a network
+A failed gate leaves no release, no provenance and no assets: `build` and `scan`
+cannot write, and `publish` does not start. On the run page a failed `build`
+shows `scan` and `publish` as skipped, and a failed `scan` shows `publish` as
+skipped ("This job was skipped", a grey icon); the run as a whole is red. The
+only thing a failed run leaves behind is its workflow artifacts: the files
+`build` made from the public tag, visible to signed-in users for 14 days unless
+deleted from the run page. A run that failed for a transient reason (a network
 error) can be re-run from the Actions page; it runs the workflow file of the
 tagged commit again. A run that failed because of what is in the tag cannot be
 repaired by a re-run: fix `main` and release the next patch version.
+
+### Changing the release workflow
+
+Release tags are permanent (a tag ruleset refuses to move or delete `v*`), and a
+run always uses the workflow file of its tag. A mistake in `release.yml` is
+therefore found only after a tag exists and cannot be fixed for that tag: the
+next patch version is the only way out. No pull request runs this workflow.
+Before merging a change to it:
+
+* parse it (`python -c 'import yaml,sys; yaml.safe_load(open(sys.argv[1]))'
+  .github/workflows/release.yml` with PyYAML installed) and run
+  `python test_publication.py Workflows`, which checks that the job holding the
+  secret installs nothing, that `publish` waits for `scan`, and that every
+  action is GitHub-owned and pinned;
+* in a scratch clone that is never pushed, make a commit whose `__version__` and
+  `CHANGELOG.md` heading name a version that does not exist, tag it with an
+  annotated tag, and run every `run:` block of every job by hand under
+  `bash --noprofile --norc -eo pipefail` with `GITHUB_REF_TYPE=tag`,
+  `GITHUB_REF_NAME`, `GITHUB_REPOSITORY`, `GITHUB_ENV`, `GITHUB_STEP_SUMMARY`,
+  `RUNNER_TEMP` and a synthetic `POSTBOX_FORBIDDEN` set, `gh` replaced by a stub,
+  and the artifact steps replaced by a copy. Run each gate once so that it
+  passes and once so that it must fail;
+* what this cannot show, and the first real tag will: that the pinned actions
+  start, that the artifact passes between jobs, the provenance step, and
+  `gh release create` with the job's token.
 
 ## 6. Review and publish the draft
 
