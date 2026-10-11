@@ -98,7 +98,9 @@ def killed_sender(box: Path, body_file: Path, out: dict) -> None:
             "import agent_mail\n"
             "def park(*_a, **_k):\n"
             f"    open({str(ready)!r}, 'w').close()\n"
-            "    signal.pause()\n"
+            "    import time as _t\n"
+            "    while True:  # not signal.pause(): a signal just before it would be lost\n"
+            "        _t.sleep(0.05)\n"
             "os.link = park\n"
             f"sys.exit(agent_mail.main({argv!r}))\n")
     proc = subprocess.Popen([sys.executable, "-c", code], env={**os.environ, "AGENT_MAIL_DIR": str(box)},

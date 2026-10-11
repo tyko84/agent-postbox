@@ -48,9 +48,9 @@ On a branch off `main`:
 
 Branch protection on `main` is expected to require these status checks, all
 reported by GitHub Actions from `ci.yml`: `lint`, `packaging`, `publication`, and
-the `selftest` cells chosen as representative (at the time of writing
-`selftest (ubuntu-latest, 3.10)`, `selftest (ubuntu-latest, 3.13)` and
-`selftest (macos-latest, 3.12)`), and to apply to administrators as well.
+all eight `selftest` cells (Linux and macOS, Python 3.10 to 3.13), to require a
+pull request, and to apply to administrators as well. The required names embed
+the matrix labels, so the matrix and the required list change together.
 `publication` is the job that runs `check_publication.py` with the forbidden list
 from the repository secret; if it were not in the required list, a pull request
 could be merged with that scan failing. This is the expected configuration, not a
@@ -227,8 +227,8 @@ repositories). It ties the file's hash to this repository, the workflow file and
 the tag that built it:
 
 ```sh
-gh attestation verify agent_postbox-X.Y.Z-py3-none-any.whl -R tyko84/agent-postbox
-gh attestation verify agent_postbox-X.Y.Z.tar.gz -R tyko84/agent-postbox
+gh attestation verify tyko84_agent_postbox-X.Y.Z-py3-none-any.whl -R tyko84/agent-postbox
+gh attestation verify tyko84_agent_postbox-X.Y.Z.tar.gz -R tyko84/agent-postbox
 ```
 
 **Rebuild and compare.** The build is reproducible, so the same commit and the

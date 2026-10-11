@@ -23,7 +23,12 @@ the `agent_mail` module and mailboxes are unchanged.
   `tyko84_agent_postbox-X.Y.Z-...`. This project is still not on PyPI.
 - Upgrading from 0.3.0 or earlier: run `python -m pip uninstall agent-postbox`
   first, then install from a clone or a release wheel by path. Both names own
-  `agent_mail.py` and the `agent-postbox` command.
+  `agent_mail.py` and the `agent-postbox` command, so uninstalling the old name
+  after installing the new one deletes both; `python -m pip install
+  --force-reinstall <wheel or clone path>` puts them back.
+
+### Repository
+
 - The repository's history was re-created on 2026-10-11 with one test file in the
   first commit corrected. Every commit id changed; file contents at every later
   commit, and the 0.3.0 release files and their checksums, are identical.

@@ -94,7 +94,9 @@ The command and the module keep their names; only the distribution is called
 `agent-postbox`, which pip cannot tell apart from the unrelated PyPI project.
 If an environment still has one of those, run
 `python -m pip uninstall agent-postbox` before installing this version, because
-both own `agent_mail.py` and the `agent-postbox` command.
+both own `agent_mail.py` and the `agent-postbox` command. (Uninstalling the old
+name afterwards instead removes those files; `python -m pip install
+--force-reinstall ./agent-postbox` puts them back.)
 
 **Verifying a release download.** A wheel or sdist built by
 `scripts/repro_build.py` comes with a `SHA256SUMS` file. Check the files
@@ -318,7 +320,7 @@ on the wait alone; keep the default there. See PROTOCOL.md section 31.
 | 2 | Refused or unhealthy: bad arguments or input, no mailbox, a key reused with different content, a filesystem without `flock` for a scope, quarantined files present (`list`, `inbox`, `latency`), `doctor` FAIL, Python older than 3.10 | all |
 | 3 | Contended, nothing written, safe to retry: scope held or being claimed, key being sent by a live process | `send` with `--scope` or `--key` |
 | 130, 143 | Interrupted by SIGINT / SIGTERM; the send released what it held first | `send`, `ask`, `canary` |
-| 141 | The reader of stdout went away (`list \| head -1`): stopped quietly, no traceback. 128 + SIGPIPE, as a shell reports it | every read-only command: `list`, `inbox`, `show`, `status`, `doctor`, `latency`, `verify`, `capability`, `--help` |
+| 141 | The reader of stdout went away (`list \| head -1`): stopped quietly, no traceback. 128 + SIGPIPE, as a shell reports it | every read-only command: `list`, `inbox`, `show`, `status`, `doctor`, `latency`, `verify`, `capability`, `--help`, `--version` |
 
 `status` exits 0 whenever the mailbox exists, whatever it reports. The pickup
 adapter (`hooks/agent_mail_check.py`) always exits 0. `send`, `ask` and `canary`

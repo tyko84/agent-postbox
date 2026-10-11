@@ -397,7 +397,9 @@ def main() -> int:
                 "import agent_mail\n"
                 "def block(*_a, **_k):\n"
                 f"    open({str(ready)!r}, 'w').close()\n"
-                "    signal.pause()\n"
+                "    import time as _t\n"
+                "    while True:  # not signal.pause(): a signal just before it would be lost\n"
+                "        _t.sleep(0.05)\n"
                 "def gate(*_a, **_k):\n"  # park, but resumable: returns once <box><tag>.go exists
                 f"    open({str(ready)!r}, 'w').close()\n"
                 f"    while not os.path.exists({str(go)!r}):\n"

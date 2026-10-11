@@ -351,7 +351,9 @@ def park(box: Path, ready: Path, patch: str, *argv: str) -> subprocess.Popen[str
         "import agent_mail\n"
         "def block(*_a, **_k):\n"
         f"    open({str(ready)!r}, 'w').close()\n"
-        "    signal.pause()\n"
+        "    import time as _t\n"
+        "    while True:  # not signal.pause(): a signal just before it would be lost\n"
+        "        _t.sleep(0.05)\n"
         f"{patch}\n"
         f"sys.exit(agent_mail.main({list(argv)!r}))\n")
     proc = subprocess.Popen([sys.executable, "-I", "-c", code], env=child_env(box), text=True,

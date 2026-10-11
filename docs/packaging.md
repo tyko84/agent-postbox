@@ -34,6 +34,11 @@ python -m pip install ./agent-postbox          # the clone, or a release wheel b
 python -m pip show -f tyko84-agent-postbox     # Home-page is this repository; one module
 ```
 
+The order matters. Installed over the old distribution, this one works until the
+old name is uninstalled; that removes `agent_mail.py` and the `agent-postbox`
+command, which both distributions list, and pip reports no problem. If that has
+happened, `python -m pip install --force-reinstall ./agent-postbox` restores them.
+
 ## Quick build
 
 Build and check, in a throwaway virtualenv (never your project's):
@@ -226,15 +231,14 @@ archive instead, and `pyproject.toml` is unchanged.
 * **Reference interpreter: CPython 3.12** (what CI's `packaging` job uses).
   CPython 3.11 and 3.13 produced the same bytes when this was written, but only
   3.12 is the reference: compare hashes made with 3.12.
-* **Expected, not yet verified: the same bytes on Linux and macOS.** Nothing in
-  either artifact is taken from the operating system, and both platforms'
-  CPython normally link the classic zlib, whose output for a given level is
-  expected to be the same across its 1.2 and 1.3 releases. But this has only been run on
-  macOS (zlib 1.2.12). Until CI has built one commit on both and compared
-  `SHA256SUMS`, treat cross-OS equality as a prediction. Where the interpreter
-  is linked against zlib-ng or another replacement (some Linux distributions
-  do this), the compressed bytes, and so both hashes, are expected to differ
-  while every member inside stays identical; `deflate_probe` will differ too.
+* **Verified in CI: the same bytes on Linux and macOS.** The `reproducible`
+  jobs build each commit on both and `reproducible-compare` fails if the two
+  `SHA256SUMS` differ. Nothing in either artifact is taken from the operating
+  system; the compression comes from zlib, and the classic zlib gives the same
+  output across its 1.2 and 1.3 releases. Where the interpreter is linked against
+  zlib-ng or another replacement (some Linux distributions do this), the
+  compressed bytes, and so both hashes, are expected to differ while the contents
+  stay identical: compare the unpacked files instead.
 * **Not guaranteed across pins.** A commit that changes `build-constraints.txt`
   changes the wheel hash (the `WHEEL` file names the setuptools version) and
   may change generated metadata in both artifacts. That is a change in the
