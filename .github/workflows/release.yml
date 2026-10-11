@@ -7,15 +7,22 @@ name: release
 # tag's own run is the only way to repeat a release, and a repeat cannot replace an asset.
 # The workflow never creates, moves or deletes a tag.
 #
-# Three jobs, each with one kind of power:
-#   build    installs the pinned dev tools from PyPI, runs the tests and builds. It can
-#            read the repository, references no secret and writes nowhere.
+# Four jobs, each with one kind of power:
+#   build    writes the artifacts. It installs three build tools, each pinned by hash
+#            (requirements-build.txt), and a build backend whose wheel is checked against
+#            build-constraints.txt; nothing else from PyPI. It can read the repository,
+#            references no secret and writes nowhere.
 #   scan     holds the one secret (the forbidden-name list) and installs nothing: it runs
 #            the standard-library scanner over the checkout, the history, every tag and
 #            the files `build` produced, which it only reads.
+#   test     installs the dev tools (pinned by version only, with everything they depend
+#            on), runs the whole test list and `twine check` on the files `build`
+#            produced. Some tests build with whatever setuptools the index serves that
+#            day. None of this can change the artifacts: they left `build` before this
+#            job started.
 #   publish  holds the write permissions, checks out nothing, and only handles files
-#            that passed every gate of `build` and `scan`.
-# A job that fails skips every job after it, so a failed gate leaves no release.
+#            that passed every gate of the three jobs before it.
+# A job that fails skips every job that needs it, so a failed gate leaves no release.
 #
 # A release tag is permanent and each run uses the workflow file of its tag: a mistake
 # in this file is found only after a tag exists and cannot be fixed for that tag. Dry-run
@@ -87,26 +94,16 @@ jobs:
           grep -q '[^[:space:]]' "$RUNNER_TEMP/release-notes.md" \
             || fail "the CHANGELOG.md section for $VERSION is empty"
 
-      - run: python -m pip install -r requirements-dev.txt
-
-      - name: "gate: the whole test list"
-        env:
-          POSTBOX_REQUIRE_BUILD_TESTS: "1" # the real-build tests may not skip here
-        run: |
-          for t in selftest.py stress_test.py test_hardening.py test_field.py test_adversarial.py \
-                   test_handoff.py test_readme_examples.py test_publication.py test_packaging.py; do
-            echo "::group::$t"
-            python "$t"
-            echo "::endgroup::"
-          done
+      # The build tools and nothing else, each pinned by hash. pip refuses a file with
+      # another hash and any package the file does not list.
+      - run: python -m pip install --require-hashes -r requirements-build.txt
 
       - name: "gate: two independent builds are byte-identical"
-        # The build backend is pinned by build-constraints.txt, read from the tagged commit.
-        # The script also writes dist/SHA256SUMS and prints a BUILDINFO block.
+        # The build backend is pinned by build-constraints.txt, read from the tagged commit:
+        # one setuptools version and the SHA-256 of its wheel, which the script checks
+        # before it lets the build install it. It also writes dist/SHA256SUMS and prints
+        # a BUILDINFO block.
         run: python scripts/repro_build.py --check --outdir dist | tee "$RUNNER_TEMP/build.log"
-
-      - name: "gate: twine check"
-        run: python -m twine check dist/*.whl dist/*.tar.gz
 
       - name: "gate: exactly one wheel, one sdist and SHA256SUMS, named for this version"
         run: |
@@ -162,7 +159,7 @@ jobs:
 
   scan:
     # SECRET ISOLATION. The forbidden-name list is the only secret of this repository
-    # and this is the only job that references it. Nothing is installed here: no `pip`,
+    # and this is the only job of this workflow that references it. Nothing is installed here: no `pip`,
     # no build, no package from PyPI. check_publication.py (standard library plus git)
     # runs from the checkout with `python -I -S`: no PYTHON* environment variable, no
     # user site, no site-packages and no .pth file is honoured. The artifacts come from
@@ -244,10 +241,49 @@ jobs:
           echo "scanning the tree of $n tag(s)"
           python -I -S check_publication.py --require-patterns --no-tracked --allowlist "$RUNNER_TEMP/empty-allowlist" --dist "$trees"
 
+  test:
+    # The dev tools are pinned by version, not by hash, and some tests run a plain
+    # `python -m build` with an unpinned build backend, so all of it is kept out of the
+    # job that writes the artifacts. Here it can read the files and fail the release; it
+    # cannot alter what `publish` will download.
+    needs: build
+    if: github.repository == 'tyko84/agent-postbox'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r requirements-dev.txt
+
+      - name: "gate: the whole test list"
+        env:
+          POSTBOX_REQUIRE_BUILD_TESTS: "1" # the real-build tests may not skip here
+        run: |
+          for t in selftest.py stress_test.py test_hardening.py test_field.py test_adversarial.py \
+                   test_handoff.py test_readme_examples.py test_publication.py test_packaging.py; do
+            echo "::group::$t"
+            python "$t"
+            echo "::endgroup::"
+          done
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-dist
+          path: ${{ runner.temp }}/dist # outside the checkout
+      - name: "gate: twine check"
+        run: python -m twine check "$RUNNER_TEMP/dist"/*.whl "$RUNNER_TEMP/dist"/*.tar.gz
+
   publish:
-    # Runs only if `build` and `scan` both succeeded: a failed or skipped job in `needs`
-    # skips this one, and with it the provenance and the draft release.
-    needs: [build, scan]
+    # Runs only if `build`, `scan` and `test` all succeeded: a failed or skipped job in
+    # `needs` skips this one, and with it the provenance and the draft release.
+    needs: [build, scan, test]
     if: github.repository == 'tyko84/agent-postbox'
     runs-on: ubuntu-latest
     timeout-minutes: 10

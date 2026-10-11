@@ -17,7 +17,9 @@ Code changes:
   `mypy agent_mail.py install.py hooks/agent_mail_check.py check_handoff.py check_publication.py test_publication.py`
   (`ci.yml` is the source of truth for what CI runs). The pinned tool versions
   CI uses are in `requirements-dev.txt`:
-  `python -m pip install -r requirements-dev.txt`.
+  `python -m pip install -r requirements-dev.txt`. The tools that build a
+  release are pinned by hash as well, in `requirements-build.txt` and
+  `build-constraints.txt` (`docs/packaging.md`, The build tools).
 * `python selftest.py` asserts on content that *must* appear, never on
   absence. A test that can only observe silence proves nothing
   (PROTOCOL.md §8), so give new checks a positive control.

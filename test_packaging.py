@@ -574,7 +574,9 @@ class ReproducibleBuild(unittest.TestCase):
                         .startswith("UNEXPECTED other-9.9.9.tar.gz"))
         d = base / "extra-file"
         d.mkdir()
-        (d / "tyko84_agent_postbox-9.9.9-py3-none-any.whl").write_bytes(b"x")
+        # a version no release can have (the release gate wants a plain X.Y.Z), so this is
+        # an unexpected file and never the wheel of the commit under test
+        (d / "tyko84_agent_postbox-0.0.0.dev0-py3-none-any.whl").write_bytes(b"x")
         shutil.copy2(self.out / "SHA256SUMS", d / "SHA256SUMS")
         self.assertEqual([b.split()[0] for b in mod.verify_dir(d, built)[1]], ["UNEXPECTED"])
         for label, text in (("path", good.replace("  ", "  dist/", 1)),
@@ -619,6 +621,78 @@ class ReproducibleBuild(unittest.TestCase):
                             self._digests()[self.wheel.name])
         self.assertEqual(sdist_owner_leaks(next((base / "floor").glob("*.tar.gz"))), [])
 
+    def test_backend_wheel_is_the_recorded_one(self) -> None:
+        """build-constraints.txt records the SHA-256 of the setuptools wheel; the script
+        fetches that wheel, checks it and lets the build install nothing else."""
+        cons = subprocess.run(["git", "-C", str(ROOT), "show", "HEAD:build-constraints.txt"],
+                              capture_output=True).stdout.decode()
+        pin = re.search(r"^setuptools==([0-9][0-9A-Za-z.]*)$", cons, re.M)
+        rec = re.findall(r"^# sha256: ([0-9a-f]{64})  (\S+)$", cons, re.M)
+        assert pin is not None
+        self.assertEqual([name for _, name in rec], [f"setuptools-{pin.group(1)}-py3-none-any.whl"],
+                         "one recorded wheel, of the pinned version")
+        self.assertIn(f"  setuptools_wheel: {rec[0][1]} sha256 {rec[0][0]} (verified: ", self.log)
+        base = Path(self.tmp.name)
+        # a wheel with another hash is refused before anything is built
+        wrong = base / "wrong-hash.txt"
+        wrong.write_text(cons.replace(rec[0][0], "0" * 64))
+        r = self._repro("--constraints", str(wrong), "--outdir", str(base / "wrong"))
+        self._skip_if_offline(r)
+        self.assertEqual(r.returncode, 2, r.stdout[-3000:])
+        self.assertIn("is not the recorded one", r.stdout)
+        self.assertFalse((base / "wrong").exists(), "nothing was written")
+        # two recorded wheels: refused, the file must name exactly one
+        twice = base / "twice.txt"
+        twice.write_text(cons + f"# sha256: {'1' * 64}  other-1.0-py3-none-any.whl\n")
+        r = self._repro("--constraints", str(twice), "--outdir", str(base / "twice"))
+        self.assertEqual(r.returncode, 2, r.stdout[-3000:])
+        self.assertIn("more than one backend wheel", r.stdout)
+        # Control for "nothing else": the isolated build does obey PIP_NO_INDEX. With no
+        # wheel recorded nothing is fetched beforehand, so the same setting leaves the
+        # build with no source for its backend and it fails. The successful build above
+        # ran under that setting plus the one checked wheel.
+        bare = base / "no-record.txt"
+        bare.write_text(f"setuptools=={pin.group(1)}\n")
+        env = {**self.env, "PIP_NO_INDEX": "1"}
+        for name in ("PIP_FIND_LINKS", "PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL"):
+            env.pop(name, None)
+        r = subprocess.run([sys.executable, str(REPRO), "--constraints", str(bare),
+                            "--outdir", str(base / "bare")], cwd=self.tmp.name, env=env,
+                           text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        self.assertEqual(r.returncode, 2, r.stdout[-3000:])
+        self.assertIn("python -m build failed", r.stdout)
+        # and without it the same file builds, unverified, and says so
+        r = self._repro("--constraints", str(bare), "--outdir", str(base / "bare"))
+        self._skip_if_offline(r)
+        self.assertEqual(r.returncode, 0, r.stdout[-3000:])
+        self.assertIn("  setuptools_wheel: not verified (the constraints file records no sha256)\n",
+                      r.stdout)
+
+    def test_build_tools_are_pinned_by_hash(self) -> None:
+        """requirements-build.txt: every requirement has one exact version and a sha256,
+        wheels only, and its `build` is the one requirements-dev.txt pins."""
+        text = (ROOT / "requirements-build.txt").read_text(encoding="utf-8")
+        logical = [ln for ln in text.replace("\\\n", " ").splitlines()
+                   if ln.strip() and not ln.startswith("#")]
+        self.assertEqual(logical[0].split(), ["--only-binary", ":all:"])
+        names = []
+        for line in logical[1:]:
+            m = re.fullmatch(r"([A-Za-z0-9_.-]+)==([0-9][0-9A-Za-z.]*)((?:\s+--hash=sha256:[0-9a-f]{64})+)",
+                             line.strip())
+            self.assertIsNotNone(m, line)
+            assert m is not None
+            names.append(m.group(1))
+        self.assertEqual(names, ["build", "packaging", "pyproject_hooks"])
+        dev = (ROOT / "requirements-dev.txt").read_text(encoding="utf-8")
+        pins = [re.search(r"^build==(\S+)", t, re.M) for t in (text, dev)]
+        self.assertTrue(all(pins))
+        self.assertEqual(len({p.group(1) for p in pins if p}), 1, "the two build pins differ")
+        self.assertIn("  build: ", self.log)
+        self.assertIn(f"(requirements-build.txt pins {pins[0].group(1) if pins[0] else ''})", self.log)
+        # control: the line pattern does reject a requirement without a hash
+        self.assertIsNone(re.fullmatch(r"([A-Za-z0-9_.-]+)==([0-9][0-9A-Za-z.]*)((?:\s+--hash=sha256:[0-9a-f]{64})+)",
+                                       "build==1.6.1"))
+
     def test_constraints_file_is_not_in_the_sdist(self) -> None:
         # Deliberate: it only means something to scripts/repro_build.py, which needs a git
         # checkout and is not in the sdist either. MANIFEST.in stays an allow-list without it.
@@ -633,7 +707,8 @@ class ReproducibleBuild(unittest.TestCase):
         block = m.group(1)
         keys = [ln.split(":", 1)[0].strip() for ln in block.splitlines()]
         self.assertEqual(keys, ["commit", "source_date_epoch", "python", "platform", "zlib",
-                                "deflate_probe", "setuptools", "build", "constraints"])
+                                "deflate_probe", "setuptools", "setuptools_wheel", "build",
+                                "constraints"])
         self.assertRegex(block, r"(?m)^  commit: [0-9a-f]{40}$")
         self.assertIn(f"  source_date_epoch: {self.epoch}\n", block)
         self.assertRegex(block, r"(?m)^  deflate_probe: [0-9a-f]{16}$")

@@ -46,7 +46,8 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-      - run: python -m pip install -r requirements-dev.txt
+      # the build tools only, each pinned by hash: what the release workflow's build job installs
+      - run: python -m pip install --require-hashes -r requirements-build.txt
       - run: python test_packaging.py
       - run: python scripts/repro_build.py --check --outdir "$RUNNER_TEMP/repro"
 
@@ -66,7 +67,8 @@ jobs:
 
   publication-build:
     # The half of the publication check that needs code from PyPI: the pinned dev tools
-    # and, inside the isolated build, setuptools. It builds the artifacts and hands them
+    # (twine among them, with everything it depends on) and, inside the isolated build,
+    # setuptools. It builds the artifacts and hands them
     # to `publication` as a workflow artifact. No secret is referenced in this job, so
     # nothing installed here can read one.
     runs-on: ubuntu-latest
@@ -220,7 +222,7 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m pip install --require-hashes -r requirements-build.txt
       - run: |
           mkdir -p "$RUNNER_TEMP/out"
           python scripts/repro_build.py --outdir "$RUNNER_TEMP/out" | tee "$RUNNER_TEMP/BUILDINFO.txt"

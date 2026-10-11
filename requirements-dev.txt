@@ -1,4 +1,8 @@
 # Development tools for CI and local checks (lint, types, build, upload check); the library itself has no dependencies.
+# Pinned by version, not by hash, and their own dependencies are not pinned at all: nothing
+# installed from this file runs in a job that holds a secret or that writes a release
+# artifact. Those jobs use requirements-build.txt (hashes) or install nothing
+# (docs/packaging.md, The build tools). The `build` pin here and there must agree.
 ruff==0.17.0
 mypy==2.4.0
 build==1.6.1

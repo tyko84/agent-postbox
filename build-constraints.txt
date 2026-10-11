@@ -2,8 +2,14 @@
 # setuptools release. It makes a commit's artifact hashes depend on files in the
 # repository instead of on the day of the build (docs/packaging.md).
 # pyproject.toml's `setuptools>=77` is the floor for everyone else and is not
-# changed by this file. To move the pin: change the version, run
-# `python scripts/repro_build.py --check`, and record the new hashes.
+# changed by this file. To move the pin: change the version AND the sha256 line
+# (the digest of the wheel as https://pypi.org/pypi/setuptools/<version>/json
+# lists it), run `python scripts/repro_build.py --check`, and record the new
+# artifact hashes.
 # No `--hash=` here on purpose: pip before 26 then refuses the build, because
 # pyproject.toml asks for a range and hash-checking mode wants `==` everywhere.
+# The script does the checking instead: it fetches the wheel named on the next
+# line, refuses it unless it has that SHA-256, and lets the build install
+# nothing else (docs/packaging.md, The build backend).
+# sha256: 51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670  setuptools-84.0.0-py3-none-any.whl
 setuptools==84.0.0

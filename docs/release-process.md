@@ -85,13 +85,14 @@ Not required, and why: `publication-build` (covered by `publication`),
 byte-for-byte claim stops holding across operating systems), and the `codeql`
 workflow (its findings arrive as code scanning alerts).
 
-What runs where: only `lint`, `packaging`, `publication-build` and
-`reproducible` install the dev tools, all on Python 3.12. The eight `selftest`
+What runs where: only `lint` and `publication-build` install the dev tools
+(`requirements-dev.txt`), and `packaging` and `reproducible` install the
+hash-pinned build tools (`requirements-build.txt`), all on Python 3.12. The eight `selftest`
 cells install nothing, so `test_packaging.py` is not in their list and the
 real-build tests of `test_publication.py` skip there. The test that installs the
 built wheel into a fresh environment and runs the installed `agent-postbox`
 script is in `test_packaging.py`, and so runs in `packaging` only: Ubuntu,
-Python 3.12 (and again in the release workflow's `build`).
+Python 3.12 (and again in the release workflow's `test` job).
 
 This is the expected configuration, not a guarantee: it lives in the repository
 settings, which this document cannot enforce and anyone with admin rights can
@@ -166,16 +167,19 @@ things. The workflow never creates, moves or deletes a tag either.
 ## 5. What the release workflow does
 
 `.github/workflows/release.yml` runs for a pushed tag matching `v*.*.*` and for
-nothing else; it has no manual trigger. It has three jobs, run one after the
-other, and each job has one kind of power:
+nothing else; it has no manual trigger. It has four jobs, and each job has one
+kind of power:
 
 | Job | Can | Cannot |
 |---|---|---|
-| `build` | read the repository; install the pinned dev tools from PyPI; run the tests and the build | read a secret (it references none); write anywhere |
+| `build` | read the repository; install the three build tools, each pinned by hash, and the hash-checked build backend; run the build | read a secret (it references none); write anywhere; install anything that is not pinned by hash |
 | `scan` | read the repository and the one secret, the forbidden list | install anything: no `pip`, no build, no package from PyPI |
+| `test` | install the dev tools and what they depend on (pinned by version only); run the tests; read the files `build` produced | change those files: they left `build` before this job started; read a secret |
 | `publish` | write the draft release and the provenance | run code from the repository: it checks out nothing |
 
-Each gate stops the run, and a job that fails skips every job after it.
+`scan` and `test` both wait for `build` and run side by side; `publish` waits
+for all three. Each gate stops its job, and a job that fails
+skips every job that needs it.
 
 `build`, in this order:
 
@@ -185,16 +189,20 @@ Each gate stops the run, and a job that fails skips every job after it.
 2. `agent_mail.__version__` equals the tag without its `v`;
 3. `CHANGELOG.md` has a `## [X.Y.Z]` heading with a non-empty section, which
    becomes the release notes;
-4. the whole test list passes (the same scripts as `ci.yml`, with
-   `test_field.py` and `test_packaging.py`), and the real-build tests of
-   `test_publication.py` are not allowed to skip;
+4. `pip install --require-hashes -r requirements-build.txt` succeeds: `build`,
+   `packaging` and `pyproject_hooks` are the files whose hashes the tagged
+   commit lists ([packaging.md](packaging.md), The build tools);
 5. `python scripts/repro_build.py --check --outdir dist` builds twice and the two
-   results are byte-identical;
-6. `twine check` passes;
-7. `dist` holds exactly `tyko84_agent_postbox-X.Y.Z-py3-none-any.whl`,
+   results are byte-identical; before each build the setuptools wheel is checked
+   against the SHA-256 in `build-constraints.txt`;
+6. `dist` holds exactly `tyko84_agent_postbox-X.Y.Z-py3-none-any.whl`,
    `tyko84_agent_postbox-X.Y.Z.tar.gz` and `SHA256SUMS`;
-8. `SHA256SUMS` is what `sha256sum` computes for the two files, passes
+7. `SHA256SUMS` is what `sha256sum` computes for the two files, passes
    `sha256sum --check`, and equals the hashes the reproducible build printed.
+
+No test runs in `build`: some tests build the project with a plain
+`python -m build` and whatever setuptools the index serves that day, which is
+exactly what this job must not execute.
 
 The three files and the notes leave `build` as two workflow artifacts,
 `release-dist` and `release-notes` (kept 14 days).
@@ -206,16 +214,25 @@ checks that the tag is annotated and is the commit it checked out, downloads
 `python -I -S check_publication.py` (see
 [publication-safety.md](publication-safety.md), In CI):
 
-9. `--require-patterns --allowlist <empty file> --dist <release-dist> --git-log`
+8. `--require-patterns --allowlist <empty file> --dist <release-dist> --git-log`
    passes: tracked files, both artifacts and `SHA256SUMS` (forbidden list,
    generic detectors, builder-identity rules, checksums that match), the history
    of the tagged commit, and every tag. The forbidden list comes from the
    repository secret `POSTBOX_FORBIDDEN`; without the secret the step fails;
-10. the tree of **every tag**, the new one included, is archived with
-    `git archive` and scanned the same way (`--no-tracked --dist`), so a file
-    that an earlier release shipped and a later commit removed is still found.
+9. the tree of **every tag**, the new one included, is archived with
+   `git archive` and scanned the same way (`--no-tracked --dist`), so a file
+   that an earlier release shipped and a later commit removed is still found.
 
-`publish` runs only if `build` and `scan` both succeeded. It checks out nothing
+`test` checks out the tagged commit and installs `requirements-dev.txt`:
+
+10. the whole test list passes (the same scripts as `ci.yml`, with
+    `test_field.py` and `test_packaging.py`), and the real-build tests of
+    `test_publication.py` are not allowed to skip;
+11. `twine check` passes on the wheel and the sdist from `release-dist`,
+    downloaded to a directory outside the checkout.
+
+`publish` runs only if `build`, `scan` and `test` all succeeded. It checks out
+nothing
 and runs no code from the repository. It verifies the three files against
 `SHA256SUMS` again, records build provenance for the wheel and the sdist
 (`actions/attest-build-provenance`), and then:
@@ -235,17 +252,18 @@ finishes selects the second path, and if that release is already published the
 assets are public the moment they are uploaded, without the review step. Leave
 the release to the workflow unless there is a reason not to.
 
-Permissions: the workflow has none by default (`permissions: {}`); `build` and
-`scan` have `contents: read`; `publish` has `contents: write` for the release and
+Permissions: the workflow has none by default (`permissions: {}`); `build`,
+`scan` and `test` have `contents: read`; `publish` has `contents: write` for the release and
 `id-token: write` plus `attestations: write` for the provenance. Every action is
 pinned to a full commit SHA, all of them published by GitHub (`actions/*`);
 credentials are not persisted in the checkout; one run per tag at a time, never
 cancelled part-way.
 
-A failed gate leaves no release, no provenance and no assets: `build` and `scan`
-cannot write, and `publish` does not start. On the run page a failed `build`
-shows `scan` and `publish` as skipped, and a failed `scan` shows `publish` as
-skipped ("This job was skipped", a grey icon); the run as a whole is red. The
+A failed gate leaves no release, no provenance and no assets: `build`, `scan`
+and `test` cannot write, and `publish` does not start. On the run
+page a failed `build` shows the three later jobs as skipped, and a failed `scan`
+or `test` shows `publish` as skipped ("This job was skipped", a grey
+icon); the run as a whole is red. The
 only thing a failed run leaves behind is its workflow artifacts: the files
 `build` made from the public tag, visible to signed-in users for 14 days unless
 deleted from the run page. A run that failed for a transient reason (a network
@@ -264,8 +282,9 @@ Before merging a change to it:
 * parse it (`python -c 'import yaml,sys; yaml.safe_load(open(sys.argv[1]))'
   .github/workflows/release.yml` with PyYAML installed) and run
   `python test_publication.py Workflows`, which checks that the job holding the
-  secret installs nothing, that `publish` waits for `scan`, and that every
-  action is GitHub-owned and pinned;
+  secret installs nothing, that `build` installs by hash only, that `publish`
+  waits for the other three jobs, and that every action is GitHub-owned and
+  pinned;
 * in a scratch clone that is never pushed, make a commit whose `__version__` and
   `CHANGELOG.md` heading name a version that does not exist, tag it with an
   annotated tag, and run every `run:` block of every job by hand under
@@ -323,7 +342,7 @@ same toolchain give the same bytes. From a clone:
 
 ```sh
 git checkout vX.Y.Z                                   # the tag's own build script and pins
-python3.12 -m venv /tmp/pb-verify && /tmp/pb-verify/bin/python -m pip install -r requirements-dev.txt
+python3.12 -m venv /tmp/pb-verify && /tmp/pb-verify/bin/python -m pip install --require-hashes -r requirements-build.txt
 /tmp/pb-verify/bin/python scripts/repro_build.py --ref vX.Y.Z --verify /path/to/downloaded-files
 ```
 
@@ -332,10 +351,13 @@ The hashes are tied to the toolchain, and the release notes record it:
 * **Interpreter: CPython 3.12**, the reference interpreter; the workflow asks
   `actions/setup-python` for `3.12`.
 * **setuptools.** The wheel's `WHEEL` file names the setuptools version that
-  generated it, so another setuptools gives another hash. The version is pinned
-  in `build-constraints.txt`, which `scripts/repro_build.py` reads from the
-  commit being built, so the release and anyone rebuilding the tag use the same
-  one. The BUILDINFO block in the release notes records it.
+  generated it, so another setuptools gives another hash. The version and the
+  SHA-256 of its wheel are pinned in `build-constraints.txt`, which
+  `scripts/repro_build.py` reads from the commit being built and checks before
+  it builds, so the release and anyone rebuilding the tag use the same file.
+  The BUILDINFO block in the release notes records both. (Tags up to v0.3.1
+  pin the version only and have no `requirements-build.txt`: install
+  `requirements-dev.txt` to rebuild those.)
 * **zlib.** Both files are compressed by zlib. A different zlib can produce
   different compressed bytes from identical content. If only that differs,
   compare the contents instead: unpack both wheels (`unzip`) and both sdists

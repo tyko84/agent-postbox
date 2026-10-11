@@ -21,6 +21,11 @@ What it does, and why each step exists:
    `[build-system] requires` in pyproject.toml is untouched: it stays a floor
    for people building from a clone. A commit without that file is built
    unpinned, and the output says so.
+   When that file also records the backend's wheel (`# sha256: <hex>  <file>`),
+   the wheel is fetched first with `pip download`, refused unless it has that
+   name and that SHA-256, and the build is then confined to it (PIP_NO_INDEX,
+   PIP_FIND_LINKS): the build backend that runs is the file whose hash is in
+   the repository, whatever the index serves that day.
 4. The wheel needs nothing more: with SOURCE_DATE_EPOCH set, setuptools writes
    it byte-for-byte reproducibly. The sdist does not come out reproducible, and
    it records WHO built it: setuptools stamps wall-clock mtimes on the members
@@ -32,8 +37,9 @@ What it does, and why each step exists:
    and a fixed header. The rewrite is refused unless the member names and
    contents are exactly those of the sdist setuptools produced.
 5. The SHA-256 of both artifacts is printed, followed by a BUILDINFO block
-   naming everything the bytes depend on (Python, zlib, setuptools, `build`,
-   the constraints file), so two environments can be compared line by line.
+   naming everything the bytes depend on (Python, zlib, setuptools and the
+   SHA-256 of its wheel, `build`, the constraints file), so two environments
+   can be compared line by line.
    It names no user, host or directory.
 6. `SHA256SUMS` is written next to the artifacts (or to `--sums FILE`) in the
    format `sha256sum -c` reads: `<hex>  <filename>`, sorted by file name, LF
@@ -49,8 +55,9 @@ What it does, and why each step exists:
 
 Exit status: 0 built (and, with --check, reproduced; with --verify, identical);
 1 --check or --verify found a difference; 2 could not build (not a git
-checkout, `build` missing or too old, no network for the build backend,
-unexpected archive member, --verify DIR missing).
+checkout, `build` missing or too old, no network for the build backend, a
+backend wheel that is not the recorded one, unexpected archive member,
+--verify DIR missing).
 
 Stdlib only, plus the `build` package it drives. POSIX only. See
 docs/packaging.md for what is and is not guaranteed.
@@ -81,7 +88,11 @@ BUILD_UMASK = 0o022
 # ("maximum compression"), OS 255 ("unknown").
 GZIP_HEADER = b"\x1f\x8b\x08\x00" + struct.pack("<I", 0) + b"\x02\xff"
 CONSTRAINTS_NAME = "build-constraints.txt"   # read from the commit being built
-DEV_REQUIREMENTS = "requirements-dev.txt"    # names the `build` front end the project pins
+# Files that name the `build` front end the project pins, the hashed one first.
+BUILD_REQUIREMENTS = ("requirements-build.txt", "requirements-dev.txt")
+# `# sha256: <hex>  <wheel file>` in the constraints file: the build backend's wheel.
+_BACKEND_LINE = re.compile(rb"^#[ \t]*sha256:[ \t]*([0-9a-f]{64})[ \t]+"
+                           rb"([A-Za-z0-9][A-Za-z0-9._+-]*\.whl)[ \t]*\r?$", re.M)
 SUMS_NAME = "SHA256SUMS"
 _SUMS_LINE = re.compile(r"^([0-9a-f]{64}) [ *]([^/\\\s][^/\\]*)$")
 
@@ -197,11 +208,52 @@ def sha256(path: Path) -> str:
 _AMBIENT_CONSTRAINTS = ("PIP_CONSTRAINT", "PIP_BUILD_CONSTRAINT", "UV_CONSTRAINT", "UV_BUILD_CONSTRAINT")
 
 
+def fetch_backend(pinned: bytes, used: Path, work: Path, env: dict[str, str]) -> str | None:
+    """Fetch the build backend's wheel, check it against the constraints file, and
+    confine the coming build to it by editing `env`.
+
+    Returns "<file> sha256 <hex>" for BUILDINFO, or None when the constraints file
+    records no wheel (an older commit, or an override written to try a new pin).
+    """
+    recorded = _BACKEND_LINE.findall(pinned)
+    if not recorded:
+        return None
+    if len(recorded) != 1:
+        raise BuildError("the constraints file records more than one backend wheel (sha256 lines)")
+    want, name = recorded[0][0].decode(), recorded[0][1].decode()
+    if importlib.util.find_spec("pip") is None:
+        raise BuildError("pip is not available to this interpreter; it is needed to fetch the "
+                         "build backend wheel that the constraints file records")
+    house = work / "backend"
+    house.mkdir()
+    r = subprocess.run([sys.executable, "-m", "pip", "download", "--disable-pip-version-check",
+                        "--quiet", "--no-deps", "--only-binary", ":all:", "--dest", str(house),
+                        "--constraint", str(used), name.split("-", 1)[0]],
+                       cwd=work, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    if r.returncode != 0:
+        raise BuildError("could not fetch the build backend wheel (it needs network access):\n"
+                         f"{r.stdout[-3000:]}")
+    got_names = sorted(p.name for p in house.iterdir())
+    if got_names != [name]:
+        raise BuildError(f"the build backend came as {got_names}; the constraints file records {name}")
+    got = sha256(house / name)
+    if got != want:
+        raise BuildError(f"the build backend wheel {name} is not the recorded one:\n"
+                         f"  recorded  {want}\n  fetched   {got}")
+    # Nothing but this file can be installed into the isolated build environment.
+    env["PIP_NO_INDEX"] = "1"
+    env["PIP_FIND_LINKS"] = str(house)
+    for other in ("PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL"):
+        env.pop(other, None)
+    return f"{name} sha256 {got}"
+
+
 def build_once(ref: str, epoch: int, work: Path,
-               constraints: Path | None = None) -> tuple[Path, Path, bytes | None]:
+               constraints: Path | None = None) -> tuple[Path, Path, bytes | None, str | None]:
     """Export, build and normalise inside `work`.
 
-    Returns (wheel, sdist, constraints bytes used or None when unpinned).
+    Returns (wheel, sdist, constraints bytes used or None when unpinned, the verified
+    backend wheel as fetch_backend() describes it or None).
     `constraints` overrides the commit's own build-constraints.txt.
     """
     src, out = work / "src", work / "out"
@@ -211,6 +263,7 @@ def build_once(ref: str, epoch: int, work: Path,
     env["SOURCE_DATE_EPOCH"] = str(epoch)
     cmd = [sys.executable, "-m", "build", "--outdir", str(out)]
     pinned: bytes | None = None
+    backend: str | None = None
     cfile = constraints if constraints is not None else src / CONSTRAINTS_NAME
     if cfile.is_file():
         pinned = cfile.read_bytes()
@@ -219,6 +272,7 @@ def build_once(ref: str, epoch: int, work: Path,
         cmd += ["--dependency-constraints-txt", str(used)]
         for name in _AMBIENT_CONSTRAINTS:
             env.pop(name, None)
+        backend = fetch_backend(pinned, used, work, env)
     old_umask = os.umask(BUILD_UMASK)
     try:
         r = subprocess.run([*cmd, str(src)],
@@ -235,7 +289,7 @@ def build_once(ref: str, epoch: int, work: Path,
     normalize_sdist(sdists[0], epoch)
     wheels[0].chmod(0o644)
     os.utime(wheels[0], (epoch, epoch))
-    return wheels[0], sdists[0], pinned
+    return wheels[0], sdists[0], pinned, backend
 
 
 def generator(wheel: Path) -> str:
@@ -338,23 +392,32 @@ def deflate_probe() -> str:
                           + six.compress(data) + six.flush()).hexdigest()[:16]
 
 
-def pinned_build_version(commit: str) -> str:
-    """The `build==X` pin in the commit's requirements-dev.txt, or ""."""
-    try:
-        text = git("show", f"{commit}:{DEV_REQUIREMENTS}").decode("utf-8", "replace")
-    except BuildError:
-        return ""
-    m = re.search(r"^build==([^\s;#]+)", text, re.M)
-    return m.group(1) if m else ""
+def pinned_build_version(commit: str) -> tuple[str, str]:
+    """(file, X) for the first `build==X` pin in the commit's requirement files, or ("", "")."""
+    for name in BUILD_REQUIREMENTS:
+        try:
+            text = git("show", f"{commit}:{name}").decode("utf-8", "replace")
+        except BuildError:
+            continue
+        m = re.search(r"^build==([^\s;#\\]+)", text, re.M)
+        if m:
+            return name, m.group(1)
+    return "", ""
 
 
-def buildinfo(commit: str, epoch: int, wheel: Path, pinned: bytes | None, override: bool) -> list[str]:
+def buildinfo(commit: str, epoch: int, wheel: Path, pinned: bytes | None, override: bool,
+              backend: str | None = None) -> list[str]:
     """Everything the artifact bytes depend on. No user, host or directory."""
     try:
         front = importlib.metadata.version("build")
     except importlib.metadata.PackageNotFoundError:
         front = "unknown"
-    want = pinned_build_version(commit)
+    where, want = pinned_build_version(commit)
+    if backend is not None:
+        fetched = f"{backend} (verified: the one the constraints file records)"
+    else:
+        fetched = "not verified (" + ("setuptools is not pinned" if pinned is None else
+                                      "the constraints file records no sha256") + ")"
     gen = re.search(r"\(([^)]+)\)", generator(wheel))
     if pinned is None:
         cons = f"none (this commit has no {CONSTRAINTS_NAME}: setuptools is NOT pinned)"
@@ -372,7 +435,8 @@ def buildinfo(commit: str, epoch: int, wheel: Path, pinned: bytes | None, overri
         + (f" zlib-ng {zng}" if zng else ""),
         f"  deflate_probe: {deflate_probe()}",
         f"  setuptools: {gen.group(1) if gen else 'unknown'}",
-        f"  build: {front}" + (f" ({DEV_REQUIREMENTS} pins {want})" if want else ""),
+        f"  setuptools_wheel: {fetched}",
+        f"  build: {front}" + (f" ({where} pins {want})" if want else ""),
         f"  constraints: {cons}",
         "END BUILDINFO",
     ]
@@ -399,7 +463,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if importlib.util.find_spec("build") is None:
             raise BuildError("the 'build' package is not installed for this interpreter "
-                             "(python -m pip install -r requirements-dev.txt)")
+                             "(python -m pip install --require-hashes -r requirements-build.txt)")
         probe = subprocess.run([sys.executable, "-m", "build", "--help"], capture_output=True, text=True)
         if "--dependency-constraints-txt" not in probe.stdout:
             raise BuildError("this 'build' is too old to pin the build backend "
@@ -419,14 +483,14 @@ def main(argv: list[str] | None = None) -> int:
         if git("status", "--porcelain").strip():
             print("note: the working tree has uncommitted changes; they are NOT in this build "
                   f"(building commit {commit[:12]})", file=sys.stderr)
-        runs: list[tuple[Path, Path, bytes | None]] = []
+        runs: list[tuple[Path, Path, bytes | None, str | None]] = []
         with tempfile.TemporaryDirectory(prefix="repro-build-") as tmp:
             for n in range(2 if args.check else 1):
                 work = Path(tmp) / f"run{n + 1}"
                 work.mkdir()
                 runs.append(build_once(commit, epoch, work, override))
-            hashes = [(sha256(w), sha256(s)) for w, s, _ in runs]
-            wheel, sdist, pinned = runs[0]
+            hashes = [(sha256(w), sha256(s)) for w, s, _, _ in runs]
+            wheel, sdist, pinned, backend = runs[0]
             digests = {wheel.name: hashes[0][0], sdist.name: hashes[0][1]}
             print(f"commit: {commit}")
             print(f"SOURCE_DATE_EPOCH: {epoch}")
@@ -434,7 +498,7 @@ def main(argv: list[str] | None = None) -> int:
                   f"generator: {generator(wheel)}")
             for path, digest in zip((wheel, sdist), hashes[0], strict=True):
                 print(f"{digest}  {path.name}")
-            print("\n".join(buildinfo(commit, epoch, wheel, pinned, override is not None)))
+            print("\n".join(buildinfo(commit, epoch, wheel, pinned, override is not None, backend)))
             if override is not None:
                 print(f"note: built with --constraints, not the commit's {CONSTRAINTS_NAME}; "
                       "these are not the commit's reference hashes", file=sys.stderr)

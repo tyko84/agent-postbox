@@ -11,9 +11,16 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # Tracked: the pins in requirements-dev.txt and requirements-build.txt. In the second
+    # file every line carries a --hash; a pull request that moves a version there must
+    # move the hash with it, or `pip install --require-hashes` fails in the `packaging`
+    # job. If a new `build` needs a package the file does not list, the same job fails
+    # and the line is added by hand (docs/packaging.md, The build tools).
     ignore:
-      # the build-system floor (setuptools>=77, the PEP 639 minimum) is a compatibility
-      # promise, not a pin; only requirements-dev.txt pins are tracked
+      # Not tracked, moved by hand: setuptools. pyproject.toml's floor (setuptools>=77,
+      # the PEP 639 minimum) is a compatibility promise, not a pin, and the exact pin in
+      # build-constraints.txt decides the bytes of a release and carries the wheel's
+      # SHA-256 in a comment that no tool updates.
       - dependency-name: setuptools
     groups:
       dev-tools:

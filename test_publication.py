@@ -1481,7 +1481,7 @@ class Workflows(unittest.TestCase):
         return out
 
     def test_the_parser_sees_the_jobs(self) -> None:
-        self.assertLessEqual({"build", "scan", "publish"}, set(self.jobs("release.yml")))
+        self.assertLessEqual({"build", "scan", "test", "publish"}, set(self.jobs("release.yml")))
         for job in self.REQUIRED + ("publication-build",):
             self.assertIn(job, self.jobs("ci.yml"))
 
@@ -1514,10 +1514,28 @@ class Workflows(unittest.TestCase):
                 self.assertNotIn("\n    if:", "\n" + ci[job], job)
         rel = self.jobs("release.yml")
         self.assertIn("    needs: build\n", rel["scan"])
-        self.assertIn("    needs: [build, scan]\n", rel["publish"])
-        for job in ("scan", "publish"):  # a status function here would run the job after a failure
+        self.assertIn("    needs: build\n", rel["test"])
+        self.assertIn("    needs: [build, scan, test]\n", rel["publish"])
+        # a status function here would run the job after a failure
+        for job in ("scan", "test", "publish"):
             for fn in ("always()", "failure()", "cancelled()", "success()"):
                 self.assertNotIn(fn, rel[job], job)
+
+    def test_the_job_that_writes_the_release_installs_by_hash_only(self) -> None:
+        build = self.jobs("release.yml")["build"]
+        installs = [ln.strip() for ln in build.splitlines() if "pip" in ln]
+        self.assertEqual(installs,
+                         ["- run: python -m pip install --require-hashes -r requirements-build.txt"])
+        # nothing that is pinned by version only, and no test (some tests build with an
+        # unpinned backend), runs in the job that writes the artifacts
+        for word in ("twine", "requirements-dev", "selftest.py", "test_packaging.py", "-m build"):
+            self.assertNotIn(word, build)
+        self.assertIn("python scripts/repro_build.py --check --outdir dist", build)
+        self.assertIn("test_packaging.py", self.jobs("release.yml")["test"])
+        # the same install is exercised on every pull request, on Linux and on macOS
+        ci = self.jobs("ci.yml")
+        for job in ("packaging", "reproducible"):
+            self.assertIn(installs[0], [ln.strip() for ln in ci[job].splitlines()], job)
 
     def test_required_check_names_are_unchanged(self) -> None:
         ci = self.jobs("ci.yml")

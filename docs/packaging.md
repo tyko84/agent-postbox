@@ -60,7 +60,7 @@ timestamp. Setting `SOURCE_DATE_EPOCH` fixes the wheel but not the sdist.
 ## Reproducible build (use this for anything you hand to someone else)
 
 ```bash
-python -m pip install -r requirements-dev.txt     # provides `build`
+python -m pip install --require-hashes -r requirements-build.txt   # `build`, by hash
 python scripts/repro_build.py --check --outdir /tmp/pb-out
 ```
 
@@ -75,9 +75,11 @@ This leaves three files in the output directory: the wheel, the sdist and
    there, so untracked and ignored files cannot ship and the checkout is left
    alone (`--ref REF` builds another commit; the default is `HEAD`, and
    uncommitted changes are reported and left out);
-3. runs `python -m build` with a fixed umask and explicit file modes, and with
-   the build backend pinned by the `build-constraints.txt` of the commit being
-   built (see "The pinned build backend" below);
+3. fetches the setuptools wheel that the `build-constraints.txt` of the commit
+   being built records, refuses it unless its SHA-256 is the recorded one, and
+   runs `python -m build` with a fixed umask and explicit file modes, pinned to
+   that version and able to install that one file only (see "The pinned build
+   backend" below);
 4. rewrites the sdist deterministically: members sorted by name, every mtime
    equal to `SOURCE_DATE_EPOCH`, `uid = gid = 0`, empty user and group names,
    mode 0644 (0755 for directories and executables), no PAX records, and a
@@ -114,13 +116,17 @@ BUILDINFO
   zlib: 1.2.12 (built against 1.2.12)
   deflate_probe: f7e2574c17c9cb89
   setuptools: 84.0.0
-  build: 1.6.1 (requirements-dev.txt pins 1.6.1)
+  setuptools_wheel: setuptools-84.0.0-py3-none-any.whl sha256 <64 hex digits> (verified: the one the constraints file records)
+  build: 1.6.1 (requirements-build.txt pins 1.6.1)
   constraints: build-constraints.txt sha256 <64 hex digits>
 END BUILDINFO
 ```
 
 It names no user, host or directory (tested). `setuptools` is read back from
-the wheel that was just built, not from the request. `deflate_probe` is a
+the wheel that was just built, not from the request. `setuptools_wheel` is the
+file the build backend was installed from and the SHA-256 the script computed
+for it before the build; for a commit whose constraints file records no hash it
+reads `not verified (...)`. `deflate_probe` is a
 short hash of a fixed input compressed with the two settings the artifacts
 use: two environments that print the same value compress alike, whatever
 their zlib calls itself. When two machines disagree about a hash, compare
@@ -131,36 +137,106 @@ with any hash you publish.
 
 The bytes of both artifacts depend on the setuptools version: the wheel's
 `WHEEL` file names it, and the generated metadata can change between
-releases. `build-constraints.txt` at the repository root holds one line,
-`setuptools==<version>`. `repro_build.py` reads it **from the commit it is
-building** (not from the working tree) and hands it to `build` as
-`--dependency-constraints-txt`, so for a given tag the toolchain is named by a
-file in that tag. Constraint settings in the environment (`PIP_CONSTRAINT` and
-the like) are removed for that build so they cannot add to it.
+releases. `build-constraints.txt` at the repository root holds one
+requirement, `setuptools==<version>`, and one comment line that records the
+wheel of that release:
+
+```text
+# sha256: 51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670  setuptools-84.0.0-py3-none-any.whl
+setuptools==84.0.0
+```
+
+`repro_build.py` reads the file **from the commit it is building** (not from
+the working tree) and then:
+
+1. runs `pip download --no-deps --only-binary :all:` for that one requirement
+   into a temporary directory;
+2. refuses to go on (exit 2) unless exactly one file arrived, it has the
+   recorded name, and its SHA-256 is the recorded one;
+3. hands the constraints to `build` as `--dependency-constraints-txt` and runs
+   the build with `PIP_NO_INDEX=1` and `PIP_FIND_LINKS=<that directory>`, so
+   the isolated build environment can install that file and nothing else.
+
+So for a given tag the build backend is named by a file in that tag, by
+version and by content. Constraint and index settings in the environment
+(`PIP_CONSTRAINT`, `PIP_INDEX_URL` and the like) are removed for that build so
+they cannot add to it. The hash above is the one PyPI lists for the wheel
+(`https://pypi.org/pypi/setuptools/84.0.0/json`, the `digests.sha256` of the
+`.whl` entry).
 
 * `pyproject.toml` still says `setuptools>=77`. That is the floor for anyone
   building from a clone with plain `pip` or `build`, and it is not raised or
   pinned. The constraints file is used by `repro_build.py` only.
 * The file is not in the sdist: it means something only to `repro_build.py`,
   which needs a git checkout and is not in the sdist either.
-* To move the pin, change the version, run
-  `python scripts/repro_build.py --check`, and record the new hashes. To try a
-  version before committing it, `--constraints FILE` overrides the commit's
-  file (the output says the hashes are then not the commit's).
-* The line carries no `--hash=`. With one, pip before version 26 refuses the
-  build ("all requirements must have their versions pinned with =="), because
-  `pyproject.toml` asks for a range. PyPI never lets a released file be
-  replaced, so the version alone fixes the bytes when the index is PyPI; it
-  does not protect against a mirror that serves something else.
+* To move the pin, change the version **and** the `# sha256:` line, run
+  `python scripts/repro_build.py --check`, and record the new artifact hashes.
+  Dependabot does not touch this file's pin (`.github/dependabot.yml` ignores
+  setuptools): a new setuptools changes the artifact hashes, so it is moved by
+  hand. To try a version before committing it, `--constraints FILE` overrides
+  the commit's file (the output says the hashes are then not the commit's); a
+  file without a `# sha256:` line builds unverified and BUILDINFO says so.
+* The requirement line carries no `--hash=`. With one, pip before version 26
+  refuses the build ("all requirements must have their versions pinned with
+  =="), because `pyproject.toml` asks for a range. That is why the script does
+  the checking itself.
+* The check needs `pip` for the interpreter that runs the script. Without it
+  the script stops (exit 2) rather than build with a backend it did not check.
 * A commit that has no `build-constraints.txt` (anything before this file was
-  added) is built unpinned, and the output says so.
+  added) is built unpinned, and a commit whose file has no `# sha256:` line
+  (v0.3.1 and earlier) is built pinned by version only; the output says which.
 
 What else was checked when this was written, on one macOS machine: the hashes
 for one commit were identical under CPython 3.11, 3.12 and 3.13, under pip
-25.2 and 26.2, and under `build` 1.5.0 and 1.6.1. So neither pip nor the
-`build` front end appears to reach the bytes; only setuptools, zlib and the
-commit do. `build` older than the version that has
-`--dependency-constraints-txt` is refused (exit 2).
+25.2 and 26.2, and under `build` 1.5.0 and 1.6.1, and identical with and
+without the pre-fetched wheel. So neither pip nor the `build` front end appears
+to reach the bytes; only setuptools, zlib and the commit do. `build` older than
+the version that has `--dependency-constraints-txt` is refused (exit 2).
+
+### The build tools
+
+Everything that is installed before the release artifacts are written is
+pinned by hash, in two files:
+
+| What | Pinned in | Checked by |
+|---|---|---|
+| `build`, `packaging`, `pyproject_hooks` | `requirements-build.txt`: one version and the SHA-256 of the wheel each, `--only-binary :all:` | pip (`--require-hashes`): a file with another hash, or a package that is not listed, stops the install |
+| `setuptools`, the build backend | `build-constraints.txt`: one version and the SHA-256 of its wheel | `scripts/repro_build.py`, as above |
+
+The three build tools are pure Python: each is a single `py3-none-any` wheel,
+the same file on Linux and macOS, so one hash per package covers every
+platform. On Python 3.10 `build` also needs `tomli`, which the file does not
+list: it is for Python 3.11 and newer (CI builds on 3.12); on 3.10 use
+`requirements-dev.txt`.
+
+`requirements-dev.txt` is the other file: `ruff`, `mypy`, `build` and `twine`,
+pinned by version, without hashes, and with dependencies of their own that are
+not pinned at all (about thirty packages on macOS, a few more on Linux, where
+`twine` pulls in `keyring`'s Linux back end and with it `cryptography`). They
+are deliberately **not** locked by hash:
+
+* several ship one wheel per platform and Python version, and some are needed
+  on Linux only, so a complete lock cannot be install-tested on a single
+  machine, and a hash that is missing for one platform fails only there;
+* Dependabot's documentation promises updates to "any `.txt` file" and says
+  nothing about hashes. Its source does rewrite the `--hash=` values of a line
+  it bumps, but a plain requirements file gives it nothing to add or remove
+  the lines that a new version's changed dependencies need, so with some
+  thirty-five lines to track such a pull request would be repaired by hand
+  often;
+* nothing installed from that file can reach what a hash would protect. The
+  jobs that install it (`lint` and `publication-build` in `ci.yml`, `test` in
+  `release.yml`) hold no secret and a read-only token, and none of them writes
+  a release artifact: the job that holds the forbidden list installs nothing
+  ([publication-safety.md](publication-safety.md)), and the release's `build`
+  job installs `requirements-build.txt` only and runs no test (some tests build
+  with a plain `python -m build` and an unpinned, unchecked setuptools).
+
+Follow-up, if the trade changes: generate a fully hashed lock for
+`requirements-dev.txt` from the PyPI JSON API (every file of every pinned
+release, with `sys_platform` markers for the Linux-only packages), prove it on
+both CI platforms in a pull request, and switch `lint` and the `twine check`
+jobs to `--require-hashes`.
 
 ## Verifying a release download
 
@@ -180,11 +256,13 @@ Put the downloaded wheel, sdist and `SHA256SUMS` in one directory.
 
    ```bash
    git clone https://github.com/tyko84/agent-postbox && cd agent-postbox
-   python3.12 -m pip install -r requirements-dev.txt
+   git checkout <tag>                      # the tag's own build script and pins
+   python3.12 -m pip install --require-hashes -r requirements-build.txt
    python3.12 scripts/repro_build.py --ref <tag> --verify /path/to/download
    ```
 
-   The script rebuilds `<tag>` and compares: each wheel or sdist found in the
+   (v0.3.1 and earlier have no `requirements-build.txt`: install
+   `requirements-dev.txt` there.) The script rebuilds `<tag>` and compares: each wheel or sdist found in the
    directory byte for byte, and each line of `SHA256SUMS` if the file is
    there. It exits 0 and prints `verified: identical to a rebuild of <commit>`
    only if both artifacts are accounted for (by a file or by a `SHA256SUMS`

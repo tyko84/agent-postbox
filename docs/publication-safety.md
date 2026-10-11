@@ -61,13 +61,16 @@ The forbidden list is the only secret this repository has, and a secret is
 readable by every program that runs in the same job as the step that receives
 it: a later step is not needed, an earlier one can leave a `.pth` file behind,
 edit the checkout, or keep a process running. The development tools come from
-PyPI, pinned by version but not by hash, with dependencies of their own, and the
-isolated build fetches setuptools. So the work is split, in `ci.yml` and in
-`release.yml` alike:
+PyPI, pinned by version but not by hash, with dependencies of their own that are
+not pinned at all. So the work is split, in `ci.yml` and in `release.yml` alike,
+and what a job may install depends on what it can reach ([packaging.md](packaging.md),
+The build tools):
 
 | Job | Installs from PyPI | References the secret | Does |
 |---|---|---|---|
-| `publication-build` (`ci.yml`), `build` (`release.yml`) | the pinned dev tools; setuptools inside the isolated build | no | tests, the reproducible build, `twine check`; hands the files on as a workflow artifact |
+| `publication-build` (`ci.yml`) | the dev tools, pinned by version; setuptools inside the isolated build | no | `test_publication.py`, the reproducible build, `twine check`; hands the files on as a workflow artifact |
+| `build` (`release.yml`) | the three build tools, pinned by hash; the hash-checked setuptools wheel | no | the reproducible build; hands the files on as a workflow artifact |
+| `test` (`release.yml`) | the dev tools, pinned by version; setuptools inside test builds | no | the whole test list; `twine check` on the files `build` produced |
 | `publication` (`ci.yml`), `scan` (`release.yml`) | **nothing** | yes, in the scan steps | checks out the full history and every tag, downloads the artifact, runs `check_publication.py` |
 
 The scanning job runs no `pip` and no build. It runs
