@@ -35,6 +35,7 @@ jobs:
       - run: python test_handoff.py
       - run: python test_readme_examples.py
       - run: python test_publication.py
+      - run: python test_cli.py
 
   packaging:
     runs-on: ubuntu-latest

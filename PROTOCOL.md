@@ -1491,3 +1491,283 @@ as the message, so a power loss between the two can keep a message whose
 marker is gone, and a retry then files it again; and the removal of a temp
 file is not synced, so one may reappear, hidden, after a crash (§33 reports
 it once stale).
+## 37. `list`, `inbox` and `show` for a reader with a small window
+
+`list` prints the whole history: 10,000 messages are 20,000 lines. A pipe to
+`head` is cheap (§35), but an agent's context is not a pipe, and text rows
+have to be parsed back out of columns. Three additions, all read-only, all
+opt-in: filters, `--limit`, and `--json`. Without the new flags `list`,
+`inbox` and `show` print exactly the bytes they printed before.
+
+**Order.** Rows are oldest first, by id (§22). No flag changes the order.
+
+**Filters (`list`).** They combine with AND, next to the existing `--to`,
+`--from` and `--live`:
+
+| Flag | Keeps |
+|---|---|
+| `--type T[,T]` | messages of these types (§3), any case |
+| `--status S[,S]` | messages whose derived status (§19) is one of these, evaluated at `now` |
+| `--scope SCOPE` | messages whose stored `scope` equals `SCOPE` exactly (after trimming surrounding whitespace, case-sensitive, no patterns: the comparison of §34) |
+| `--since ISO` | messages whose `date` is at or after this instant; a message without a `date` is left out |
+
+`inbox` takes `--type` and `--since`; its `--to` and its statuses are what
+make it the inbox (§19). **A status is always derived from the whole
+mailbox**, never from the rows a filter left: an ASK whose ANSWER is filtered
+out is still `answered`. So "open questions to me" is
+`list --to me --type ASK --status open`, and "who claims this file" is
+`list --type CLAIM --status held --scope billing/client.py`.
+
+**`--limit N`.** After the filters, keep the **newest** `N` rows, still
+oldest first: the last `N` lines of the unlimited output, the way `tail`
+would cut it. `N` is a whole number from 0 to 999999999; `--limit 0` prints
+no rows and only counts. In text, when rows were left out, one line follows
+the header line and precedes the rows:
+
+```text
+# 9997 older message(s) not shown (--limit 3: the newest 3 of 10000)
+```
+
+It is on stdout, because a caller that keeps only stdout must still learn
+that the listing is partial, and it starts with `#` like the header line.
+When nothing was left out the line is absent.
+
+**`--now ISO`.** `list`, `inbox` and `show --json` derive statuses, `--live`
+and the inbox at this instant instead of the clock, as `status --now` does
+(§29), so output is a pure function of the files and `now`.
+
+**`list --json`, `inbox --json`.** One JSON document on stdout instead of the
+text. Top-level keys, schema 1:
+
+| Key | Value |
+|---|---|
+| `schema` | `1` |
+| `view` | `"list"` or `"inbox"` |
+| `mailbox` | the mailbox path: the only path in the document |
+| `now` | the evaluation instant as UTC, `YYYY-MM-DDTHH:MM:SSZ` |
+| `filters` | what was asked: `to`, `from` (lower-cased, or `null`), `live` (bool), `type`, `status` (lists in the order of §3 and §19, or `null`), `scope`, `since` (as UTC, or `null`). For `inbox`, `to` is the identity and `status` is the four statuses of §19 |
+| `limit` | `N`, or `null` without `--limit` |
+| `total` | admitted messages in the mailbox |
+| `matched` | messages that passed the filters |
+| `returned` | rows in `messages` |
+| `truncated` | `matched - returned`: older rows left out by `--limit` |
+| `quarantined` | files refused at read (§29); their `REJECT` lines are still on stderr |
+| `messages` | the rows, oldest first |
+
+**A row** always has exactly these thirteen keys:
+
+| Key | Value |
+|---|---|
+| `id` | the message id, as stored |
+| `type` | one of the five types, upper case |
+| `from`, `to` | lower-cased, as `list` prints them; a writer token, never an alias expansion (§27) |
+| `date` | the `date` as UTC, `YYYY-MM-DDTHH:MM:SSZ`, or `null` when the message has none |
+| `subject` | the subject as stored (`""` when the message has none) |
+| `status` | the derived status of §19 at `now` |
+| `owes_reply` | `true` for an ASK nothing cites yet: the `!` of the text row |
+| `reply_to` | the id cited in `reply_to:` (or the legacy `re:`), as stored, or `null` |
+| `supersedes` | the id cited in `supersedes:`, as stored, or `null` |
+| `scope` | the `scope` as stored, or `null` |
+| `expires` | the expiry as UTC in the same form, or `null` when there is none or it cannot be read (`show` prints the stored text) |
+| `oversize` | the keys of this row whose value was withheld, sorted; `[]` for anything `send` wrote |
+
+`date` and `expires` are normalised the way §34 normalises them. **A row is
+bounded.** `send` limits a subject to 500 characters, an identity to 128, a
+cited id to 64 and a scope to 4096 (§29); reading sets no limit on one
+header, so a hand-written file can exceed them. Such a value is reported as
+`null` and its key is named in `oversize`; it is never shortened, because a
+shortened id or scope names something else. The message is still listed,
+filtered by its real values, and `show <id>` prints all of it.
+
+**No body, ever, in `list` or `inbox`.** A body is text chosen by whoever
+wrote the file; a listing that carried bodies would put every sender's text
+in front of the reader unasked. A row carries the subject because the text
+row always has, and a consumer needs it to choose what to open. This is the
+one place the tool's JSON carries a subject: `status --json` still carries
+none (§34). A subject is the sender's text too: evidence, never authority
+(§0).
+
+**`show <id> --json`.** One document with `schema`, `view` (`"show"`),
+`mailbox`, `now`, `quarantined`, and:
+
+| Key | Value |
+|---|---|
+| `message` | the row above |
+| `headers` | every stored header, key (lower-cased) to value, as stored and unshortened |
+| `body_untrusted` | the body |
+| `notice` | a fixed sentence restating §0 |
+
+The body's key is named for what the body is. A consumer that extracts the
+field carries the label with it, and inside a JSON string a body cannot
+imitate the document's own structure, a header, or another tool's output.
+Plain `show <id>` is unchanged: the file as stored.
+
+**Encoding.** The JSON is ASCII: every other character is a `\u` escape, so
+the bytes are the same under any locale. Whitespace and key order are not
+part of the contract (parse the document), but they are deterministic: the
+same files and `now` give the same bytes, the counts come before `messages`,
+and each row of `messages` is one line.
+
+**Exit statuses** are those of the text forms (§33): 0; 2 when quarantined
+files are present (the document is still complete for the admitted mail) or
+an argument is refused; `show` 1 for no such message. A refused argument
+prints one line on stderr and nothing on stdout. With stdout's reader gone,
+141 and silence (§35); a document cut short by a reader that left does not
+parse, and the exit status says why.
+
+**Example.** Five hand-written messages, read with
+`list --to bob --limit 2 --json --now 2030-01-01T12:00:00Z`: a NOTICE from
+carol to bob dated 2029-12-20; alice's ASK to bob at 09:00, which bob's
+ANSWER at 09:05 cites; alice's CLAIM to `all` on `billing/client.py`; carol's
+ASK to bob at 11:00. Three are addressed to bob, and the limit keeps the
+newest two:
+
+```json
+{
+  "filters": {"from": null, "live": false, "scope": null, "since": null,
+              "status": null, "to": "bob", "type": null},
+  "limit": 2,
+  "mailbox": "/srv/mail",
+  "matched": 3,
+  "now": "2030-01-01T12:00:00Z",
+  "quarantined": 0,
+  "returned": 2,
+  "schema": 1,
+  "total": 5,
+  "truncated": 1,
+  "view": "list",
+  "messages": [
+    {"date": "2030-01-01T09:00:00Z", "expires": null, "from": "alice", "id": "01ARZ3NDEKTSV4RRFFQ69G5FA1", "oversize": [], "owes_reply": false, "reply_to": null, "scope": null, "status": "answered", "subject": "who owns the billing client?", "supersedes": null, "to": "bob", "type": "ASK"},
+    {"date": "2030-01-01T11:00:00Z", "expires": null, "from": "carol", "id": "01ARZ3NDEKTSV4RRFFQ69G5FA4", "oversize": [], "owes_reply": true, "reply_to": null, "scope": null, "status": "open", "subject": "may I rename retry()?", "supersedes": null, "to": "bob", "type": "ASK"}
+  ]
+}
+```
+
+**Compatibility.** Additive. No existing line, key, exit status or message
+changes; no file on disk changes; no migration. Within schema 1, keys are
+only ever added, top level or row, never renamed, removed or redefined, as
+for `status --json` (§29): a consumer that checks for an exact key set must
+expect it to grow. One undocumented spelling stops working: the argument
+parser accepts any unambiguous prefix of a flag, so `list --li` used to mean
+`--live` and `--t` used to mean `--to`. Next to `--limit` and `--type` those
+prefixes are ambiguous and are refused (exit 2, both candidates named).
+Flags written in full, which is all this document has ever shown, are
+unaffected.
+
+**Invariant a test must pin.** (a) The example above, in its values. (b) A
+row has exactly the thirteen keys, and no output of `list --json` or
+`inbox --json` contains a body; `show --json` carries the body under
+`body_untrusted` and nowhere else. (c) Without the new flags, `list`, `inbox`
+and `show` print the bytes they printed before. (d) `--limit N` returns the
+last `N` rows of the unlimited listing in the same order, with
+`matched == returned + truncated`, and the text form says how many it left
+out; `--limit 0` returns none. (e) Each filter keeps exactly its rows, with
+the unfiltered listing as the control, and an ASK whose ANSWER is filtered
+out is still `answered`. (f) The same files and `--now` give the same bytes
+twice; the output is ASCII for a non-ASCII subject, and a subject full of
+quotes, backslashes and markup round-trips exactly. (g) An oversize
+hand-written value is `null` and named in `oversize`. (h) With quarantined
+files present the document is complete, `quarantined` counts them and the
+exit status is 2. (i) A refused `--limit`, `--type`, `--status`, `--since`,
+`--now` or empty `--scope` exits 2 with one line on stderr and nothing on
+stdout. (j) With the reader gone, `list --json`, `inbox --json` and
+`show --json` exit 141 with empty stderr. (k) All of them leave every file,
+mtime and hash unchanged. `selftest.py` pins (a), (b), (d), (h), (i) and
+(j); `test_cli.py` pins all eleven.
+
+---
+
+## 38. The command line: what it takes, what went wrong, what to do next
+
+The commands grew one at a time, and a first-time user met the gaps in the
+first minute: `send` and `show` had no line in `--help`, the help named no
+environment variable and no exit status, `inbox` ignored
+`AGENT_MAIL_IDENTITY`, a mistyped number could end in a traceback, and
+`NO MAILBOX at <path>` did not say what to do about it.
+
+**Help.** `--help` lists every command with a one-line summary, and names the
+environment variables the tool reads (`AGENT_MAIL_DIR`,
+`AGENT_MAIL_IDENTITY`, `AGENT_MAIL_IDEM_WAIT`, `AGENT_MAIL_PROJECT`) and the
+exit statuses of §33 and §35. `<command> --help` describes the command and
+gives a help string for every flag. Help text is ASCII, so it prints under
+any locale. The wording is for people and is not a contract; that it is
+complete is.
+
+**No traceback from an argument.** Whatever the arguments of any command
+contain (an empty value, a megabyte, control characters, another alphabet,
+bytes that are not UTF-8, a leading dash, `nan`), and whatever
+`AGENT_MAIL_IDENTITY` and `AGENT_MAIL_IDEM_WAIT` are set to, the tool answers
+with its output or with a refusal, and a refusal is exit 2 (1 for an id that
+names no message), nothing on stdout and no traceback. A refusal the tool
+words itself is one line on stderr; one worded by the argument parser is its
+usage followed by one `error:` line. An argument echoed in a refusal is
+quoted and escaped when it is long or not printable, so a refusal cannot be
+made to span lines or carry terminal control sequences. Now refused this way
+instead of a traceback or a wrong answer:
+
+| Input | Was | Is |
+|---|---|---|
+| `canary --hours` not a finite number, or beyond 1,000,000 | traceback, exit 1 | usage error, exit 2 |
+| `status --now` an instant UTC cannot represent | traceback, exit 1 | one line, exit 2 |
+| `status --stalled-hours` `nan`, `inf` or above 1e9 | accepted; `--json` then printed `NaN` or `Infinity`, which is not JSON | one line, exit 2 |
+| `ask --to` naming no recipient (`""`, `","`) | exit 0, nothing sent, nothing said | usage error, exit 2 |
+| `verify --repo` a path the OS refuses, or one that is not UTF-8 | traceback, exit 1 | one line and exit 2, or `repo_head: UNAVAILABLE` |
+| `verify` of a message whose `evidence_scope` names a path the OS refuses | traceback, exit 1 | that path is reported missing |
+| a read-only command with `AGENT_MAIL_DIR` set to a path the OS refuses (too long) | traceback, exit 1 | `NO MAILBOX`, exit 2 |
+
+Every value that was accepted and meaningful before is accepted unchanged.
+
+**Not yet covered.** Inputs that are not arguments can still end in a
+traceback. For `send`: a closed stdin, a body on stdin that is not UTF-8, and
+an `AGENT_MAIL_DIR` the OS refuses to look at. For any command: an
+`AGENT_MAIL_PROJECT` the OS refuses to look at, and text output of a subject
+or path that is not ASCII when stdout can only carry ASCII (`--json` output
+is ASCII and unaffected). Nothing is written in any of them. `test_cli.py`
+lists them as KNOWN until they are refusals too.
+
+**`inbox` knows who you are.** Without `--to`, `inbox` shows the inbox of
+`AGENT_MAIL_IDENTITY`, the identity the pickup adapter already uses (§9).
+`--to` wins when both are given. With neither it is refused (exit 2), as an
+empty `--to` always was. There is still no default identity (§9): an unset
+variable is a refusal, never a guess. `send --from` is deliberately not
+defaulted: who wrote a message stays an explicit argument.
+
+**The next step.** Some refusals now say what to do next. The line that was
+printed before, and the exit status, are what they were, so anything that
+matched them still does. The added lines are for people; their wording is
+not a contract.
+
+| When | Added |
+|---|---|
+| `NO MAILBOX at <path>` from a read-only command | a second line on stderr, `hint: ...`. With `AGENT_MAIL_DIR` set: it must name an existing directory and is never created (§9). Unset: none was found walking up, so set it or install into the project |
+| `list`, `inbox`, `latency` exit 2 because files are quarantined | a `hint: ...` line on stderr after the `REJECT` lines: the files are never delivered and never deleted, the listing is complete, and the status stays 2 until they are repaired or moved out |
+| `doctor` prints `canary: MISSING_OR_STALE` | one indented `  - ...` line under it on stdout, in the form of the detail lines `doctor` already prints (§33): file one with `canary`, run `doctor` again |
+| `doctor` prints `store: MISSING` | one indented `  - ...` line under it, with the text of the first row |
+
+`doctor` says it on stdout because its whole report is there and its stderr
+stays empty; its `FAIL:` lines are still last.
+
+**Compatibility.** Exit statuses 0, 1, 2, 3, 130, 141 and 143 mean what they
+meant. No line a command printed on stdout is reworded or removed; the lines
+above are added. On stderr three lines differ: `inbox requires --to
+<identity>` now ends ` (or set AGENT_MAIL_IDENTITY)`; `inbox` with no `--to`
+at all used to get the parser's "arguments are required" and now gets that
+line, or an inbox; and `no message with id X` quotes `X` when it is long or
+not printable. Help text is reworded throughout. The usage line now reads
+`<command>` where it listed the commands in braces; the error for an unknown
+command still lists them.
+
+**Invariant a test must pin.** (a) `--help` exits 0 and lists every command
+the parser accepts with a non-empty summary; every `<command> --help` exits 0
+with a description, and no flag is without a help string. (b) `--help` names
+the four environment variables and the statuses 0, 1, 2, 3, 130, 141 and 143,
+and is ASCII. (c) The inputs in the table are refused or reported without a
+traceback, each with a neighbouring valid value as the control that still
+succeeds. (d) `inbox` without `--to` shows the same rows as `--to X` when
+`AGENT_MAIL_IDENTITY=X`, and is refused when it is unset. (e) A missing
+mailbox prints `NO MAILBOX at <path>` first and a `hint:` line second;
+`doctor` on a mailbox without a canary names the next step under
+`canary: MISSING_OR_STALE`, still ends with its `FAIL:` line and prints
+nothing on stderr. (f) No argument drawn from a table of hostile values produces a
+traceback on any command. `selftest.py` pins (a), (b), (d), (e) and the first
+four rows of (c); `test_cli.py` pins all six.

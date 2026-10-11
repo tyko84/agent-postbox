@@ -67,7 +67,7 @@ def main() -> int:
                 out.append(f"    holds until: {m.meta['expires']}")
             out.append(f'    read: {py} "{tool}" show {m.id}')
         out += ["", f'Reply: {py} "{tool}" send --type ANSWER --from {me} '
-                    "--to <sender> --re <id> --subject ... --body ..."]
+                    "--to <sender> --reply-to <id> --subject ... --body-file <file, or - for stdin>"]
         print("\n".join(out))
         return 0
     except Exception:

@@ -1401,7 +1401,7 @@ def main() -> int:
         check("each of the three is rejected once as a duplicate, naming the file that kept the id",
               all(l16.stderr.count(f"REJECT {n}: duplicate id") == 1
                   for n in ("00-first-by-name.md", f"{lid.lower()}.md", "zz-last-by-name.md"))
-              and l16.stderr.count("REJECT") == 3
+              and sum(1 for ln in l16.stderr.splitlines() if ln.startswith("REJECT ")) == 3
               and l16.stderr.count(f"first seen in {lid}-lease.md") == 3, l16.stderr)
         sh16 = run(r16, "show", lid.lower())
         hk16 = hook(r16, "bob")

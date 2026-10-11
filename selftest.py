@@ -2089,6 +2089,267 @@ def main() -> int:
               and hidden36(e_box) == [marker[0].name],
               str(sorted(p.name for p in e_box.iterdir())))
     # ---- END PROTOCOL.md §36 ---------------------------------------------------
+    # ==== BEGIN PROTOCOL.md §37 and §38 (the command line) =========================
+    # Self-contained on purpose: its own imports, mailbox and helpers. The wider
+    # table of refusals, filters and hostile arguments is in test_cli.py.
+    import json as json37
+
+    print("\nlist, inbox and show for a reader with a small window (PROTOCOL.md §37)")
+    with tempfile.TemporaryDirectory() as tmp37:
+        box37 = Path(tmp37) / "mail"
+        box37.mkdir()
+        NOW37 = "2030-01-01T12:00:00Z"
+        P37 = "01ARZ3NDEKTSV4RRFFQ69G5F"
+        tool37 = [sys.executable, str(HERE / "agent_mail.py")]
+        env37 = {k: v for k, v in os.environ.items() if not k.startswith("AGENT_MAIL")}
+
+        def run37(b: Path, *argv: str, identity: str = "") -> subprocess.CompletedProcess:
+            env = {**env37, "AGENT_MAIL_DIR": str(b)}
+            if identity:
+                env["AGENT_MAIL_IDENTITY"] = identity
+            return subprocess.run(tool37 + list(argv), capture_output=True, text=True, env=env,
+                                  timeout=120)
+
+        def doc37(r: subprocess.CompletedProcess) -> dict:
+            try:
+                got = json37.loads(r.stdout)
+            except ValueError:
+                return {}
+            return got if isinstance(got, dict) else {}
+
+        def hand37(b: Path, tail: str, mtype: str, sender: str, to: str, date: str,
+                   subject: str, body: str = "BODY37-TOKEN", **extra: str) -> str:
+            lines = ["---", f"id: {P37}{tail}", f"type: {mtype}", f"from: {sender}", f"to: {to}",
+                     f"date: {date}", f"subject: {subject}"]
+            lines += [f"{k}: {v}" for k, v in extra.items()]
+            (b / f"{P37}{tail}-m.md").write_text("\n".join(lines + ["---", "", body, ""]),
+                                                 encoding="utf-8")
+            return P37 + tail
+
+        hand37(box37, "A0", "NOTICE", "carol", "bob", "2029-12-20T08:00:00Z",
+               "FINDING: the retry loop never backs off")
+        hand37(box37, "A1", "ASK", "alice", "bob", "2030-01-01T09:00:00Z",
+               "who owns the billing client?")
+        hand37(box37, "A2", "ANSWER", "bob", "alice", "2030-01-01T09:05:00Z", "re: billing client",
+               reply_to=P37 + "A1")
+        hand37(box37, "A3", "CLAIM", "alice", "all", "2030-01-01T09:10:00Z",
+               "editing the billing client", scope="billing/client.py",
+               expires="2030-01-01T20:00:00+02:00")
+        hand37(box37, "A4", "ASK", "carol", "bob", "2030-01-01T11:00:00Z", "may I rename retry()?")
+        ROW37 = ["date", "expires", "from", "id", "oversize", "owes_reply", "reply_to", "scope",
+                 "status", "subject", "supersedes", "to", "type"]
+
+        full = run37(box37, "list", "--now", NOW37)
+        check("control: plain list prints the header and two lines per message, exit 0",
+              full.returncode == 0 and len(full.stdout.splitlines()) == 11
+              and full.stdout.startswith("# mailbox: ") and full.stderr == "",
+              full.stdout + full.stderr)
+        r = run37(box37, "list", "--to", "bob", "--limit", "2", "--json", "--now", NOW37)
+        got = doc37(r)
+        want = {
+            "filters": {"from": None, "live": False, "scope": None, "since": None,
+                        "status": None, "to": "bob", "type": None},
+            "limit": 2, "mailbox": str(box37), "matched": 3, "now": NOW37, "quarantined": 0,
+            "returned": 2, "schema": 1, "total": 5, "truncated": 1, "view": "list",
+            "messages": [
+                {"date": "2030-01-01T09:00:00Z", "expires": None, "from": "alice",
+                 "id": P37 + "A1", "oversize": [], "owes_reply": False, "reply_to": None,
+                 "scope": None, "status": "answered", "subject": "who owns the billing client?",
+                 "supersedes": None, "to": "bob", "type": "ASK"},
+                {"date": "2030-01-01T11:00:00Z", "expires": None, "from": "carol",
+                 "id": P37 + "A4", "oversize": [], "owes_reply": True, "reply_to": None,
+                 "scope": None, "status": "open", "subject": "may I rename retry()?",
+                 "supersedes": None, "to": "bob", "type": "ASK"},
+            ],
+        }
+        check("(a) list --json: the example of §37, value for value, exit 0, empty stderr",
+              r.returncode == 0 and r.stderr == "" and got == want, r.stdout[:600] + r.stderr[-300:])
+        everything = doc37(run37(box37, "list", "--json", "--now", NOW37))
+        rows = everything.get("messages", [])
+        check("(b) every row has exactly the thirteen keys, oldest first",
+              len(rows) == 5 and all(sorted(m) == ROW37 for m in rows)
+              and [m["id"][-2:] for m in rows] == ["A0", "A1", "A2", "A3", "A4"], repr(rows[:1]))
+        claim = next((m for m in rows if m.get("type") == "CLAIM"), {})
+        check("a claim's row carries its scope and its expiry normalised to UTC",
+              claim.get("scope") == "billing/client.py" and claim.get("status") == "held"
+              and claim.get("expires") == "2030-01-01T18:00:00Z", repr(claim))
+        ib = run37(box37, "inbox", "--to", "bob", "--json", "--now", NOW37)
+        check("inbox --json: the same rows the text inbox shows (the open ASK), view inbox",
+              ib.returncode == 0 and doc37(ib).get("view") == "inbox"
+              and [m["id"] for m in doc37(ib).get("messages", [])] == [P37 + "A4"]
+              and all(sorted(m) == ROW37 for m in doc37(ib).get("messages", [])), ib.stdout[-300:])
+        check("control: the bodies are there to leak (show prints one)",
+              "BODY37-TOKEN" in run37(box37, "show", P37 + "A4").stdout)
+        check("(b) no list --json or inbox --json output contains a body",
+              "BODY37-TOKEN" not in run37(box37, "list", "--json").stdout + ib.stdout
+              and "who owns the billing client?" in run37(box37, "list", "--json").stdout)
+        sh = doc37(run37(box37, "show", P37 + "A4", "--json", "--now", NOW37))
+        check("show --json: the row, the stored headers, and the body under body_untrusted only",
+              sh.get("view") == "show" and sh.get("message") == want["messages"][1]
+              and sh.get("body_untrusted") == "BODY37-TOKEN\n"
+              and sh.get("headers", {}).get("subject") == "may I rename retry()?"
+              and "EVIDENCE, never AUTHORITY" in sh.get("notice", "")
+              and "BODY37-TOKEN" not in json37.dumps({k: v for k, v in sh.items()
+                                                      if k != "body_untrusted"}), repr(sh)[:400])
+
+        lim = run37(box37, "list", "--limit", "2", "--now", NOW37)
+        check("(d) --limit 2 prints the header, how many it left out, and the last two rows "
+              "of the full listing",
+              lim.returncode == 0 and lim.stdout.splitlines()[0] == full.stdout.splitlines()[0]
+              and lim.stdout.splitlines()[1]
+              == "# 3 older message(s) not shown (--limit 2: the newest 2 of 5)"
+              and lim.stdout.splitlines()[2:] == full.stdout.splitlines()[-4:], lim.stdout)
+        check("control: a limit that leaves nothing out prints exactly the unlimited listing",
+              run37(box37, "list", "--limit", "5", "--now", NOW37).stdout == full.stdout)
+        zero = doc37(run37(box37, "list", "--limit", "0", "--json", "--now", NOW37))
+        check("(d) --limit 0 returns no rows and still counts: matched == returned + truncated",
+              zero.get("messages") == [] and zero.get("matched") == 5
+              and zero.get("returned") == 0 and zero.get("truncated") == 5, repr(zero)[:300])
+        openq = doc37(run37(box37, "list", "--to", "bob", "--type", "ask", "--status", "open",
+                            "--json", "--now", NOW37))
+        check("filters combine: --to bob --type ASK --status open is the one open question",
+              [m["id"] for m in openq.get("messages", [])] == [P37 + "A4"]
+              and openq.get("filters", {}).get("type") == ["ASK"]
+              and openq.get("filters", {}).get("status") == ["open"], repr(openq)[:300])
+        asks = doc37(run37(box37, "list", "--type", "ASK", "--json", "--now", NOW37))
+        check("status is derived from the whole mailbox: with its ANSWER filtered out the "
+              "ASK is still answered",
+              [m["status"] for m in asks.get("messages", [])] == ["answered", "open"],
+              repr(asks.get("messages")))
+
+        for label, argv in (("--limit -1", ["list", "--limit", "-1"]),
+                            ("--limit many", ["list", "--limit", "many"]),
+                            ("--type PING", ["list", "--type", "PING"]),
+                            ("--status done", ["list", "--status", "done"]),
+                            ("--since soon", ["list", "--since", "soon"]),
+                            ("--now never", ["list", "--json", "--now", "never"]),
+                            ("empty --scope", ["list", "--scope", " "]),
+                            ("inbox --limit 1.5", ["inbox", "--to", "bob", "--limit", "1.5"])):
+            r = run37(box37, *argv)
+            check(f"(i) {label} is refused: exit 2, one line on stderr, nothing on stdout",
+                  r.returncode == 2 and r.stdout == "" and len(r.stderr.splitlines()) == 1
+                  and "Traceback" not in r.stderr, repr((r.returncode, r.stdout[:80], r.stderr)))
+
+        qbox37 = Path(tmp37) / "quarantine"
+        qbox37.mkdir()
+        hand37(qbox37, "B0", "NOTICE", "alice", "bob", "2030-01-01T09:00:00Z", "kept")
+        (qbox37 / "not-mail.md").write_text("no frontmatter here\n", encoding="utf-8")
+        r = run37(qbox37, "list", "--json", "--now", NOW37)
+        check("(h) with a quarantined file: the document is complete, quarantined is 1, the "
+              "REJECT line is on stderr and the exit status is 2",
+              r.returncode == 2 and doc37(r).get("quarantined") == 1
+              and [m["subject"] for m in doc37(r).get("messages", [])] == ["kept"]
+              and r.stderr.startswith("REJECT not-mail.md: "), r.stdout[-200:] + r.stderr)
+
+        def gone37(*argv: str) -> tuple[int, str]:
+            r_fd, w_fd = os.pipe()
+            os.close(r_fd)
+            try:
+                r = subprocess.run(tool37 + list(argv), stdout=w_fd, stderr=subprocess.PIPE,
+                                   text=True, env={**env37, "AGENT_MAIL_DIR": str(box37)},
+                                   timeout=120)
+            finally:
+                os.close(w_fd)
+            return r.returncode, r.stderr
+
+        for argv in (["list", "--json"], ["list", "--limit", "1"], ["inbox", "--to", "bob", "--json"],
+                     ["show", P37 + "A4", "--json"]):
+            got35 = gone37(*argv)
+            check(f"(j) `{' '.join(argv[:1] + argv[-1:])}` with its reader gone exits 141 and "
+                  "prints nothing on stderr", got35 == (141, ""), repr(got35))
+
+    print("\nthe command line says what it takes and what to do next (PROTOCOL.md §38)")
+    with tempfile.TemporaryDirectory() as tmp38:
+        box38 = Path(tmp38) / "mail"
+        box38.mkdir()
+        hand37(box38, "C0", "ASK", "alice", "bob", "2030-01-01T09:00:00Z", "INBOX38-TOKEN")
+        COMMANDS38 = ["send", "list", "inbox", "show", "verify", "doctor", "status", "canary",
+                      "latency", "capability", "ask"]
+        r = run37(box38, "--help")
+        summaries = {}
+        helplines = r.stdout.splitlines() + [""]
+        for n, ln in enumerate(helplines[:-1]):
+            parts = ln.split(None, 1)
+            if (ln.startswith("    ") and not ln.startswith("     ") and parts
+                    and parts[0] in COMMANDS38):
+                # a long command name pushes its summary onto the next line
+                summaries[parts[0]] = parts[1] if len(parts) == 2 else helplines[n + 1].strip()
+        check("(a) --help exits 0 and lists every command with a one-line summary",
+              r.returncode == 0 and sorted(summaries) == sorted(COMMANDS38)
+              and all(len(s) > 10 for s in summaries.values()),
+              "missing: " + ", ".join(c for c in COMMANDS38 if c not in summaries))
+        check("(b) --help names the environment variables and the exit statuses, in ASCII",
+              all(tok in r.stdout for tok in ("AGENT_MAIL_DIR", "AGENT_MAIL_IDENTITY",
+                                              "AGENT_MAIL_IDEM_WAIT", "exit status", "141"))
+              and r.stdout.isascii(), r.stdout[-400:])
+        r = run37(box38, "bogus-command")
+        check("control: the parser still refuses an unknown command and names the real ones",
+              r.returncode == 2 and all(c in r.stderr for c in COMMANDS38), r.stderr[-300:])
+
+        r = run37(box38, "canary", "--from", "alice", "--to", "alice", "--hours", "1")
+        check("control: canary --hours 1 files a canary", r.returncode == 0 and "id: " in r.stdout,
+              r.stderr)
+        for label, argv in (
+                ("canary --hours soon", ["canary", "--from", "alice", "--to", "alice", "--hours", "soon"]),
+                ("canary --hours nan", ["canary", "--from", "alice", "--to", "alice", "--hours", "nan"]),
+                ("canary --hours 1e99", ["canary", "--from", "alice", "--to", "alice", "--hours", "1e99"]),
+                ("status --now at an instant UTC cannot represent",
+                 ["status", "--json", "--now", "0001-01-01T00:00:00+14:00"]),
+                ("status --stalled-hours nan", ["status", "--json", "--stalled-hours", "nan"]),
+                ("status --stalled-hours inf", ["status", "--json", "--stalled-hours", "inf"]),
+                ("ask --to naming nobody", ["ask", "--from", "alice", "--to", " , ",
+                                            "--subject", "s", "--body", "b"])):
+            before = sorted(f.name for f in box38.iterdir())
+            r = run37(box38, *argv)
+            check(f"(c) {label}: exit 2, nothing on stdout, no traceback, nothing written",
+                  r.returncode == 2 and r.stdout == "" and r.stderr.strip() != ""
+                  and "Traceback" not in r.stderr
+                  and sorted(f.name for f in box38.iterdir()) == before,
+                  repr((r.returncode, r.stdout[:80], r.stderr[-200:])))
+        r = run37(box38, "status", "--json", "--stalled-hours", "0.5", "--now", NOW37)
+        check("control: status --json with a valid --now and --stalled-hours still parses",
+              r.returncode == 0 and doc37(r).get("stalled_hours") == 0.5, r.stderr)
+        r = run37(box38, "ask", "--from", "alice", "--to", "bob, carol", "--subject", "s",
+                  "--body", "b")
+        check("control: ask --to with two recipients files two ASKs",
+              r.returncode == 0 and r.stdout.count("id: ") == 2, r.stdout + r.stderr)
+
+        named = run37(box38, "inbox", "--to", "bob")
+        env_only = run37(box38, "inbox", identity="Bob")
+        check("(d) inbox without --to is the inbox of AGENT_MAIL_IDENTITY",
+              named.returncode == 0 and "INBOX38-TOKEN" in named.stdout
+              and env_only.stdout == named.stdout and env_only.returncode == 0,
+              env_only.stdout + env_only.stderr)
+        other = run37(box38, "inbox", "--to", "alice", identity="bob")
+        check("--to wins over the variable", other.returncode == 0
+              and other.stdout.startswith("# inbox: alice ") and "INBOX38-TOKEN" not in other.stdout,
+              other.stdout)
+        r = run37(box38, "inbox")
+        check("(d) with neither, inbox is refused: exit 2, one line, no guess",
+              r.returncode == 2 and r.stdout == ""
+              and r.stderr == "inbox requires --to <identity> (or set AGENT_MAIL_IDENTITY)\n",
+              repr((r.returncode, r.stderr)))
+
+        nobox = Path(tmp38) / "never-made"
+        r = run37(nobox, "list")
+        check("(e) a missing mailbox: NO MAILBOX first, a hint second, exit 2, stdout empty",
+              r.returncode == 2 and r.stdout == "" and len(r.stderr.splitlines()) == 2
+              and r.stderr.splitlines()[0] == f"NO MAILBOX at {nobox}"
+              and r.stderr.splitlines()[1].startswith("hint: ") and "mkdir" in r.stderr,
+              repr(r.stderr))
+        fresh = Path(tmp38) / "fresh"
+        fresh.mkdir()
+        r = run37(fresh, "doctor")
+        check("(e) doctor on a mailbox without a canary names the next step under the canary "
+              "line, still ends with FAIL, and stderr is empty",
+              r.returncode == 2 and r.stdout.rstrip().endswith("FAIL: pickup canary missing or stale")
+              and "canary: MISSING_OR_STALE\n  - file one with `canary --from" in r.stdout
+              and r.stderr == "", r.stdout[-300:] + r.stderr)
+        r = run37(box38, "doctor")
+        check("control: with a live canary doctor PASSes and prints no next step",
+              r.returncode == 0 and r.stdout.rstrip().endswith("PASS") and r.stderr == ""
+              and "file one with" not in r.stdout, r.stdout[-200:] + r.stderr)
+    # ==== END PROTOCOL.md §37 and §38 ===============================================
 
     summary = 'FAILED: ' + '; '.join(failures) if failures else 'all checks passed'
     if skipped and not failures:

@@ -7,7 +7,79 @@ behaviour).
 
 ## [Unreleased]
 
-Nothing yet.
+### Security
+
+- A claim no longer follows a symbolic link planted at its scope lock name: the link's
+  target was emptied and overwritten with a process id, or created. The claim now fails
+  with one line (ELOOP, exit 1); a lock file with a second hard link is locked but never
+  written to; a FIFO at the name is refused with exit 2 on every platform (PROTOCOL.md
+  section 36, part a).
+- A hand-written file reusing a message's id can no longer displace it: among files
+  sharing an id, the one named `<id>-...` is admitted. Before, a held claim could be
+  quarantined and a rival's claim on its scope succeed (36b).
+- The CI and release jobs that read the forbidden-name secret install nothing: the
+  publication scan runs in its own job (`publication` in `ci.yml`, `scan` in
+  `release.yml`) with `python -I -S`, on artifacts built by a separate job.
+- The scan also covers the tree of every tag, so a file that an earlier release shipped
+  and a later commit removed is found.
+- The job that writes release artifacts installs only `requirements-build.txt` (`build`,
+  `packaging`, `pyproject_hooks`, each pinned by SHA-256) and runs no test;
+  `scripts/repro_build.py` checks the setuptools wheel against the SHA-256 recorded in
+  `build-constraints.txt` and lets the build install nothing else.
+- CodeQL code scanning of the Python sources and the workflow files (`codeql.yml`).
+
+### Added
+
+- `list`: `--type`, `--status`, `--scope`, `--since`, `--limit N` (the newest N, still
+  oldest first, with a `# N older message(s) not shown` line), `--now` and `--json`.
+  `inbox`: `--type`, `--since`, `--limit`, `--now`, `--json`. `show <id> --json`, which
+  carries the body under `body_untrusted`. A listing never contains a body (PROTOCOL.md
+  section 37).
+- `inbox` without `--to` shows the inbox of `AGENT_MAIL_IDENTITY`.
+- `--help` lists every command (`send` and `show` were missing), the environment
+  variables and the exit statuses; every command and flag has help text (section 38).
+- A `hint:` line on stderr after `NO MAILBOX at <path>` and after `REJECT` lines;
+  `doctor` names the next step under `canary: MISSING_OR_STALE` and `store: MISSING`.
+- `docs/pypi-publishing.md`: the prepared plan for publishing to PyPI. The project is
+  still not on PyPI and nothing uploads there.
+- `test_cli.py`; `test_publication.py` checks the workflow files (no install in a job
+  that references a secret, the required scan cannot be skipped, actions GitHub-owned
+  and pinned).
+
+### Changed
+
+- `send` without `--supersedes` or `--scope` no longer reads the mailbox: 4.1 s to
+  0.04 s at 100,000 messages (36d).
+- `release.yml` has four jobs: `build`, `scan`, `test` (the test list and `twine check`),
+  `publish`. `publish` runs only if the other three succeeded.
+- BUILDINFO has a `setuptools_wheel` line with the wheel's SHA-256. Project URLs
+  `Documentation`, `Changelog` and `Source` are added, which changes the artifact hashes
+  of builds from this version on.
+- `list --l`/`--li` and `list`/`inbox --t` (prefix abbreviations of `--live` and `--to`)
+  are now ambiguous with `--limit` and `--type` and are refused. Full flag names are
+  unaffected.
+- `inbox requires --to <identity>` now ends ` (or set AGENT_MAIL_IDENTITY)`.
+
+### Fixed
+
+- `ask --to a,b` and `send --to <alias>` with the body on standard input deliver it to
+  every recipient (before: the first only, or nobody). A fan-out checks every recipient
+  before writing any, and stops when interrupted (36c).
+- Two senders of one key with the same process id no longer share a marker temp file
+  (36e).
+- `send` with standard input closed, or carrying bytes that are not UTF-8, printed a
+  traceback; it now refuses with one line and exit 2.
+- Tracebacks from arguments: `canary --hours` that is not a finite number, `status --now`
+  at an instant UTC cannot represent, `verify` with an unusable `--repo` or evidence
+  path, and a read-only command whose `AGENT_MAIL_DIR` the OS refuses to stat.
+- `status --json --stalled-hours nan|inf` printed `NaN`/`Infinity`, which is not JSON;
+  now refused.
+- `ask --to ","` exited 0 having sent nothing; now a usage error.
+- `show`/`verify` echo a long or non-printable id quoted, on one line.
+- The pickup adapter's reply hint names `--reply-to` and `--body-file`.
+- Help typo "remasure".
+- `test_hardening.py` scenario 10 no longer asserts that an owner's renewal wins a round
+  it shares with rivals, which the lock does not guarantee.
 
 ## [0.3.1] - 2026-10-11
 
