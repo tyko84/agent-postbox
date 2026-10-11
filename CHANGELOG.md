@@ -7,6 +7,27 @@ behaviour).
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.3.1] - 2026-10-11
+
+A new distribution name, and a correction to 0.3.0. The `agent-postbox` command,
+the `agent_mail` module and mailboxes are unchanged.
+
+### Packaging
+
+- The distribution is now named `tyko84-agent-postbox` (was `agent-postbox`). An
+  unrelated project owns `agent-postbox` on PyPI, and pip treats two distributions
+  of one name as the same package, so `pip install --upgrade agent-postbox` could
+  replace this tool with that one. Release files are now named
+  `tyko84_agent_postbox-X.Y.Z-...`. This project is still not on PyPI.
+- Upgrading from 0.3.0 or earlier: run `python -m pip uninstall agent-postbox`
+  first, then install from a clone or a release wheel by path. Both names own
+  `agent_mail.py` and the `agent-postbox` command.
+- The repository's history was re-created on 2026-10-11 with one test file in the
+  first commit corrected. Every commit id changed; file contents at every later
+  commit, and the 0.3.0 release files and their checksums, are identical.
+
 ### Fixed
 
 - Correction to 0.3.0: "`list | head` now exits 141 quietly" was true only for
@@ -324,7 +345,8 @@ the first tag in the current repository.
 - Breaking a stale (older than 60 seconds) scope lock is not atomic; see the
   README "Security and limitations".
 
-[Unreleased]: https://github.com/tyko84/agent-postbox/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/tyko84/agent-postbox/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/tyko84/agent-postbox/releases/tag/v0.3.1
 [0.3.0]: https://github.com/tyko84/agent-postbox/releases/tag/v0.3.0
 [0.2.2]: https://github.com/tyko84/agent-postbox/releases/tag/v0.2.2
 [0.2.1]: https://github.com/tyko84/agent-postbox/releases/tag/v0.2.1

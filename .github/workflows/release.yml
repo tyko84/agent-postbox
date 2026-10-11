@@ -99,7 +99,7 @@ jobs:
 
       - name: "gate: exactly one wheel, one sdist and SHA256SUMS, named for this version"
         run: |
-          want="SHA256SUMS agent_postbox-$VERSION-py3-none-any.whl agent_postbox-$VERSION.tar.gz"
+          want="SHA256SUMS tyko84_agent_postbox-$VERSION-py3-none-any.whl tyko84_agent_postbox-$VERSION.tar.gz"
           got="$(ls -A dist | LC_ALL=C sort | tr '\n' ' ')"
           [ "${got% }" = "$want" ] || { echo "::error::unexpected files in dist: $got"; exit 1; }
 
@@ -119,7 +119,7 @@ jobs:
         run: |
           cd dist
           # written by scripts/repro_build.py; it must be exactly what sha256sum would write
-          sha256sum "agent_postbox-$VERSION-py3-none-any.whl" "agent_postbox-$VERSION.tar.gz" | cmp - SHA256SUMS \
+          sha256sum "tyko84_agent_postbox-$VERSION-py3-none-any.whl" "tyko84_agent_postbox-$VERSION.tar.gz" | cmp - SHA256SUMS \
             || { echo "::error::SHA256SUMS is not what sha256sum computes for the two artifacts"; exit 1; }
           sha256sum --check --strict SHA256SUMS
           # what is shipped is what the two builds agreed on
@@ -189,7 +189,7 @@ jobs:
           [[ "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] \
             || fail "the tag is not of the form vX.Y.Z"
           version="${tag#v}"
-          want="SHA256SUMS agent_postbox-$version-py3-none-any.whl agent_postbox-$version.tar.gz"
+          want="SHA256SUMS tyko84_agent_postbox-$version-py3-none-any.whl tyko84_agent_postbox-$version.tar.gz"
           got="$(ls -A dist | LC_ALL=C sort | tr '\n' ' ')"
           [ "${got% }" = "$want" ] || fail "unexpected files from the build job: $got"
           [ "$(wc -l < dist/SHA256SUMS)" -eq 2 ] || fail "SHA256SUMS does not list two files"
@@ -210,7 +210,7 @@ jobs:
         run: |
           fail() { echo "::error::$1"; exit 1; }
           tag="$GITHUB_REF_NAME" # checked against ^vX.Y.Z$ above
-          files=("dist/agent_postbox-$VERSION-py3-none-any.whl" "dist/agent_postbox-$VERSION.tar.gz" dist/SHA256SUMS)
+          files=("dist/tyko84_agent_postbox-$VERSION-py3-none-any.whl" "dist/tyko84_agent_postbox-$VERSION.tar.gz" dist/SHA256SUMS)
           # Drafts included (the token can write). A failed listing fails the step.
           ids="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
                    --jq ".[] | select(.tag_name == \"$tag\") | .id")"

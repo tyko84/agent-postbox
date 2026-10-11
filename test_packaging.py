@@ -233,7 +233,7 @@ class Packaging(unittest.TestCase):
         assert spec and spec.loader
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
-        self.assertIn(f"agent_postbox-{mod.__version__}", self.wheel.name)
+        self.assertIn(f"tyko84_agent_postbox-{mod.__version__}", self.wheel.name)
         meta = next(d for n, d in wheel_members(self.wheel).items() if n.endswith("METADATA"))
         self.assertIn(f"Version: {mod.__version__}", meta.decode())
         self.assertIsNone(re.search(r'^version\s*=\s*"', (ROOT / "pyproject.toml").read_text(),

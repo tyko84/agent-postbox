@@ -62,12 +62,13 @@ atomic-send and lock code relies on POSIX file semantics, CI runs on Linux and
 macOS, and Windows is untested and unsupported. Python 3.10-3.13.
 
 > **Not on PyPI. Do not `pip install agent-postbox`.** This project is not
-> published on PyPI. The PyPI distribution named
+> published on PyPI, and its distribution name is `tyko84-agent-postbox`. The
+> PyPI distribution named
 > [`agent-postbox`](https://pypi.org/project/agent-postbox/) is a separate,
 > unrelated project by a different author; installing it by name gives you that
 > project, not this one. Always install this project from a clone of
-> <https://github.com/tyko84/agent-postbox>, or from a wheel you built from a
-> clone ([docs/packaging.md](docs/packaging.md)).
+> <https://github.com/tyko84/agent-postbox>, or from a wheel attached to a
+> release or built from a clone ([docs/packaging.md](docs/packaging.md)).
 
 **Option 1: pip, from a clone** (a local path, never the bare name):
 
@@ -79,8 +80,8 @@ agent-postbox --version
 
 The `./` matters: `pip install ./agent-postbox` installs the directory you just
 cloned, while `pip install agent-postbox` would ask PyPI for the unrelated
-distribution of the same name. To check which one an environment has,
-`python -m pip show -f agent-postbox` shows, for this project,
+distribution of that name. To check what an environment has,
+`python -m pip show -f tyko84-agent-postbox` shows
 `Home-page: https://github.com/tyko84/agent-postbox` and a single module,
 `agent_mail.py`.
 
@@ -88,10 +89,12 @@ This installs the `agent-postbox` command (and the `agent_mail` module) with no
 dependencies. Pip installs only the tool; it does not copy the spec, the
 adapter under `hooks/`, or `install.py`, so keep the clone for those.
 
-Because the two projects share a distribution name, pip treats them as one:
-in an environment that has this project, `pip install --upgrade agent-postbox`
-(or any requirement that names `agent-postbox` and is resolved against PyPI)
-replaces it with the unrelated one. Upgrade from a clone or a wheel, by path.
+The command and the module keep their names; only the distribution is called
+`tyko84-agent-postbox`. Releases up to 0.3.0 used the distribution name
+`agent-postbox`, which pip cannot tell apart from the unrelated PyPI project.
+If an environment still has one of those, run
+`python -m pip uninstall agent-postbox` before installing this version, because
+both own `agent_mail.py` and the `agent-postbox` command.
 
 **Verifying a release download.** A wheel or sdist built by
 `scripts/repro_build.py` comes with a `SHA256SUMS` file. Check the files

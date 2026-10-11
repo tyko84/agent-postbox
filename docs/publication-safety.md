@@ -154,7 +154,7 @@ builds from `git archive`, so it cannot happen there.
 **Allowlisting.** These rules go through the ordinary allowlist, with one
 restriction: a `builder-*` line takes an exact path, never a glob (a pattern
 with `*`, `?` or `[` is rejected with exit 2). The path is the artifact file name
-(`builder-owner agent_postbox-1.2.3.tar.gz`), or the member path for
+(`builder-owner tyko84_agent_postbox-1.2.3.tar.gz`), or the member path for
 `builder-os-junk` and `builder-local-url`. An artifact name carries its version,
 so an exemption covers one build and lapses with the next. The CI and release
 jobs run with an empty allowlist.
