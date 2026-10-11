@@ -3,7 +3,7 @@ requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "agent-postbox"
+name = "tyko84-agent-postbox"
 dynamic = ["version"]
 description = "Inter-agent mail for a code repo, with delivery that does not depend on the agent remembering to look."
 readme = "README.md"
