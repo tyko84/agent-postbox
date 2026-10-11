@@ -28,6 +28,9 @@ classifiers = [
 
 [project.urls]
 Homepage = "https://github.com/tyko84/agent-postbox"
+Documentation = "https://github.com/tyko84/agent-postbox/blob/main/docs/README.md"
+Changelog = "https://github.com/tyko84/agent-postbox/blob/main/CHANGELOG.md"
+Source = "https://github.com/tyko84/agent-postbox"
 Issues = "https://github.com/tyko84/agent-postbox/issues"
 
 [project.scripts]

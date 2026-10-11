@@ -9,3 +9,6 @@
 * [publication-safety.md](publication-safety.md): the pre-publication scanner and how to configure it.
 * [release-process.md](release-process.md): how a release is cut (version,
   changelog, tag, GitHub release, privacy preflight).
+* [pypi-publishing.md](pypi-publishing.md): the project is **not on PyPI**;
+  this is the prepared plan for publishing there (checks done, the upload job,
+  the owner's checklist). Nothing in it has been carried out.

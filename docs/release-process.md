@@ -12,6 +12,10 @@ The package is **not published on PyPI** and the workflow uploads nothing
 there. Users install from a clone (`python -m pip install ./agent-postbox`),
 from the wheel attached to a release, or from a wheel they build themselves
 (see [packaging.md](packaging.md)).
+What publishing there would take (accounts, a trusted publisher, one more job
+in the release workflow, and steps that cannot be undone) is written down in
+[pypi-publishing.md](pypi-publishing.md). None of it has been done, and it is
+the owner's decision.
 
 This project's distribution name is `tyko84-agent-postbox`. The name
 `agent-postbox` on PyPI belongs to an unrelated project, so release notes and
