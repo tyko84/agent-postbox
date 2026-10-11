@@ -3094,6 +3094,16 @@ class _Parser(argparse.ArgumentParser):
             print(message, end="", file=sys.stderr if file is None else file)
 
 
+def _refuse_list_values(ap: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    """No option here takes a list. Python 3.10's argparse turns the value `--`
+    (as in `--type=--`) into an empty list, which the commands would then treat as
+    text and fail on with a traceback; later versions keep it a string. Refuse it
+    the same way everywhere (PROTOCOL.md section 38: no traceback from an argument)."""
+    for name, value in sorted(vars(args).items()):
+        if isinstance(value, list):
+            ap.error(f"--{name.replace('_', '-')}: a bare '--' is not accepted as a value")
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run one command and return its exit status. Safe to call repeatedly in
     one process: nothing about the caller's stdout or stderr is changed."""
@@ -3421,6 +3431,7 @@ def _run(argv: list[str] | None) -> int:
     ask.set_defaults(func=cmd_ask)
 
     args = ap.parse_args(argv)
+    _refuse_list_values(ap, args)
     return args.func(args)
 
 
