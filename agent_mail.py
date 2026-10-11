@@ -65,6 +65,7 @@ if sys.version_info < MIN_PYTHON:
     raise ImportError(_why)
 
 import argparse  # noqa: E402
+import builtins  # noqa: E402
 import errno  # noqa: E402
 import re  # noqa: E402
 import hashlib  # noqa: E402
@@ -93,6 +94,100 @@ FRESH_DAYS = 7
 __version__ = "0.3.0"
 
 _SLUG = re.compile(r"[^a-z0-9]+")
+
+# ---- output whose reader has gone away (PROTOCOL.md section 35) -------------
+# `list | head -1`: head exits, the pipe has no reader, and the next write to it
+# fails with EPIPE (Python ignores SIGPIPE, so that is a BrokenPipeError rather
+# than a quiet death). That is not an error worth a traceback. The rules:
+#   * a read-only command stops at once, says nothing, and exits 141;
+#   * a command that writes mail finishes its work and keeps the exit status of
+#     that work: the message is published before anything is printed, so a lost
+#     confirmation line must not look like a failed send (the caller would retry
+#     and file the message twice);
+#   * a diagnostic that cannot be delivered because stderr is gone is dropped,
+#     and the exit status still says what happened.
+# Only a failed write to stdout or stderr is treated this way. EPIPE from
+# anything else (a mailbox file, a lock) is an OSError like any other and is
+# reported by whoever was doing that work. SIGPIPE is deliberately NOT reset to
+# its default: that would kill `send` mid-flight, skipping the `finally` that
+# releases its scope lock and key marker (sections 30 and 31).
+EXIT_READER_GONE = 128 + signal.SIGPIPE  # 141: what a shell reports for a writer killed by SIGPIPE
+_UNSET: Any = object()
+
+
+class _ReaderGone(Exception):
+    """stdout's reader went away while a read-only command was printing."""
+
+
+class _Stdout:
+    lost: object = None       # the stdout object whose reader went away during this run
+    optional: bool = False    # a writing command is running: its work outranks its output
+
+
+def print(*args: Any, file: Any = _UNSET, **kwargs: Any) -> None:
+    """`builtins.print` for this module, with the three rules above. Every line
+    this tool writes goes through here, so a new `print` cannot forget them."""
+    stream = sys.stdout if file is _UNSET else file
+    to_stdout = stream is sys.stdout
+    if stream is None:
+        return  # that descriptor was closed before we started: nowhere to say it
+    if to_stdout and stream is _Stdout.lost:
+        return
+    try:
+        builtins.print(*args, file=stream, **kwargs)
+    except BrokenPipeError:
+        if not to_stdout:
+            return
+        _Stdout.lost = stream
+        if not _Stdout.optional:
+            raise _ReaderGone from None
+
+
+def _discard(stream: Any) -> None:
+    """Throw away what `stream` still buffers for a reader that is gone, so the
+    interpreter's flush at exit has nothing left to fail on (it would print
+    "Exception ignored ... BrokenPipeError" and turn the exit status into 120).
+    The descriptor is pointed at /dev/null only for the length of one flush and
+    then put back: a caller that runs `main()` in its own process gets its
+    stdout back exactly as it was."""
+    try:
+        fd = stream.fileno()
+        keep = os.dup(fd)
+    except (AttributeError, OSError, ValueError):
+        return  # not backed by a descriptor (io.StringIO): nothing is buffered for a pipe
+    try:
+        null = os.open(os.devnull, os.O_WRONLY)
+        try:
+            inheritable = os.get_inheritable(fd)
+            os.dup2(null, fd)
+            try:
+                stream.flush()
+            finally:
+                os.dup2(keep, fd, inheritable=inheritable)
+        finally:
+            os.close(null)
+    except (OSError, ValueError):
+        pass
+    finally:
+        os.close(keep)
+
+
+def _settle_output() -> bool:
+    """Flush stdout and stderr once, at the end of a run. Returns True when
+    stdout's reader is gone. A flush that fails for any other reason (a full
+    disk behind a redirect) is left for the interpreter to report at exit."""
+    gone = _Stdout.lost is not None
+    for stream in (sys.stdout, sys.stderr):
+        if stream is None:
+            continue
+        try:
+            stream.flush()
+        except BrokenPipeError:
+            gone = gone or stream is sys.stdout
+            _discard(stream)
+        except (AttributeError, OSError, ValueError):
+            pass
+    return gone
 
 
 MAILBOX_REL = Path("docs") / "agent-mail"
@@ -1485,6 +1580,7 @@ def _send_input_error(args: argparse.Namespace, body: str) -> str:
 
 
 def cmd_send(args: argparse.Namespace) -> int:
+    _Stdout.optional = True  # section 35: the mail matters more than the confirmation
     mtype = args.type.upper()
     if mtype not in TYPES:
         print(f"type must be one of {', '.join(TYPES)}", file=sys.stderr)
@@ -2640,8 +2736,35 @@ def cmd_verify(args: argparse.Namespace) -> int:
     return 0
 
 
+class _Parser(argparse.ArgumentParser):
+    def _print_message(self, message: str, file: Any = None) -> None:
+        # help, --version and usage errors obey section 35 like every other line
+        if message:
+            print(message, end="", file=sys.stderr if file is None else file)
+
+
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="Inter-agent mail (see PROTOCOL.md)")
+    """Run one command and return its exit status. Safe to call repeatedly in
+    one process: nothing about the caller's stdout or stderr is changed."""
+    _Stdout.lost, _Stdout.optional = None, False
+    try:
+        try:
+            rc = _run(argv)
+        except _ReaderGone:
+            rc = EXIT_READER_GONE
+        except SystemExit as exc:  # argparse: --help, --version, a usage error
+            if _settle_output() and exc.code in (0, None):
+                raise SystemExit(EXIT_READER_GONE) from None
+            raise
+        if _settle_output() and not _Stdout.optional:
+            rc = EXIT_READER_GONE
+        return rc
+    finally:
+        _Stdout.lost, _Stdout.optional = None, False
+
+
+def _run(argv: list[str] | None) -> int:
+    ap = _Parser(description="Inter-agent mail (see PROTOCOL.md)")
     ap.add_argument("--version", action="version", version=f"agent-postbox {__version__}")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
@@ -2781,12 +2904,4 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    try:
-        _rc = main()
-        sys.stdout.flush()
-    except BrokenPipeError:
-        # The reader went away (`list | head`): not worth a traceback. Point
-        # stdout at /dev/null so the interpreter's flush at exit stays quiet.
-        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
-        _rc = 141  # 128 + SIGPIPE, what a shell reports for a writer killed by it
-    raise SystemExit(_rc)
+    raise SystemExit(main())

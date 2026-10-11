@@ -182,6 +182,7 @@ class Packaging(unittest.TestCase):
     tmp: tempfile.TemporaryDirectory[str]
     wheel: Path
     sdist: Path
+    venv_ready = False
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -238,16 +239,85 @@ class Packaging(unittest.TestCase):
         self.assertIsNone(re.search(r'^version\s*=\s*"', (ROOT / "pyproject.toml").read_text(),
                                     re.M), "version must be dynamic, not duplicated")
 
+    def installed(self) -> tuple[Path, str]:
+        """The wheel installed into a clean venv (once): its python and its console script."""
+        cls = type(self)
+        env_dir = Path(self.tmp.name) / "venv"
+        py = env_dir / "bin" / "python"
+        if not cls.venv_ready:
+            venv.create(env_dir, with_pip=True, clear=True)
+            r = subprocess.run([str(py), "-m", "pip", "install", "--no-index", "--no-deps",
+                                "--disable-pip-version-check", str(self.wheel)],
+                               text=True, capture_output=True)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            cls.venv_ready = True
+        return py, str(env_dir / "bin" / "agent-postbox")
+
+    def test_installed_console_script_when_its_reader_goes_away(self) -> None:
+        """PROTOCOL.md section 35 on the real `agent-postbox` that pip generates: the 0.3.0
+        fix lived in agent_mail.py's `__main__` block, which this script never runs."""
+        py, exe = self.installed()
+        wrapper = Path(exe).read_text(encoding="utf-8")
+        # test_adversarial.py and selftest.py run exactly these two statements in every CI
+        # cell; if a new setuptools generates something else, they must change with it
+        self.assertIn("from agent_mail import main", wrapper)
+        self.assertIn("sys.exit(main())", wrapper)
+        base = Path(self.tmp.name)
+        box = base / "pipe-mailbox"
+        box.mkdir()
+        for i in range(1500):   # a listing far larger than a pipe buffer
+            mid = f"01ARZ3NDEKTSV4RRFFQ6{i:06d}"
+            (box / f"{mid}-p.md").write_text(
+                f"---\nid: {mid}\ntype: NOTICE\nfrom: alice\nto: bob\n"
+                f"date: 2099-01-01T00:00:00Z\nsubject: pipe {i}\n---\n\nbody\n", encoding="utf-8")
+        env = {k: v for k, v in os.environ.items()
+               if not k.startswith(("AGENT_MAIL", "PYTHON"))}
+        env["AGENT_MAIL_DIR"] = str(box)
+
+        def gone(*a: str) -> tuple[int, str]:
+            r_fd, w_fd = os.pipe()
+            os.close(r_fd)          # the reader has left before the first byte
+            try:
+                r = subprocess.run([exe, *a], cwd=base, env=env, stdout=w_fd,
+                                   stderr=subprocess.PIPE, text=True, timeout=120)
+            finally:
+                os.close(w_fd)
+            return r.returncode, r.stderr
+
+        full = subprocess.run([exe, "list"], cwd=base, env=env, capture_output=True, timeout=120)
+        self.assertEqual((full.returncode, full.stderr), (0, b""))   # control: a reader that stays
+        self.assertGreater(len(full.stdout), 100_000)
+        for argv in (["list"], ["list", "--live"], ["inbox", "--to", "bob"], ["status"],
+                     ["status", "--json"], ["doctor"], ["latency"], ["--help"], ["--version"]):
+            with self.subTest(argv=argv):
+                self.assertEqual(gone(*argv), (141, ""))
+        # the shell's own view, with real head/grep as the reader
+        for reader, want in (("head -1", full.stdout.split(b"\n")[0] + b"\n"),
+                             ("head -c 1", full.stdout[:1]),
+                             ("grep -m1 'pipe 0$'", b"  NOTICE  [fresh     ] alice -> bob  pipe 0\n")):
+            with self.subTest(reader=reader):
+                r = subprocess.run(["bash", "-c", f'set -o pipefail; "$0" list | {reader}', exe],
+                                   cwd=base, env=env, capture_output=True, timeout=120)
+                self.assertEqual((r.returncode, r.stderr, r.stdout), (141, b"", want))
+        # a writer finishes and keeps its own status; a keyed retry does not file a second copy
+        send = ["send", "--type", "NOTICE", "--from", "alice", "--to", "bob", "--subject",
+                "no reader", "--body", "b", "--key", "pipe-key"]
+        self.assertEqual(gone(*send), (0, ""))
+        self.assertEqual(gone(*send), (0, ""))
+        again = subprocess.run([exe, *send], cwd=base, env=env, capture_output=True, text=True,
+                               timeout=120)
+        self.assertEqual(again.returncode, 0, again.stderr)
+        self.assertTrue(again.stdout.startswith("duplicate of "), again.stdout)
+        self.assertEqual(sum("subject: no reader\n" in f.read_text(encoding="utf-8")
+                             for f in box.glob("*.md")), 1)
+        self.assertEqual(gone("show", "NOSUCHID"), (1, "no message with id NOSUCHID\n"))
+        self.assertIn("site-packages", subprocess.run(
+            [str(py), "-c", "import agent_mail;print(agent_mail.__file__)"],
+            cwd=base, env=env, text=True, capture_output=True).stdout)
+
     def test_install_and_round_trip(self) -> None:
         base = Path(self.tmp.name)
-        env_dir = base / "venv"
-        venv.create(env_dir, with_pip=True, clear=True)
-        py = env_dir / "bin" / "python"
-        r = subprocess.run([str(py), "-m", "pip", "install", "--no-index", "--no-deps",
-                            "--disable-pip-version-check", str(self.wheel)],
-                           text=True, capture_output=True)
-        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        exe = str(env_dir / "bin" / "agent-postbox")
+        py, exe = self.installed()
         box = base / "mailbox"
         box.mkdir()
         env = {k: v for k, v in os.environ.items() if not k.startswith("AGENT_MAIL")}

@@ -29,8 +29,6 @@ jobs:
       - run: python test_hardening.py
       - run: python test_field.py
       - run: python test_adversarial.py
-        env:
-          EXPECT_QUIET_SIGPIPE: "1" # list | head must end quietly
       - run: python test_handoff.py
       - run: python test_readme_examples.py
       - run: python test_publication.py

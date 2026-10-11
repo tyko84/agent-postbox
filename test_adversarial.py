@@ -22,9 +22,14 @@ seconds.
 """
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 import faulthandler
+import io
+import json
 import os
+import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -85,6 +90,373 @@ def hand(box: Path, mid_: str, extra: str = "", body: str = "hand body\n",
         f"date: 2099-01-01T00:00:00Z\nsubject: hand\n")
     p.write_text(f"---\n{head}{extra}---\n\n{body}", encoding="utf-8")
     return p
+
+
+# ---- a reader that goes away (PROTOCOL.md section 35) -----------------------
+# The console script that `pip install` generates is exactly
+#     from agent_mail import main; sys.exit(main())
+# (test_packaging.py pins that text against a real installed wrapper), so the
+# "-c" entry below is that path, available in every CI cell without a build.
+GONE = 128 + signal.SIGPIPE
+PIPE_NOW = "2099-01-01T12:00:00Z"      # hand() dates its messages 2099-01-01T00:00:00Z
+BIG = 150_000                          # bytes; more than any pipe buffer holds
+ENTRIES: dict[str, list[str]] = {
+    "python agent_mail.py": [sys.executable, "-I", TOOL],
+    "python -m agent_mail": [sys.executable, "-m", "agent_mail"],
+    "console script": [sys.executable, "-c",
+                       f"import sys; sys.path.insert(0, {str(HERE)!r}); "
+                       "from agent_mail import main; sys.exit(main())"],
+    "python -u agent_mail.py": [sys.executable, "-I", "-u", TOOL],
+}
+ONE_BYTE_THEN_SIGKILL = ("import os, signal; d = os.read(0, 1); os.write(1, d); "
+                         "os.kill(os.getpid(), signal.SIGKILL)")
+
+
+def piped(argv: list[str], box: Path, how: str, *, stderr_gone: bool = False,
+          env_extra: dict[str, str] | None = None) -> tuple[int, bytes, bytes]:
+    """Run `argv` with stdout on a pipe and return (exit status, stderr, the
+    bytes the reader got). `how` is the reader: "full" reads to the end;
+    "line" and "byte" read that much and close; "closed" is gone before the
+    command starts (the only one that is not a race for a small output);
+    "kill" is a separate process that takes one byte and is then SIGKILLed."""
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONUNBUFFERED"}
+    env.update(AGENT_MAIL_DIR=str(box), **(env_extra or {}))
+    err_r, err_w = os.pipe()
+    out_r, out_w = os.pipe()
+    try:
+        if how == "closed":
+            os.close(out_r)
+            out_r = -1
+        if stderr_gone:
+            os.close(err_r)
+            err_r = -1
+        child = subprocess.Popen(argv, stdout=out_w, stderr=err_w, env=env, cwd=HERE)
+    finally:
+        os.close(out_w)
+        os.close(err_w)
+    def drain(fd: int) -> bytes:
+        with os.fdopen(fd, "rb") as fh:
+            return fh.read()
+
+    got = b""
+    with ThreadPoolExecutor(1) as pool:      # stderr is drained alongside: neither pipe may fill
+        err_f = pool.submit(drain, err_r) if err_r != -1 else None
+        if how == "kill":
+            killer = subprocess.Popen([sys.executable, "-I", "-c", ONE_BYTE_THEN_SIGKILL],
+                                      stdin=out_r, stdout=subprocess.PIPE)
+            os.close(out_r)
+            got = killer.communicate(timeout=120)[0]
+        elif how != "closed":
+            with os.fdopen(out_r, "rb") as fh:
+                got = fh.read() if how == "full" else fh.readline() if how == "line" else fh.read(1)
+        err = err_f.result(timeout=120) if err_f is not None else b""
+    return child.wait(timeout=120), err, got
+
+
+def reader_goes_away(root: Path) -> None:
+    print("a reader that goes away: quiet, exit 141 for a read-only command (`list | head -1`)")
+    pbox = root / "pipe"
+    pbox.mkdir()
+    for i in range(1500):   # a listing far larger than a pipe buffer
+        hand(pbox, f"01ARZ3NDEKTSV4RRFFQ6{i:06d}", name=f"01ARZ3NDEKTSV4RRFFQ6{i:06d}-p.md")
+    for i in range(200):    # held claims with long scopes: a large `status --json`
+        hand(pbox, f"01ARZ3NDEKTSV4RRFFQ7{i:06d}", name=f"01ARZ3NDEKTSV4RRFFQ7{i:06d}-c.md",
+             head=f"id: 01ARZ3NDEKTSV4RRFFQ7{i:06d}\ntype: CLAIM\nfrom: alice\nto: all\n"
+                  f"date: 2099-01-01T00:00:00Z\nsubject: claim {i}\n"
+                  f"expires: 2099-01-02T00:00:00Z\nscope: file:{i:04d}-{'s' * 900}\n")
+    for i in range(1500):   # open ASKs: a large `inbox`
+        hand(pbox, f"01ARZ3NDEKTSV4RRFFQ8{i:06d}", name=f"01ARZ3NDEKTSV4RRFFQ8{i:06d}-a.md",
+             head=f"id: 01ARZ3NDEKTSV4RRFFQ8{i:06d}\ntype: ASK\nfrom: alice\nto: bob\n"
+                  f"date: 2099-01-01T00:00:00Z\nsubject: ask {i}\n")
+    big_id = "01ARZ3NDEKTSV4RRFFQ9000000"
+    hand(pbox, big_id, name=f"{big_id}-b.md",
+         body="".join(f"line {i} of a large body\n" for i in range(12000)))
+    commands: dict[str, list[str]] = {
+        "list": ["list"], "list --live": ["list", "--live"], "inbox": ["inbox", "--to", "bob"],
+        "show": ["show", big_id], "status": ["status", "--now", PIPE_NOW],
+        "status --json": ["status", "--json", "--now", PIPE_NOW], "doctor": ["doctor"],
+        "latency": ["latency"], "verify": ["verify", big_id],
+        "capability": ["capability", "--identity", "alice", "--capability", "x"],
+        "--help": ["--help"], "--version": ["--version"],
+    }
+    must_be_big = ("list", "list --live", "inbox", "show", "status --json")
+    everywhere = ("list", "status", "--help")   # one large, one small, one printed by argparse
+    reference: dict[str, bytes] = {}
+    for entry, base in ENTRIES.items():
+        bad: list[str] = []
+        ran = 0
+        for name, cmd in commands.items():
+            if entry != "console script" and name not in everywhere:
+                continue
+            own, err, full = piped(base + cmd, pbox, "full")
+            if entry == "console script":
+                reference[name] = full
+                with open(root / "unpiped", "wb") as fh:    # stdout on a file, no pipe at all
+                    plain = subprocess.run(base + cmd, stdout=fh, stderr=subprocess.PIPE, cwd=HERE,
+                                           env=dict(os.environ, AGENT_MAIL_DIR=str(pbox)),
+                                           timeout=120)
+                if (root / "unpiped").read_bytes() != full or plain.returncode != own:
+                    bad.append(f"{name}: a reader that stays got different bytes than a file")
+            if err or not full or (name in must_be_big and len(full) < BIG):
+                bad.append(f"{name} control: rc={own} {len(full)} bytes, stderr {err[-120:]!r}")
+            for how in ("closed", "line", "byte", "kill"):
+                rc, err, got = piped(base + cmd, pbox, how)
+                ran += 1
+                # A reader that is gone before the first write, or that leaves a listing
+                # no pipe can hold, must be noticed. A small output may already be in
+                # the pipe when its reader leaves: then the command finished normally.
+                # Help and --version go out in one write, which -u cannot delay.
+                certain = how == "closed" or len(full) >= BIG
+                allowed = (GONE,) if certain else (GONE, own)
+                if rc not in allowed or err or not full.startswith(got) or (
+                        how != "closed" and not got):
+                    bad.append(f"{name} | {how}: rc={rc} want {allowed}, {len(got)} bytes "
+                               f"{'prefix' if full.startswith(got) else 'NOT A PREFIX'}, "
+                               f"stderr {err[-160:]!r}")
+        check(f"{entry}: no traceback, empty stderr, exit {GONE}, and what was delivered is a "
+              f"prefix of the full output ({ran} runs)", not bad and ran >= 12, "; ".join(bad))
+    same = [n for n in everywhere
+            if piped(ENTRIES["python agent_mail.py"] + commands[n], pbox, "full")[2] != reference[n]
+            and n != "--help"]      # argparse names the program in its usage line
+    check("control: every entry point prints the same bytes to a reader that stays", not same,
+          str(same))
+    doc = json.loads(reference["status --json"])
+    check("control: `status --json` read to the end parses, and holds the 200 claims it lists",
+          len(doc["claims_held"]) == 200 and doc["claims"]["held"] == 200
+          and len(reference["status --json"]) >= BIG, str(len(reference["status --json"])))
+    rc, err, got = piped(ENTRIES["console script"] + commands["status --json"], pbox, "line")
+    check("`status --json | head -1` is cut cleanly: the opening brace, nothing repeated",
+          rc == GONE and got == b"{\n" and not err, f"rc={rc} {got[:40]!r} {err[-120:]!r}")
+
+    print("a reader that goes away: a command that writes mail still finishes, and exits 0")
+    wbox = root / "pipe-w"
+    wbox.mkdir()
+    exp = soon(2)
+
+    def hidden(box: Path) -> list[str]:
+        return sorted(f.name for f in box.iterdir() if f.name.startswith("."))
+
+    for entry in ("console script", "python -u agent_mail.py"):
+        base, tag = ENTRIES[entry], entry.split()[1]
+        argv = base + ["send", "--type", "CLAIM", "--from", "alice", "--to", "all", "--subject",
+                       f"gone {tag}", "--body", "b", "--scope", f"file:{tag}", "--expires", exp,
+                       "--key", f"key-{tag}"]
+        rc, err, _ = piped(argv, wbox, "closed")
+        mine = [f for f in md_files(wbox) if f"subject: gone {tag}\n" in f.read_text()]
+        check(f"{entry}: `send --scope --key` with no reader exits 0, says nothing, "
+              "and the message exists once",
+              rc == 0 and not err and len(mine) == 1, f"rc={rc} {err[-200:]!r} {len(mine)}")
+        st = json.loads(run(wbox, "status", "--json").stdout)
+        check("...and it left no lock, no temp file and no unresolved key marker",
+              st["scope_locks"]["total"] == 0 and st["stale_tmp"] == 0
+              and st["idem_markers"]["resolved"] == st["idem_markers"]["total"]
+              and not [n for n in hidden(wbox) if not n.startswith(".idem.") or "." in n[6:]],
+              f"{st['scope_locks']} {st['idem_markers']} {hidden(wbox)}")
+        rc, err, _ = piped(argv, wbox, "closed")
+        again = subprocess.run(argv, capture_output=True, text=True, cwd=HERE, timeout=120,
+                               env=dict(os.environ, AGENT_MAIL_DIR=str(wbox)))
+        check("...a keyed retry with no reader exits 0 quietly; with a reader it says `duplicate of`",
+              rc == 0 and not err and again.returncode == 0
+              and again.stdout.startswith(f"duplicate of {mine[0].name[:26]} ")
+              and len([f for f in md_files(wbox) if f"subject: gone {tag}\n" in f.read_text()]) == 1,
+              f"rc={rc} {err[-200:]!r} {again.stdout[:80]!r}")
+        rc, err, _ = piped(base + ["ask", "--from", "alice", "--to", "bob,carol,dave", "--subject",
+                                   f"fan {tag}", "--body", "b"], wbox, "closed")
+        fan = [f for f in md_files(wbox) if f"subject: fan {tag}\n" in f.read_text()]
+        check(f"{entry}: `ask` to three recipients with no reader still files all three, exit 0",
+              rc == 0 and not err and len(fan) == 3, f"rc={rc} {err[-200:]!r} {len(fan)}")
+        rc, err, _ = piped(base + ["canary", "--from", "alice", "--to", "bob"], wbox, "closed")
+        check(f"{entry}: `canary` with no reader exits 0", rc == 0 and not err,
+              f"rc={rc} {err[-200:]!r}")
+    for fd_word, what in ((">&-", "stdout closed outright"), ("2>&-", "stderr closed outright")):
+        r = subprocess.run(["sh", "-c", f'exec "$@" {fd_word}', "sh", *ENTRIES["console script"],
+                            "send", "--type", "NOTICE", "--from", "alice", "--to", "bob",
+                            "--subject", f"shut {fd_word[0]}", "--body", "b"],
+                           capture_output=True, text=True, cwd=HERE, timeout=120,
+                           env=dict(os.environ, AGENT_MAIL_DIR=str(wbox)))
+        n = len([f for f in md_files(wbox) if f"subject: shut {fd_word[0]}\n" in f.read_text()])
+        check(f"`send {fd_word}` ({what}): exit 0, one message", r.returncode == 0 and n == 1
+              and not r.stderr, f"rc={r.returncode} {r.stderr[-200:]!r} {n}")
+
+    print("a reader that goes away must not hide a real error")
+
+    def patched(patch: str, *argv: str, how: str = "full", box: Path = wbox,
+                unbuffered: bool = False) -> tuple[int, bytes, bytes]:
+        code = (f"import errno, sys; sys.path.insert(0, {str(HERE)!r}); import agent_mail\n"
+                f"{patch}\nsys.exit(agent_mail.main({list(argv)!r}))\n")
+        return piped([sys.executable, *(["-u"] if unbuffered else []), "-c", code], box, how)
+
+    epipe = ("def boom(*a, **k): raise OSError(errno.EPIPE, 'Broken pipe')\n"
+             "agent_mail._publish = boom")
+    one = ("send", "--type", "NOTICE", "--from", "alice", "--to", "bob", "--subject",
+           "never lands", "--body", "b")
+    line = b"send failed: cannot write to the mailbox: Broken pipe (EPIPE); nothing written\n"
+    before = len(md_files(wbox))
+    for how in ("full", "closed"):
+        rc, err, got = patched(epipe, *one, how=how)
+        check(f"EPIPE from writing the message file is a write failure, not a quiet exit "
+              f"(reader {how}): exit 1, the one line, nothing written",
+              rc == 1 and err == line and not got and len(md_files(wbox)) == before,
+              f"rc={rc} {err[-200:]!r}")
+    rc, err, got = patched("def boom(*a, **k): raise BrokenPipeError(errno.EPIPE, 'Broken pipe')\n"
+                           "agent_mail.load_messages = boom", "list", box=pbox)
+    check("EPIPE from reading the mailbox in `list` is not mistaken for a lost reader: "
+          f"a traceback and exit 1, never a silent {GONE}",
+          rc == 1 and b"BrokenPipeError" in err and b"Traceback" in err, f"rc={rc} {err[-200:]!r}")
+    for how in ("full", "closed"):
+        rc, err, got = patched("def boom(*a, **k): raise KeyboardInterrupt\n"
+                               "agent_mail._publish = boom", *one, how=how)
+        check(f"SIGINT during a send still exits 130 with its line (reader {how})",
+              rc == 130 and err == b"interrupted (SIGINT); nothing written\n",
+              f"rc={rc} {err[-200:]!r}")
+    rc, err, got = patched("def boom(*a, **k): raise KeyboardInterrupt\n"
+                           "agent_mail.load_messages = boom", "list", box=pbox, how="closed")
+    check("SIGINT during `list` is still an interrupt, with or without a reader",
+          rc in (-signal.SIGINT, 130) and b"KeyboardInterrupt" in err, f"rc={rc} {err[-200:]!r}")
+    rc, err, got = patched("def boom(*a, **k): raise OSError(errno.ENOSPC, 'No space left on device')\n"
+                           "agent_mail._publish = boom", *one, how="closed")
+    check("a full disk with no reader: exit 1 and the ENOSPC line",
+          rc == 1 and err == b"send failed: cannot write to the mailbox: No space left on device "
+                              b"(ENOSPC); nothing written\n", f"rc={rc} {err[-200:]!r}")
+    if os.path.exists("/dev/full"):     # Linux: every write to it fails with ENOSPC
+        for name in ("list", "capability"):   # one fails in a print, one in the last flush
+            with open("/dev/full", "wb") as full_dev:
+                r = subprocess.run(ENTRIES["console script"] + commands[name], stdout=full_dev,
+                                   stderr=subprocess.PIPE, cwd=HERE, timeout=120,
+                                   env=dict(os.environ, AGENT_MAIL_DIR=str(pbox)))
+            check(f"`{name} > /dev/full`: a full disk behind stdout is still an error, "
+                  f"not a quiet {GONE} or 0",
+                  r.returncode not in (0, GONE) and b"No space left" in r.stderr,
+                  f"rc={r.returncode} {r.stderr[-200:]!r}")
+    else:
+        print("  SKIP  stdout on a full device (no /dev/full on this platform)")
+    if os.geteuid() != 0:
+        robox = root / "pipe-ro"
+        robox.mkdir()
+        os.chmod(robox, 0o555)
+        try:
+            for how in ("full", "closed"):
+                rc, err, got = piped(ENTRIES["console script"] + list(one), robox, how)
+                check(f"a read-only mailbox still exits 1 with its line (reader {how})",
+                      rc == 1 and err.startswith(b"send failed: cannot write to the mailbox: ")
+                      and err.endswith(b"; nothing written\n") and not list(robox.iterdir()),
+                      f"rc={rc} {err[-200:]!r}")
+        finally:
+            os.chmod(robox, 0o755)
+    for entry in ("console script", "python -u agent_mail.py"):
+        rc, err, got = piped(ENTRIES[entry] + ["show", "NOSUCHID"], pbox, "closed")
+        check(f"{entry}: an error is still printed on stderr when stdout has no reader, "
+              "and the exit status is the error's",
+              rc == 1 and err == b"no message with id NOSUCHID\n", f"rc={rc} {err[-200:]!r}")
+        rc, err, got = piped(ENTRIES[entry] + ["show", "NOSUCHID"], pbox, "full", stderr_gone=True)
+        check(f"{entry}: stderr with no reader does not crash or change the exit status",
+              rc == 1 and not got, f"rc={rc} {got[:80]!r}")
+        rc, err, got = piped(ENTRIES[entry] + ["list"], pbox, "full", stderr_gone=True)
+        check("...and output on stdout is still complete",
+              rc == 0 and got == reference["list"], f"rc={rc} {len(got)}")
+    r = subprocess.run(["sh", "-c", 'exec "$@" 2>&-', "sh", *ENTRIES["console script"],
+                        "show", "NOSUCHID"], capture_output=True, text=True, cwd=HERE,
+                       timeout=120, env=dict(os.environ, AGENT_MAIL_DIR=str(pbox)))
+    check("`show NOSUCHID 2>&-`: exit 1, and the diagnostic does not land on stdout instead",
+          r.returncode == 1 and r.stdout == "", f"rc={r.returncode} {r.stdout[:80]!r}")
+
+    print("a reader that goes away: the pickup hook stays silent and exits 0")
+    hook = [sys.executable, str(HERE / "hooks" / "agent_mail_check.py")]
+    who = {"AGENT_MAIL_IDENTITY": "bob"}
+    hbox = root / "pipe-h"
+    hbox.mkdir()
+    hand(hbox, ULID_A)
+    for label, box in (("a short pickup", hbox), ("a pickup larger than a pipe buffer", pbox)):
+        rc, err, full = piped(hook, box, "full", env_extra=who)
+        check(f"control: the hook delivers {label} to a reader that stays",
+              rc == 0 and not err and b"live message(s) addressed to 'bob'" in full
+              and (box is hbox or len(full) >= BIG), f"rc={rc} {len(full)} {err[-120:]!r}")
+        for extra in ([], ["-u"]):
+            for how in ("closed", "line", "kill"):
+                rc, err, got = piped([hook[0], *extra, hook[1]], box, how, env_extra=who)
+                check(f"the hook {' '.join(extra)} with its reader gone ({how}): exit 0, "
+                      "empty stderr, a prefix delivered",
+                      rc == 0 and not err and full.startswith(got), f"rc={rc} {err[-200:]!r}")
+
+    print("a reader that goes away: main() in-process leaves the caller's stdout alone")
+    sys.path.insert(0, str(HERE))
+    import agent_mail
+    saved = os.environ.get("AGENT_MAIL_DIR")
+    os.environ["AGENT_MAIL_DIR"] = str(pbox)
+    fds_before = len(os.listdir("/dev/fd"))
+    try:
+        def captured(*argv: str) -> tuple[object, str, str]:
+            out, err2 = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err2):
+                try:
+                    rc2: object = agent_mail.main(list(argv))
+                except SystemExit as exc:
+                    rc2 = f"SystemExit({exc.code})"
+            return rc2, out.getvalue(), err2.getvalue()
+
+        rc_l, out_l, err_l = captured("list")
+        check("in-process: main(['list']) into a StringIO returns 0 with the same bytes",
+              rc_l == 0 and out_l.encode() == reference["list"] and err_l == "", f"rc={rc_l}")
+        check("in-process: exit statuses are what they were (show: 1, bad flag: SystemExit(2), "
+              "--version: SystemExit(0))",
+              captured("show", "NOSUCHID")[::2] == (1, "no message with id NOSUCHID\n")
+              and captured("list", "--bogus")[0] == "SystemExit(2)"
+              and captured("--version")[:2] == ("SystemExit(0)",
+                                                f"agent-postbox {agent_mail.__version__}\n"),
+              repr(captured("show", "NOSUCHID")))
+        r_fd, w_fd = os.pipe()
+        os.close(r_fd)
+        broken = os.fdopen(w_fd, "w", encoding="utf-8")
+        codes = []
+        for _ in range(3):
+            with contextlib.redirect_stdout(broken), contextlib.redirect_stderr(io.StringIO()) as e2:
+                try:
+                    codes.append((agent_mail.main(["list"]), e2.getvalue()))
+                except BrokenPipeError as exc:
+                    codes.append((-1, repr(exc)))
+        with contextlib.redirect_stdout(broken):
+            try:
+                agent_mail.main(["--help"])
+                helped: object = "returned"
+            except SystemExit as exc:
+                helped = exc.code
+            except BrokenPipeError as exc:
+                helped = repr(exc)
+        check(f"in-process: a stdout whose reader is gone gives {GONE} every time, silently",
+              codes == [(GONE, "")] * 3 and helped == GONE, f"{codes} {helped}")
+        still_pipe = stat.S_ISFIFO(os.fstat(w_fd).st_mode)
+        try:
+            broken.flush()                      # nothing may be left for a later flush
+            empty = True
+        except BrokenPipeError:
+            empty = False
+        try:
+            os.write(w_fd, b"x")
+            wrote = True
+        except BrokenPipeError:
+            wrote = False
+        check("in-process: afterwards that stdout is still the caller's pipe (not /dev/null), "
+              "and its buffer is empty", still_pipe and empty and not wrote,
+              f"{still_pipe} {empty} {wrote}")
+        with contextlib.suppress(OSError):
+            broken.close()
+        rc_l2, out_l2, _ = captured("list")
+        check("in-process: the next call with a working stdout prints everything again",
+              rc_l2 == 0 and out_l2 == out_l, f"rc={rc_l2} {len(out_l2)}")
+        check("in-process: no descriptor is leaked by any of that",
+              len(os.listdir("/dev/fd")) == fds_before,
+              f"{fds_before} -> {len(os.listdir('/dev/fd'))}")
+    finally:
+        if saved is None:
+            del os.environ["AGENT_MAIL_DIR"]
+        else:
+            os.environ["AGENT_MAIL_DIR"] = saved
+    src = Path(TOOL).read_text(encoding="utf-8")
+    check("every line agent_mail.py prints goes through its one print(): no other writer "
+          "to stdout or stderr", src.count("builtins.print(") == 1
+          and "sys.stdout.write(" not in src and "sys.stderr.write(" not in src
+          and "os.write(1," not in src and "os.write(2," not in src, "")
+
 
 
 def main() -> int:
@@ -507,31 +879,7 @@ def main() -> int:
               and not [f.name for f in kbox.iterdir() if f.name.endswith((".lock", ".takeover"))],
               str(sorted(f.name for f in kbox.iterdir() if f.name.startswith("."))[:6]))
 
-        print("a reader that goes away (`list | head`)")
-        # agent_mail.py at this commit answers a closed stdout with a
-        # BrokenPipeError traceback and exit 120. The fix is not in this file's
-        # remit; set EXPECT_QUIET_SIGPIPE=1 to enforce the check once it lands.
-        pbox = root / "pipe"
-        pbox.mkdir()
-        for i in range(1500):   # a listing far larger than a pipe buffer
-            hand(pbox, f"01ARZ3NDEKTSV4RRFFQ6{i:06d}", name=f"01ARZ3NDEKTSV4RRFFQ6{i:06d}-p.md")
-        gone = subprocess.Popen([sys.executable, "-I", TOOL, "list"], stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE, text=True,
-                                env=dict(os.environ, AGENT_MAIL_DIR=str(pbox)))
-        assert gone.stdout is not None and gone.stderr is not None
-        first = gone.stdout.readline()
-        gone.stdout.close()                      # the reader leaves after one line
-        err = gone.stderr.read()
-        gone.stderr.close()
-        rc = gone.wait(timeout=120)
-        check("control: `list` started printing, then ended by itself once its reader left",
-              first.startswith("# mailbox") and rc is not None, f"{first!r} rc={rc}")
-        if os.environ.get("EXPECT_QUIET_SIGPIPE"):
-            check("a reader that goes away gets no traceback: stderr empty, exit 0 or 141",
-                  err == "" and rc in (0, 141), f"rc={rc} {err[-200:]}")
-        else:
-            print(f"  SKIP  no traceback when the reader goes away (exit {rc}, "
-                  f"{'traceback' if 'Traceback' in err else 'quiet'}); EXPECT_QUIET_SIGPIPE=1 enforces it")
+        reader_goes_away(root)
 
     faulthandler.cancel_dump_traceback_later()
     if FAILS:
