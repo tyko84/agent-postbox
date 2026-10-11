@@ -917,9 +917,46 @@ def main() -> int:
             mix = list(pool.map(give_up_or_grab, range(8)))
         check("owner giving a scope up (short renewals) while a rival grabs: every rival is refused (exit 3)",
               all(r.returncode == 3 for i, r in enumerate(mix) if i % 2)
-              and all(r.returncode in (0, 3) for r in mix)
-              and any(r.returncode == 0 for i, r in enumerate(mix) if not i % 2),
+              and all(r.returncode in (0, 3) for r in mix),
               str([(r.returncode, r.stderr.strip()[:60]) for r in mix]))
+        # Deliberately NOT asserted: that one of the owner's four renewals wins
+        # this round. The lock is one non-blocking attempt (PROTOCOL.md section
+        # 30: nothing polls, exit 3 means retry), and a rival holds it too while
+        # it looks for a held claim before being refused. Four renewals can each
+        # arrive while one of the four rivals is inside, and then nobody wins the
+        # round. That is what this check once failed on under load. What is
+        # guaranteed is asserted instead: an owner is only ever turned away by
+        # the lock, never by a rival's claim; the mechanism is shown below with
+        # a rival parked inside the lock; and an uncontended renewal succeeds.
+        check("an owner's renewal that lost the round was turned away by the lock (`being claimed "
+              "right now`), never by a rival's claim",
+              all("being claimed right now" in r.stderr and "already held" not in r.stderr
+                  for i, r in enumerate(mix) if not i % 2 and r.returncode == 3),
+              str([(r.returncode, r.stderr.strip()[:60]) for r in mix]))
+        park_in_lock = ("real_lm = agent_mail.load_messages\n"
+                        "def lm():\n"
+                        "    if any(n.startswith('.scope.') for n in os.listdir(os.environ['AGENT_MAIL_DIR'])):\n"
+                        "        gate()\n"  # this process holds the scope lock here
+                        "    return real_lm()\n"
+                        "agent_mail.load_messages = lm")
+        rival10, rready10 = blocked_send(
+            r10, park_in_lock, "send", "--type", "CLAIM", "--from", "bob", "--to", "all", "--subject",
+            "parked-grab", "--body", "b", "--expires", soon(1), "--scope", "file:10.py", tag="rival")
+        parked10 = rready10.exists() and rival10.poll() is None
+        lost10 = [give_up_or_grab(0) for _ in range(4)]
+        r10.with_name(r10.name + "rival.go").write_text("")
+        _, rerr10 = rival10.communicate(timeout=STEP_TIMEOUT)
+        check("why no owner is promised the round: while a rival is inside the scope lock, every "
+              "one of four owner renewals gets exit 3 `being claimed right now`",
+              parked10 and all(r.returncode == 3 and "being claimed right now" in r.stderr for r in lost10),
+              f"parked={parked10} {[(r.returncode, r.stderr.strip()[:60]) for r in lost10]}")
+        check("...and that rival is then refused as well (`already held by alice`): five "
+              "contenders, no winner, nothing written",
+              rival10.returncode == 3 and "already held by alice" in rerr10
+              and rows(r10, "parked-grab") == 0, f"rc={rival10.returncode} {rerr10!r}")
+        settled10 = give_up_or_grab(0)
+        check("with the contention over, the owner's renewal succeeds at its first attempt",
+              settled10.returncode == 0, settled10.stderr)
         check("no rival claim on disk, no scope lock or temp left, box parses clean",
               rows(r10, "bob -> all") == 0 and hidden(r10) == [] and run(r10, "list").returncode == 0,
               str(hidden(r10)) + run(r10, "list").stderr)
