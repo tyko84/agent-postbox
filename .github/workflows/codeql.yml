@@ -1,0 +1,48 @@
+name: codeql
+# CodeQL code scanning of the Python sources and of the workflow files themselves.
+# Findings appear under Security > Code scanning, and on a pull request as annotations on
+# the lines it changes. Nothing here is a required status check: the job is `analyze`, so
+# its checks are named `analyze (actions)` and `analyze (python)`, unlike every name
+# branch protection requires (docs/release-process.md, Required checks).
+#
+# Neither language is built (`build-mode: none`) and nothing is installed from PyPI: the
+# analysis reads the source. No secret is referenced.
+#
+# Pull requests from forks and from Dependabot run with a read-only token. GitHub accepts
+# code scanning uploads from a `pull_request` run all the same, so those runs upload too.
+# One known exception: a Dependabot pull request that is squash-merged makes a push to
+# main that GitHub attributes to Dependabot, and that push run may be refused the upload
+# (403 "Resource not accessible by integration"). The run is then red and nothing is
+# wrong with the code; the next push or the weekly run analyses main again.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 5 * * 3" # Wednesdays 05:17 UTC: new queries find things in unchanged code
+permissions: {}
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write # upload the results; the only write this workflow has
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [actions, python]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+      - uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        with:
+          category: "/language:${{ matrix.language }}"
