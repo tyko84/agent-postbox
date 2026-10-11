@@ -1828,6 +1828,268 @@ def main() -> int:
           rv.returncode == 0 and rv.stdout.startswith("agent-postbox ")
           and rv.stdout.strip().split()[-1].count(".") == 2, repr(rv.stdout))
 
+    # ---- BEGIN PROTOCOL.md §36 (reliability review of the write path) ----------
+    # One self-contained block: its own temp directory, its own helpers. Every
+    # negative check has a control in the same block.
+    print("\nplanted files, fan-outs and big mailboxes (PROTOCOL.md §36)")
+    import hashlib as hashlib36
+    import json as json36
+    import signal as signal36
+    import time as time36
+    with tempfile.TemporaryDirectory() as tmp36:
+        root36 = Path(tmp36)
+        tool36 = [sys.executable, "-I", str(HERE / "agent_mail.py")]
+
+        def box36(name: str) -> Path:
+            b = root36 / name
+            b.mkdir()
+            return b
+
+        def env36(b: Path) -> dict[str, str]:
+            env = {**os.environ, "AGENT_MAIL_DIR": str(b)}
+            env.pop("AGENT_MAIL_IDEM_WAIT", None)
+            return env
+
+        def run36(b: Path, *argv: str, stdin: str | None = None) -> subprocess.CompletedProcess:
+            return subprocess.run(tool36 + list(argv), capture_output=True, text=True, env=env36(b),
+                                  input=stdin, stdin=None if stdin is not None else subprocess.DEVNULL,
+                                  timeout=120)
+
+        def child36(b: Path, tag: str, patch: str, argv: list[str]) -> tuple[subprocess.Popen, Path, Path]:
+            """The real send path in a child with `patch` applied first. `gate()`
+            in the patch writes <tag>.ready and waits (bounded) for <tag>.go.
+            Returns once the child is parked at the gate or has exited."""
+            ready, go = root36 / f"{tag}.ready", root36 / f"{tag}.go"
+            code = (
+                "import os, sys, time\n"
+                f"sys.path.insert(0, {str(HERE)!r})\n"
+                "import agent_mail\n"
+                "def gate():\n"
+                f"    open({str(ready)!r}, 'w').close()\n"
+                "    for _ in range(6000):\n"  # 120 s: a parked child never outlives the suite
+                f"        if os.path.exists({str(go)!r}):\n"
+                "            return\n"
+                "        time.sleep(0.02)\n"
+                "    os._exit(99)\n"
+                f"{patch}\n"
+                f"sys.exit(agent_mail.main({argv!r}))\n")
+            proc = subprocess.Popen([sys.executable, "-I", "-c", code], env=env36(b),
+                                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE, text=True)
+            for _ in range(2400):  # 120 s cap, 0.05 s steps
+                if ready.exists() or proc.poll() is not None:
+                    break
+                time36.sleep(0.05)
+            return proc, ready, go
+
+        def mails36(b: Path) -> list[Path]:
+            return sorted(p for p in b.glob("*.md") if p.name != "PARTICIPANTS.md")
+
+        def hidden36(b: Path) -> list[str]:
+            return sorted(p.name for p in b.iterdir() if p.name.startswith("."))
+
+        def held36(b: Path) -> int:
+            return int(json36.loads(run36(b, "status", "--json").stdout)["claims"]["held"])
+
+        SCOPE36 = "file:planted.py"
+        LOCK36 = ".scope." + hashlib36.sha256(SCOPE36.encode()).hexdigest()[:24] + ".lock"
+
+        def claim36(b: Path, who: str) -> subprocess.CompletedProcess:
+            return run36(b, "send", "--type", "CLAIM", "--from", who, "--to", "all", "--subject",
+                         f"claim by {who}", "--body", "b", "--scope", SCOPE36, "--expires", iso(1))
+
+        # (a) the scope lock is never followed out of the mailbox
+        a_ctl = box36("a-control")
+        r = claim36(a_ctl, "alice")
+        check("control: a claim on a scope with nothing planted exits 0 and leaves no lock file",
+              r.returncode == 0 and len(mails36(a_ctl)) == 1 and hidden36(a_ctl) == [], r.stderr)
+        a_sym = box36("a-symlink")
+        outside = root36 / "outside-the-mailbox.txt"
+        outside.write_text("precious bytes\n", encoding="utf-8")
+        os.symlink(outside, a_sym / LOCK36)
+        r = claim36(a_sym, "alice")
+        check("a symbolic link at the scope lock name is not followed: its target keeps every byte",
+              outside.read_text(encoding="utf-8") == "precious bytes\n",
+              repr(outside.read_text(encoding="utf-8")))
+        check("...the claim fails with the one line of §32 naming ELOOP, exit 1",
+              r.returncode == 1 and r.stdout == "" and len(r.stderr.strip().splitlines()) == 1
+              and r.stderr.startswith("send failed: cannot write to the mailbox: ")
+              and "(ELOOP); nothing written" in r.stderr, f"rc={r.returncode} {r.stdout!r} {r.stderr!r}")
+        check("...no claim is written and the link itself is left for the operator",
+              mails36(a_sym) == [] and os.path.islink(a_sym / LOCK36) and hidden36(a_sym) == [LOCK36],
+              str(sorted(p.name for p in a_sym.iterdir())))
+        a_hard = box36("a-hardlink")
+        other = root36 / "other-name-of-the-lock.txt"
+        other.write_text("precious bytes\n", encoding="utf-8")
+        os.link(other, a_hard / LOCK36)
+        r = claim36(a_hard, "alice")
+        check("a lock file with a second hard link is locked but never written to: the claim "
+              "succeeds and the other name keeps every byte",
+              r.returncode == 0 and len(mails36(a_hard)) == 1
+              and other.read_text(encoding="utf-8") == "precious bytes\n",
+              f"rc={r.returncode} {r.stderr!r} {other.read_text(encoding='utf-8')!r}")
+
+        # (b) among files sharing an id, the one named for the id keeps it
+        b_box = box36("b-duplicate")
+        r = claim36(b_box, "bob")
+        bob_id = next((ln.split(": ", 1)[1] for ln in r.stdout.splitlines() if ln.startswith("id: ")), "")
+        check("control: bob's scoped claim is held and a rival is refused (exit 3)",
+              r.returncode == 0 and held36(b_box) == 1 and claim36(b_box, "alice").returncode == 3, r.stderr)
+        (b_box / "00-note.md").write_text(
+            f"---\nid: {bob_id.lower()}\ntype: NOTICE\nfrom: carol\nto: all\n"
+            f"date: {iso(0)}\nsubject: HAND-WRITTEN-36\n---\n\ncopied template, id not replaced\n",
+            encoding="utf-8")
+        listed = run36(b_box, "list")
+        check("a hand-written file that reuses a claim's id and sorts first is the one rejected",
+              "REJECT 00-note.md: duplicate id" in listed.stderr and "HAND-WRITTEN-36" not in listed.stdout
+              and "claim by bob" in listed.stdout, listed.stdout + listed.stderr)
+        rival = claim36(b_box, "alice")
+        check("...the claim is still held and a rival's claim on its scope still exits 3",
+              held36(b_box) == 1 and rival.returncode == 3 and "already held by bob" in rival.stderr
+              and len(mails36(b_box)) == 2, f"held={held36(b_box)} rc={rival.returncode} {rival.stderr!r}")
+        b_tie = box36("b-tie")
+        for fname, subject in (("aa.md", "FIRST-36"), ("bb.md", "SECOND-36")):
+            (b_tie / fname).write_text(
+                f"---\nid: 01ARZ3NDEKTSV4RRFFQ69G5D36\ntype: NOTICE\nfrom: carol\nto: all\n"
+                f"date: {iso(0)}\nsubject: {subject}\n---\n\nb\n", encoding="utf-8")
+        listed = run36(b_tie, "list")
+        check("control: of two files neither named for the id, the first in filename order is admitted",
+              "FIRST-36" in listed.stdout and "SECOND-36" not in listed.stdout
+              and "REJECT bb.md: duplicate id" in listed.stderr, listed.stdout + listed.stderr)
+        for fname, subject in (("01ARZ3NDEKTSV4RRFFQ69G5E36-a.md", "CANON-A-36"),
+                               ("01ARZ3NDEKTSV4RRFFQ69G5E36-b.md", "CANON-B-36")):
+            (b_tie / fname).write_text(
+                f"---\nid: 01ARZ3NDEKTSV4RRFFQ69G5E36\ntype: NOTICE\nfrom: carol\nto: all\n"
+                f"date: {iso(0)}\nsubject: {subject}\n---\n\nb\n", encoding="utf-8")
+        listed = run36(b_tie, "list")
+        check("control: of two files both named for the id, the first in filename order is admitted",
+              "CANON-A-36" in listed.stdout and "CANON-B-36" not in listed.stdout
+              and "REJECT 01ARZ3NDEKTSV4RRFFQ69G5E36-b.md: duplicate id" in listed.stderr,
+              listed.stdout + listed.stderr)
+
+        # (c) a fan-out reads its body once, refuses before it writes, stops when interrupted
+        def got36(b: Path, token: str) -> list[str]:
+            return sorted(ln[4:] for p in mails36(b) if token in p.read_text(encoding="utf-8")
+                          for ln in p.read_text(encoding="utf-8").splitlines() if ln.startswith("to: "))
+
+        c_ask = box36("c-ask")
+        r = run36(c_ask, "ask", "--from", "alice", "--to", "bob,carol", "--subject", "q",
+                  "--body-file", "-", stdin="STDIN-BODY-36\n")
+        check("ask to two recipients with the body on stdin: both get the body, exit 0",
+              r.returncode == 0 and got36(c_ask, "STDIN-BODY-36") == ["bob", "carol"],
+              f"rc={r.returncode} {got36(c_ask, 'STDIN-BODY-36')} {r.stderr!r}")
+        c_alias = box36("c-alias")
+        (c_alias / "PARTICIPANTS.md").write_text(
+            "## Aliases\n\n| Alias | Writers |\n|---|---|\n| `team` | `bob`, `carol` |\n"
+            "| `broken` | `bob`, `bad name` |\n", encoding="utf-8")
+        r = run36(c_alias, "send", "--type", "NOTICE", "--from", "alice", "--to", "team",
+                  "--subject", "n", stdin="PIPED-BODY-36\n")
+        check("send to an alias of two with the body piped: both writers get the body, exit 0",
+              r.returncode == 0 and got36(c_alias, "PIPED-BODY-36") == ["bob", "carol"],
+              f"rc={r.returncode} {got36(c_alias, 'PIPED-BODY-36')} {r.stderr!r}")
+        before = len(mails36(c_alias))
+        r = run36(c_alias, "send", "--type", "NOTICE", "--from", "alice", "--to", "broken",
+                  "--subject", "n2", "--body", "b")
+        check("send to an alias with one invalid writer: exit 2, `refusing to send:`, nothing written",
+              r.returncode == 2 and "refusing to send: --to 'bad name'" in r.stderr
+              and len(mails36(c_alias)) == before, f"rc={r.returncode} {r.stderr!r} n={len(mails36(c_alias))}")
+        c_bad = box36("c-invalid")
+        r = run36(c_bad, "ask", "--from", "alice", "--to", "bob,bad name", "--subject", "q", "--body", "b")
+        check("ask with one invalid recipient: exit 2, `refusing to send:`, nothing written",
+              r.returncode == 2 and "refusing to send: --to 'bad name'" in r.stderr and mails36(c_bad) == [],
+              f"rc={r.returncode} {r.stderr!r} {[p.name for p in mails36(c_bad)]}")
+        c_ok = box36("c-valid")
+        r = run36(c_ok, "ask", "--from", "alice", "--to", "bob,carol", "--subject", "q", "--body", "b")
+        check("control: the same ask with two valid recipients writes both",
+              r.returncode == 0 and len(mails36(c_ok)) == 2, r.stderr)
+        c_term = box36("c-sigterm")
+        first_parks = ("real = agent_mail._publish\ncalls = []\n"
+                       "def pub(final, text):\n"
+                       "    calls.append(1)\n"
+                       "    if len(calls) == 1:\n"
+                       "        gate()\n"  # <tag>.go is never created: only the signal ends it
+                       "    return real(final, text)\n"
+                       "agent_mail._publish = pub")
+        proc, ready, _go = child36(c_term, "c-term", first_parks,
+                                   ["ask", "--from", "alice", "--to", "bob,carol", "--subject", "q",
+                                    "--body", "b"])
+        parked = ready.exists() and proc.poll() is None
+        proc.send_signal(signal36.SIGTERM)
+        try:
+            _out, err = proc.communicate(timeout=120)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            _out, err = proc.communicate(timeout=120)
+        check("SIGTERM while the first of two recipients is being published: exit 143, one line",
+              parked and proc.returncode == 143
+              and err.strip() == "interrupted (SIGTERM); nothing written",
+              f"parked={parked} rc={proc.returncode} {err!r}")
+        check("...and the fan-out stops: no message for either recipient, nothing hidden left",
+              mails36(c_term) == [] and hidden36(c_term) == [],
+              str(sorted(p.name for p in c_term.iterdir())))
+
+        # (d) a send that needs no other message reads none
+        d_box = box36("d-reads")
+        for n in range(3):
+            run36(d_box, "send", "--type", "NOTICE", "--from", "alice", "--to", "bob",
+                  "--subject", f"old {n}", "--body", "b")
+        old_id = mails36(d_box)[0].name[:26]
+
+        def reads36(tag: str, *extra: str) -> tuple[int | None, int]:
+            count = root36 / f"{tag}.count"
+            patch = ("real = agent_mail._read_mail_file\n"
+                     "def counted(path):\n"
+                     f"    with open({str(count)!r}, 'a') as fh:\n"
+                     "        fh.write('x')\n"
+                     "    return real(path)\n"
+                     "agent_mail._read_mail_file = counted")
+            proc, _ready, _go = child36(d_box, tag, patch,
+                                        ["send", "--type", "NOTICE", "--from", "alice", "--to", "bob",
+                                         "--subject", tag, "--body", "b", *extra])
+            proc.communicate(timeout=120)
+            return proc.returncode, (len(count.read_text()) if count.exists() else 0)
+
+        plain, keyed = reads36("d-plain"), reads36("d-keyed", "--key", "k36")
+        check("a plain send and a keyed send open no message file",
+              plain == (0, 0) and keyed == (0, 0), f"plain={plain} keyed={keyed}")
+        sup = reads36("d-supersedes", "--supersedes", old_id)
+        check("control: a --supersedes send does read the mailbox (the counter works), once",
+              sup[0] == 0 and sup[1] == 5, repr(sup))
+
+        # (e) a key marker's temporary name belongs to one send
+        e_box = box36("e-same-pid")
+        same_pid = "os.getpid = lambda: 4242\n"
+        park_at_marker_link = (same_pid +
+                               "real_link = os.link\n"
+                               "def link(src, dst, *a, **k):\n"
+                               "    if os.path.basename(os.fspath(dst)).startswith('.idem.'):\n"
+                               "        gate()\n"
+                               "    return real_link(src, dst, *a, **k)\n"
+                               "os.link = link")
+        keyed_send = ["send", "--type", "NOTICE", "--from", "alice", "--to", "bob", "--subject",
+                      "same pid", "--body", "b", "--key", "K36"]
+        first, ready, go = child36(e_box, "e-first", park_at_marker_link, keyed_send)
+        parked = ready.exists() and first.poll() is None
+        second, _r, _g = child36(e_box, "e-second", same_pid, keyed_send)
+        out2, err2 = second.communicate(timeout=120)
+        go.write_text("", encoding="utf-8")
+        out1, err1 = first.communicate(timeout=120)
+        marker = [p for p in e_box.iterdir() if p.name.startswith(".idem.")]
+        check("two senders of one key reporting the same pid, the first parked before it links "
+              "its marker: both exit 0, one `wrote`, one `duplicate of`",
+              parked and (first.returncode, second.returncode) == (0, 0)
+              and sorted(("wrote " in o, "duplicate of " in o) for o in (out1, out2))
+              == [(False, True), (True, False)],
+              f"parked={parked} first={first.returncode} {out1!r} {err1!r} "
+              f"second={second.returncode} {out2!r} {err2!r}")
+        check("...one message, one three-line marker, no temp file left",
+              len(mails36(e_box)) == 1 and len(marker) == 1
+              and marker[0].read_text(encoding="utf-8").count("\n") == 3
+              and marker[0].read_text(encoding="utf-8").endswith("\nflock\n")
+              and hidden36(e_box) == [marker[0].name],
+              str(sorted(p.name for p in e_box.iterdir())))
+    # ---- END PROTOCOL.md §36 ---------------------------------------------------
+
     summary = 'FAILED: ' + '; '.join(failures) if failures else 'all checks passed'
     if skipped and not failures:
         summary += f" ({len(skipped)} spec-checkout-only check(s) skipped)"

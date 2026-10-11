@@ -1364,3 +1364,127 @@ line on stderr; (d) the pickup adapter exits 0 with empty stderr.
 readers that leave mid-output or are killed, injected `EPIPE`, `ENOSPC` and
 interrupts, and `main()` called in-process; `test_packaging.py` runs (a) to
 (c) against the installed `agent-postbox`.
+
+---
+
+## 36. What a planted file, a fan-out and a big mailbox may not do to a send
+
+Five things found by reviewing the write path of 0.3.1 as released. Each was
+reproduced before it was written down. None changes a message format, an exit
+status or a line of output that already existed.
+
+**(a) A scope lock is never followed out of the mailbox, and only a plain
+lock file is written to.** §30 opens-or-creates `.scope.<hash>.lock` and
+records the holder's pid in it. The name is a hash of the scope, so anyone who
+can create a file in the mailbox can predict it. The open followed symbolic
+links: with a link planted at that name, a claim on the scope locked the
+link's *target*, emptied it and wrote a pid into it, wherever it was. §29
+says a link in the mailbox is never followed; that now holds for the lock
+too. Rule: the lock is opened without following a link. A link at the lock
+name makes the claim fail the way §32 describes an operating-system refusal
+(`send failed: cannot write to the mailbox: ... (ELOOP); nothing written`,
+exit 1); the link and its target are left exactly as they were, and removing
+the link is the operator's decision. The pid is recorded only when the file
+just locked is a regular file with no other name (link count 1); a lock file
+that has a second hard link is still locked, and the claim proceeds, but
+nothing is written into it. The pid was only ever a note for a human; the
+lock is the kernel's (§30).
+
+**(b) Among files that share an `id`, the one named for that id keeps it.**
+§5a quarantines "an `id` already used by another file". Which file counted as
+the other one was filename order, so a hand-written `00-note.md` that reused
+the id of a held CLAIM (a copied template, §24) was admitted and the *claim*
+was quarantined: it stopped being `held`, and a rival's `--scope` claim then
+succeeded. This is the failure of §32 by another route. Rule: when several
+files carry the same id (compared without regard to case, §32), a file whose
+name starts with that id followed by `-`, which is the name `send` gives
+(§2), is admitted in preference to one whose name does not. Among files that
+are equal by that test the first in filename order is admitted, as before.
+Every other file with the id is quarantined with the same `REJECT ...
+duplicate id` line as before. Not covered, and not coverable (§0): a file
+deliberately named `<id>-<something>.md`. A writer who can do that can also
+remove the claim.
+
+**(c) A fan-out reads its body once, refuses before it writes, and stops when
+it is interrupted.** `ask --to a,b,c` and `send --to <alias>` (§27) file one
+message per recipient.
+
+* The body is read once and every recipient gets the same bytes. Before, a
+  body on standard input (`--body-file -`, or piped with no body flag) was
+  read again for each recipient: `ask` delivered to the first and refused the
+  rest as empty (exit 2), and `send --to <alias>` delivered to nobody.
+* Every recipient is checked against the input policy (§29) before any
+  message is written. One recipient that is refused (an alias that maps to an
+  invalid identity, `ask --to bob,"bad name"`) means exit 2 with the usual
+  `refusing to send:` line and **nothing written**; before, the recipients
+  ahead of it in the list had already been written when exit 2 said "refused".
+* An interruption (§31: exit 130 or 143) ends the fan-out. No recipient after
+  the one being written when the signal arrived is written; before, the
+  remaining recipients were still sent after `interrupted ...; nothing
+  written` had been printed.
+
+A fan-out is still not atomic, and cannot be: each recipient's message is its
+own file. When one recipient fails for a reason of its own (exit 1 or 3) the
+others are still attempted and the exit status is the last failure's, as
+before; a SIGKILL leaves the recipients already written. The retry that is
+safe after a partial fan-out is the keyed one: `send --to <alias> --key K`
+holds one reservation per `(sender, recipient, key)` (§31), so repeating it
+writes exactly the missing recipients and answers `duplicate of` for the
+rest. `ask` has no `--key`; a repeated `ask` files its ASKs again.
+
+**(d) A send that needs no other message reads none.** `send` read and parsed
+every message in the mailbox before writing, to look up a `--supersedes`
+target, whether or not one was named. Its cost grew with the mailbox: 0.34 s
+at 10,000 messages and 4.1 s (310 MB) at 100,000, against 0.04 s empty. Rule:
+a send that names neither `--supersedes` nor `--scope` opens no message file.
+A `--supersedes` send reads the mailbox once, to find its target; a `--scope`
+claim reads it once while holding the scope lock, to look for a held rival
+(§30 step 3), and that read is what a claim on a large mailbox waits for.
+
+**(e) A key marker's temporary name belongs to one send.** §31 step 1 writes
+the marker under a hidden temporary name first. That name was built from the
+key's hash and the process id only and was opened with truncation, so two
+senders of one key with the same process id (two containers sharing a
+mailbox volume each run the tool as the same low pid) used one temp file: the
+second emptied what the first had written and then removed it. Rule: the
+temporary name also carries the send's own id and is created exclusively. Its
+shape is `.idem.<hash>.<pid>.<id>.tmp`; it still ends in `.tmp`, so §33
+counts a leftover one as it always did.
+
+**What callers observe.** (a) a claim on a scope whose lock name is a symbolic
+link exits 1 instead of 0. (b) a mailbox holding a duplicate id may admit a
+different one of the files than before; the quarantine count is the same.
+(c) the three changes listed. (d) nothing but time. (e) nothing. No message,
+status code, JSON key or marker format changes; no migration.
+
+**Invariant a test must pin.** (a) With a symbolic link at a scope's lock name
+pointing at a file outside the mailbox, a claim on the scope exits 1 with the
+one line of §32, writes no claim, and leaves the link and every byte of its
+target; with a second hard link to the lock file, the claim succeeds and the
+other name's bytes are unchanged; control: the same claim with nothing
+planted exits 0. (b) A held scoped claim and a hand-written file with the
+same id whose name sorts first: the claim is still `held`, the hand-written
+file is the one rejected, and a rival's claim on the scope exits 3; control:
+of two files that are both not named for the id, the first in filename order
+is the one admitted. (c) `ask` to two recipients and `send` to an alias of
+two, body on standard input: both recipients get the body, exit 0; `ask`
+with one invalid recipient writes nothing, exit 2; a SIGTERM while the first
+of two recipients is being published exits 143 and leaves no message for
+either; control: the same fan-out undisturbed writes both. (d) A plain send
+and a keyed send open no message file; control: a `--supersedes` send does.
+(e) Two senders of one key that report the same process id, the first parked
+between writing its temp file and linking it: both exit 0, one `wrote` and
+one `duplicate of`, one message, a three-line marker, no temp file left.
+`selftest.py` pins all five with real subprocesses.
+
+**Assumed, and not testable here.** What `fsync` promises. `send` fsyncs the
+message file before linking it and the directory after, so on a filesystem
+that honours `fsync` a message that `send` reported is complete and present
+after power loss, and a reader never sees a partial one in any case (§2).
+Three things are not promised: on macOS `fsync` does not flush the drive's
+own cache (that needs `F_FULLFSYNC`, which the tool does not request); the
+key marker's directory entry is made durable by the same directory `fsync`
+as the message, so a power loss between the two can keep a message whose
+marker is gone, and a retry then files it again; and the removal of a temp
+file is not synced, so one may reappear, hidden, after a crash (§33 reports
+it once stale).
