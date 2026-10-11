@@ -25,6 +25,7 @@ from __future__ import annotations
 import contextlib
 import datetime as dt
 import faulthandler
+import hashlib
 import io
 import json
 import os
@@ -643,6 +644,122 @@ def main() -> int:
         os.symlink(sbox, linkbox)
         res = run(linkbox, "list")
         check("control: operator-chosen symlinked mailbox dir still works", "legit" in res.stdout, res.stderr)
+
+        print("planted lock and key-marker files: never followed, never written through "
+              "(PROTOCOL.md section 36)")
+        # The names are hashes of the scope and of (sender, recipient, key), so
+        # whoever can create a file in the mailbox can predict them.
+        victim = outside / "victim.txt"
+        lock_name = ".scope." + hashlib.sha256(b"file:p.py").hexdigest()[:24] + ".lock"
+        mark_name = ".idem." + hashlib.sha256(b"alice\0bob\0pk").hexdigest()[:24]
+
+        def pbox(name: str) -> Path:
+            b = root / f"planted-{name}"
+            b.mkdir()
+            victim.write_text("VICTIM-BYTES\n", encoding="utf-8")
+            return b
+
+        def pclaim(b: Path) -> subprocess.CompletedProcess[str]:
+            return send(b, to="all", kind="CLAIM", subj="pc",
+                        extra=("--scope", "file:p.py", "--expires", soon(1)))
+
+        def pkeyed(b: Path) -> subprocess.CompletedProcess[str]:
+            return send(b, subj="pk", extra=("--key", "pk", "--key-wait", "0"))
+
+        def refused(cp: subprocess.CompletedProcess[str], errno_name: str) -> bool:
+            return (cp.returncode == 1 and cp.stdout == "" and len(cp.stderr.strip().splitlines()) == 1
+                    and cp.stderr.startswith("send failed: cannot write to the mailbox: ")
+                    and f"({errno_name}); nothing written" in cp.stderr)
+
+        def intact() -> bool:
+            return victim.read_text(encoding="utf-8") == "VICTIM-BYTES\n"
+
+        b = pbox("control")
+        check("control: with nothing planted the scoped claim and the keyed send both succeed",
+              pclaim(b).returncode == 0 and pkeyed(b).returncode == 0 and len(md_files(b)) == 2)
+        b = pbox("lock-symlink")
+        os.symlink(victim, b / lock_name)
+        res = pclaim(b)
+        check("scope lock name is a symlink to a file outside: not followed, target intact, "
+              "one line naming ELOOP, exit 1, nothing written, link left in place",
+              refused(res, "ELOOP") and intact() and md_files(b) == [] and os.path.islink(b / lock_name),
+              f"rc={res.returncode} {res.stderr!r} {victim.read_text()!r}")
+        b = pbox("lock-dangling")
+        os.symlink(outside / "created-through-the-link.txt", b / lock_name)
+        res = pclaim(b)
+        check("scope lock name is a dangling symlink: nothing is created at its target",
+              refused(res, "ELOOP") and not (outside / "created-through-the-link.txt").exists()
+              and md_files(b) == [], f"rc={res.returncode} {res.stderr!r}")
+        b = pbox("lock-dirlink")
+        os.symlink(outside, b / lock_name)
+        res = pclaim(b)
+        check("scope lock name is a symlink to a directory: refused the same way",
+              refused(res, "ELOOP") and md_files(b) == [], f"rc={res.returncode} {res.stderr!r}")
+        b = pbox("lock-hardlink")
+        os.link(victim, b / lock_name)
+        res = pclaim(b)
+        check("scope lock name is a second hard link of another file: the claim succeeds, that "
+              "file keeps every byte, and only the name in the mailbox is removed",
+              res.returncode == 0 and intact() and len(md_files(b)) == 1 and not (b / lock_name).exists(),
+              f"rc={res.returncode} {res.stderr!r} {victim.read_text()!r}")
+        b = pbox("lock-garbage")
+        (b / lock_name).write_bytes(bytes(range(256)) * 4)
+        res = pclaim(b)
+        check("a lock file full of binary garbage is just a lock file: claim succeeds, lock removed",
+              res.returncode == 0 and not (b / lock_name).exists() and len(md_files(b)) == 1, res.stderr)
+        b = pbox("lock-directory")
+        (b / lock_name).mkdir()
+        res = pclaim(b)
+        check("a directory at the lock name: one line naming EISDIR, exit 1, directory untouched",
+              refused(res, "EISDIR") and (b / lock_name).is_dir() and md_files(b) == [],
+              f"rc={res.returncode} {res.stderr!r}")
+        b = pbox("lock-fifo")
+        os.mkfifo(b / lock_name)
+        try:
+            res = pclaim(b)
+            hung = False
+        except subprocess.TimeoutExpired:
+            hung = True
+        check("a FIFO at the lock name does not hang the claim: exit 2 `cannot lock scope`, one "
+              "line, nothing written, the FIFO left in place",
+              not hung and res.returncode == 2 and md_files(b) == []
+              and res.stderr.startswith("cannot lock scope 'file:p.py': ")
+              and len(res.stderr.strip().splitlines()) == 1
+              and stat.S_ISFIFO(os.lstat(b / lock_name).st_mode),
+              "hung" if hung else f"rc={res.returncode} {res.stderr!r}")
+        for kind in ("symlink", "dangling", "directory", "fifo"):
+            b = pbox(f"marker-{kind}")
+            if kind == "symlink":
+                os.symlink(victim, b / mark_name)
+            elif kind == "dangling":
+                os.symlink(outside / "created-through-the-marker.txt", b / mark_name)
+            elif kind == "directory":
+                (b / mark_name).mkdir()
+            else:
+                os.mkfifo(b / mark_name)
+            try:
+                res = pkeyed(b)
+                hung = False
+            except subprocess.TimeoutExpired:
+                hung = True
+            check(f"key marker name is a {kind}: one line, exit 1, nothing written, nothing "
+                  "followed, the planted entry left in place",
+                  not hung and res.returncode == 1 and len(res.stderr.strip().splitlines()) == 1
+                  and res.stderr.startswith("send failed: cannot write to the mailbox: ")
+                  and md_files(b) == [] and intact() and os.path.lexists(b / mark_name)
+                  and not (outside / "created-through-the-marker.txt").exists()
+                  and sorted(x.name for x in b.iterdir()) == [mark_name],
+                  "hung" if hung else f"rc={res.returncode} {res.stderr!r} {sorted(x.name for x in b.iterdir())}")
+        for kind, raw in (("empty", b""), ("binary garbage", bytes(range(256)) * 4)):
+            b = pbox("marker-" + kind.split()[0])
+            (b / mark_name).write_bytes(raw)
+            res = pkeyed(b)
+            now_marker = (b / mark_name).read_text(encoding="utf-8").split("\n")
+            check(f"an {kind} key marker names no message, so the send takes it over and "
+                  "publishes once; the marker then names that message",
+                  res.returncode == 0 and len(md_files(b)) == 1 and now_marker[0] == mid(res)
+                  and pkeyed(b).stdout.startswith("duplicate of ") and len(md_files(b)) == 1,
+                  f"rc={res.returncode} {res.stderr!r} {now_marker[:1]}")
 
         print("FIFO planted as a .md must not hang the reader")
         fbox = root / "f"

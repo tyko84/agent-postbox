@@ -1384,11 +1384,14 @@ too. Rule: the lock is opened without following a link. A link at the lock
 name makes the claim fail the way §32 describes an operating-system refusal
 (`send failed: cannot write to the mailbox: ... (ELOOP); nothing written`,
 exit 1); the link and its target are left exactly as they were, and removing
-the link is the operator's decision. The pid is recorded only when the file
-just locked is a regular file with no other name (link count 1); a lock file
-that has a second hard link is still locked, and the claim proceeds, but
-nothing is written into it. The pid was only ever a note for a human; the
-lock is the kernel's (§30).
+the link is the operator's decision. Anything else at the lock name that is
+not a regular file (a FIFO, a device) is refused as §30 refuses a filesystem
+without `flock` (`cannot lock scope ...`, exit 2, nothing written) and is
+left in place; a directory there is the §32 refusal (`EISDIR`, exit 1). The
+pid is recorded only when the lock file has no other name (link count 1); a
+lock file that has a second hard link is still locked, and the claim
+proceeds, but nothing is written into it. The pid was only ever a note for a
+human; the lock is the kernel's (§30).
 
 **(b) Among files that share an `id`, the one named for that id keeps it.**
 §5a quarantines "an `id` already used by another file". Which file counted as

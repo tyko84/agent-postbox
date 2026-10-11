@@ -498,6 +498,13 @@ def _parse_frontmatter(text: str) -> tuple[dict[str, str], str, str]:
     return meta, text[end + 4:].lstrip('\n'), ""
 
 
+def _named_for_id(name: str, raw_id: str) -> bool:
+    """Is ``name`` the kind of filename `send` gives a message with this id
+    (``<id>-...``)? Decides which of several files sharing an id is admitted
+    (PROTOCOL.md section 36); ids have no case (section 32)."""
+    return name[:27].upper() == raw_id.upper() + "-"
+
+
 def load_messages() -> tuple[list[Message], list[str]]:
     """Read mailbox, sort by fail-closed id key, collect loud REJECT reasons."""
     out: list[Message] = []
@@ -560,9 +567,17 @@ def load_messages() -> tuple[list[Message], list[str]]:
             )
             continue
         if raw_id.upper() in seen_ids:
+            loser, keeper = path.name, seen_ids[raw_id.upper()]
+            if _named_for_id(loser, raw_id) and not _named_for_id(keeper, raw_id):
+                # PROTOCOL.md section 36: the file named the way `send` names
+                # it keeps the id; the one admitted so far is the duplicate.
+                loser, keeper = keeper, loser
+                out = [m for m in out if m.path.name != loser]
+                seen_ids[raw_id.upper()] = keeper
+                out.append(msg)
             rejects.append(
-                f"REJECT {path.name}: duplicate id {raw_id} "
-                f"(first seen in {seen_ids[raw_id.upper()]}; a reply or supersede "
+                f"REJECT {loser}: duplicate id {raw_id} "
+                f"(first seen in {keeper}; a reply or supersede "
                 "citing it would be ambiguous)"
             )
             continue
@@ -1158,9 +1173,22 @@ def cmd_ask(args: argparse.Namespace) -> int:
     else:
         recipients = [c.lower() for c in candidates]
 
+    # PROTOCOL.md section 36: one read of the body for every recipient, and
+    # every recipient checked before any message is written.
+    body = resolve_body(args)
+    if body is None:
+        return 2
+    for dest in recipients:
+        err = _send_input_error(
+            argparse.Namespace(sender=args.sender, to=dest, subject=args.subject), body)
+        if err:
+            print(f"refusing to send: {err}", file=sys.stderr)
+            return 2
+
     rc = 0
     for dest in recipients:
         a = argparse.Namespace()
+        a._body = body
         a.type = "ASK"
         a.sender = args.sender
         a.to = dest
@@ -1180,6 +1208,8 @@ def cmd_ask(args: argparse.Namespace) -> int:
         ):
             setattr(a, key, "")
         one = cmd_send(a)
+        if one in _INTERRUPTED:
+            return one  # section 36: an interruption ends the fan-out
         if one != 0:
             rc = one
     return rc
@@ -1335,8 +1365,10 @@ def _idem_new_marker(marker: Path, msg_id: str, content: str, over: bool) -> int
     the lock; closing it releases the key's liveness signal.
     """
     import fcntl  # POSIX only
-    tmp = marker.with_name(f"{marker.name}.{os.getpid()}.tmp")
-    fd = os.open(tmp, os.O_RDWR | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o644)
+    # The send's own id in the name and O_EXCL: no other send, whatever its pid,
+    # can open, empty or remove this temp file (PROTOCOL.md section 36).
+    tmp = marker.with_name(f"{marker.name}.{os.getpid()}.{msg_id}.tmp")
+    fd = os.open(tmp, os.O_RDWR | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o644)
     try:
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -1495,7 +1527,9 @@ def _scope_lock(lock: Path) -> int | None:
     """
     import fcntl  # POSIX only; local so the module still imports where fcntl is absent
     for _ in range(8):
-        fd = os.open(lock, os.O_RDWR | os.O_CREAT, 0o644)
+        # O_NOFOLLOW: the name is predictable, so a link planted there must not
+        # send the lock, and the pid below, to its target (section 36).
+        fd = os.open(lock, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o644)
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
@@ -1509,15 +1543,24 @@ def _scope_lock(lock: Path) -> int | None:
         # inode that is no longer at the path is an orphan a previous holder
         # already gave up: locking it proves nothing. Drop it and start over.
         try:
-            at_path = os.stat(lock).st_ino
+            at_path = os.lstat(lock).st_ino
         except FileNotFoundError:
             at_path = -1
-        if os.fstat(fd).st_ino == at_path:
-            try:
-                os.ftruncate(fd, 0)
-                os.write(fd, f"{os.getpid()}\n".encode())  # who holds it, for a human
-            except OSError:
-                pass
+        mine = os.fstat(fd)
+        if not stat.S_ISREG(mine.st_mode):
+            # A FIFO or device planted at the name (where flock accepts one):
+            # not a lock file, and not this tool's to write to or remove.
+            os.close(fd)
+            raise _FlockRefused(f"{lock.name} is not a regular file")
+        if mine.st_ino == at_path:
+            # Written only into a lock file with no other name: a hard link
+            # planted here shares its bytes with some other file.
+            if mine.st_nlink == 1:
+                try:
+                    os.ftruncate(fd, 0)
+                    os.write(fd, f"{os.getpid()}\n".encode())  # who holds it, for a human
+                except OSError:
+                    pass
             return fd
         os.close(fd)  # releases the orphan
     return None
@@ -1542,6 +1585,9 @@ _FREE_HEADER_FIELDS = (
     "fingerprint_head", "fingerprint_worktree", "blocked_action", "blocker",
     "not_blocked", "unblock_condition", "safe_parallel_work", "expires",
 )
+
+
+_INTERRUPTED = (128 + signal.SIGINT, 128 + signal.SIGTERM)  # send's exit after a signal (section 31)
 
 
 def _send_input_error(args: argparse.Namespace, body: str) -> str:
@@ -1596,7 +1642,9 @@ def cmd_send(args: argparse.Namespace) -> int:
             print(f"--expires {args.expires!r}: {err}", file=sys.stderr)
             return 2
 
-    body = resolve_body(args)
+    body = getattr(args, "_body", None)  # a fan-out read it already (section 36)
+    if body is None:
+        body = resolve_body(args)
     if body is None:
         return 2
     if not (body or "").strip():
@@ -1627,12 +1675,24 @@ def cmd_send(args: argparse.Namespace) -> int:
     dest = (getattr(args, "to", "") or "").strip().lower()
     aliases = load_aliases()
     if dest in aliases and not getattr(args, "_alias_fanout_done", False):
-        rc = 0
+        # PROTOCOL.md section 36: the body is read once, every writer is
+        # checked before any message is written, an interruption ends it.
+        fanout: list[argparse.Namespace] = []
         for w in aliases[dest]:
             a = argparse.Namespace(**{k: getattr(args, k) for k in vars(args)})
             a.to = w
             a._alias_fanout_done = True
+            a._body = body
+            err = _send_input_error(a, body)
+            if err:
+                print(f"refusing to send: {err}", file=sys.stderr)
+                return 2
+            fanout.append(a)
+        rc = 0
+        for a in fanout:
             one = cmd_send(a)
+            if one in _INTERRUPTED:
+                return one
             if one != 0:
                 rc = one
         return rc
@@ -1670,9 +1730,10 @@ def cmd_send(args: argparse.Namespace) -> int:
     reply_to = (getattr(args, "reply_to", "") or "") or (getattr(args, "re", "") or "")
     supersedes = getattr(args, "supersedes", "") or ""
     scope = (getattr(args, "scope", "") or "").strip()
-    existing, _ = load_messages()
     target: Message | None = None
     if supersedes:
+        # Only a --supersedes send reads the mailbox here (section 36).
+        existing, _ = load_messages()
         target = next((m for m in existing if m.id.upper() == supersedes.upper()), None)
         if target is None:
             print(f"--supersedes {supersedes}: no such message", file=sys.stderr)

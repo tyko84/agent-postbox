@@ -19,6 +19,11 @@ Four properties, all asserted on content that must appear (PROTOCOL.md §8):
    reader lists or rejects.
 6. No writer is starved: the slowest send stays within 20 median sends + 5 s
    while the readers loop.
+7. Every sender slot also fires one CLAIM on the same --scope, each from a
+   different identity, in the middle of all of the above: exactly one is
+   written, every other is refused with exit 3, and no lock file is left
+   (PROTOCOL.md §30). So the mailbox sees unkeyed, keyed and scoped writers
+   at once.
 
 Bounded: every child is waited for with a timeout, and a watchdog dumps every
 thread's stack and exits non-zero if the run has not finished in WATCHDOG
@@ -84,6 +89,17 @@ def keyed(box: Path, results: list) -> None:
     results.append((r.returncode, r.stdout, r.stderr))
 
 
+def claimer(box: Path, n: int, results: list) -> None:
+    env = {**os.environ, "AGENT_MAIL_DIR": str(box)}
+    expires = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 3600))
+    r = subprocess.run(
+        [sys.executable, str(HERE / "agent_mail.py"), "send", "--type", "CLAIM",
+         "--from", f"claimer-{n}", "--to", "all", "--subject", "scoped burst",
+         "--body", "one winner " + SENTINEL, "--scope", "stress:one-scope", "--expires", expires],
+        capture_output=True, text=True, env=env, timeout=STEP_TIMEOUT)
+    results.append((r.returncode, r.stdout, r.stderr))
+
+
 def killed_sender(box: Path, body_file: Path, out: dict) -> None:
     """One more sender, SIGKILLed at a known point while the others run: the
     child is the real `agent_mail.main` with os.link made to create a
@@ -133,7 +149,7 @@ def main() -> int:
     ap.add_argument("--kb", type=int, default=2048)
     a = ap.parse_args()
     faulthandler.dump_traceback_later(WATCHDOG, exit=True)
-    expect = a.senders * a.per_sender + 1  # + the one message of the keyed burst
+    expect = a.senders * a.per_sender + 2  # + one message each from the keyed and the scoped burst
 
     with tempfile.TemporaryDirectory() as tmp:
         box = Path(tmp) / "mailbox"
@@ -148,6 +164,7 @@ def main() -> int:
         tool_bad: list = []
         tool_runs: list = []
         keyed_res: list = []
+        claim_res: list = []
         took: list = []
         killed: dict = {}
         rd = threading.Thread(target=reader, args=(box, stop, torn, seen))
@@ -159,6 +176,7 @@ def main() -> int:
               for i in range(a.senders)]
         ts.append(threading.Thread(target=killed_sender, args=(box, body, killed)))
         ts += [threading.Thread(target=keyed, args=(box, keyed_res)) for _ in range(a.senders)]
+        ts += [threading.Thread(target=claimer, args=(box, n, claim_res)) for n in range(a.senders)]
         for t in ts:
             t.start()
         for t in ts:
@@ -184,8 +202,18 @@ def main() -> int:
         k_dup = sum(1 for rc, out, _ in keyed_res if rc == 0 and "duplicate of" in out)
         k_ids = {ln.split(": ", 1)[1] for _, out, _ in keyed_res for ln in out.splitlines()
                  if ln.startswith("id: ")}
+        c_won = [out for rc, out, _ in claim_res if rc == 0 and "wrote " in out]
+        c_lost = [err for rc, _, err in claim_res if rc == 3
+                  and ("being claimed right now" in err or "already held by" in err)]
+        c_files = [f.name for f in files if "\nscope: stress:one-scope\n" in f.read_text(encoding="utf-8")]
         results = [
             ("every send exited 0", not errors, errors[:3]),
+            (f"{a.senders} simultaneous claims on one scope among the other writers: one written, "
+             "the rest refused with exit 3, one claim file, no lock file left",
+             len(c_won) == 1 and len(c_lost) == a.senders - 1 and len(c_files) == 1
+             and not [p.name for p in box.iterdir() if p.name.startswith(".scope.")],
+             f"won={len(c_won)} lost={len(c_lost)} files={c_files} "
+             f"{[(rc, e[-100:]) for rc, _, e in claim_res if rc not in (0, 3)][:2]}"),
             (f"{expect} sends -> {expect} files", len(files) == expect, f"got {len(files)}"),
             (f"{expect} distinct ids", len(ids) == expect, f"got {len(ids)}"),
             ("reader observed messages (positive control)", len(seen) > 0, f"saw {len(seen)}"),

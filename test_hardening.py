@@ -1214,6 +1214,199 @@ def main() -> int:
         print(f"        (spurious exit 3 under two status loops: {spurious13} of "
               f"{2 * N13 + spurious13} attempts; status ran {probes13[0]} times)")
 
+        print("14. fan-out: a crash or an interruption midway, and what a retry does (PROTOCOL.md section 36)")
+        r14 = Path(td) / "rec14"
+        r14.mkdir()
+        (r14 / "PARTICIPANTS.md").write_text(
+            "## Aliases\n\n| Alias | Writers |\n|---|---|\n| `team` | `bob`, `carol`, `dave` |\n")
+
+        def at_publish(n: int, how: str) -> str:
+            """Patch: the n-th message this process publishes parks (`block`) first."""
+            return ("real_pub = agent_mail._publish\npub_calls = []\n"
+                    "def pub(final, text):\n"
+                    "    pub_calls.append(1)\n"
+                    f"    if len(pub_calls) == {n}:\n"
+                    f"        {how}()\n"
+                    "    return real_pub(final, text)\n"
+                    "agent_mail._publish = pub")
+
+        def got(box: Path, subject: str) -> list[str]:
+            """Recipients of the messages with this subject, one entry per message."""
+            out14 = []
+            for f in box.glob("0*.md"):
+                text = f.read_text()
+                if f"\nsubject: {subject}\n" in text:
+                    out14.append(next(ln[4:] for ln in text.splitlines() if ln.startswith("to: ")))
+            return sorted(out14)
+
+        TEAM = ["send", "--type", "NOTICE", "--from", "alice", "--to", "team", "--subject", "fan",
+                "--body", "fan body", "--key", "kfan"]
+        check("control: nothing delivered yet", got(r14, "fan") == [])
+        reached, rc, err = killed_send(r14, at_publish(2, "block"), *TEAM)
+        check("keyed send to an alias of three, SIGKILLed while publishing the second: the first "
+              "recipient has the message, the other two do not",
+              reached and rc == -9 and got(r14, "fan") == ["bob"], f"rc={rc} {got(r14, 'fan')} {err[-200:]}")
+        retry = run(r14, *TEAM)
+        check("the retry with the same key writes exactly the two missing recipients and answers "
+              "`duplicate of` for the first: one message each, exit 0",
+              retry.returncode == 0 and retry.stdout.count("duplicate of ") == 1
+              and retry.stdout.count("wrote ") == 2 and got(r14, "fan") == ["bob", "carol", "dave"],
+              retry.stdout + retry.stderr)
+        again = run(r14, *TEAM)
+        check("and one more retry writes nothing: three `duplicate of`, three resolved markers, "
+              "nothing else hidden",
+              again.returncode == 0 and again.stdout.count("duplicate of ") == 3
+              and got(r14, "fan") == ["bob", "carol", "dave"] and len(hidden(r14)) == 3
+              and all(n.startswith(".idem.") and "." not in n[6:] for n in hidden(r14)),
+              again.stdout + str(hidden(r14)))
+        ASK3 = ["ask", "--from", "alice", "--to", "bob,carol,dave", "--subject", "askfan", "--body", "b"]
+        reached, rc, err = killed_send(r14, at_publish(2, "block"), *ASK3)
+        check("ask to three, SIGKILLed while publishing the second: only the first recipient has it",
+              reached and rc == -9 and got(r14, "askfan") == ["bob"], f"rc={rc} {got(r14, 'askfan')}")
+        reask = run(r14, *ASK3)
+        check("documented limit: `ask` has no --key, so repeating it files the first recipient's "
+              "ASK a second time (the keyed alias send above is the exactly-once retry)",
+              reask.returncode == 0 and got(r14, "askfan") == ["bob", "bob", "carol", "dave"],
+              reask.stdout + reask.stderr)
+        ASKI = ["ask", "--from", "alice", "--to", "bob,carol,dave", "--subject", "askint", "--body", "b"]
+        parked, _ = blocked_send(r14, at_publish(2, "block"), *ASKI, tag="int")
+        parked.send_signal(signal_.SIGINT)
+        _, err = parked.communicate(timeout=STEP_TIMEOUT)
+        check("ask to three, SIGINT while publishing the second: exit 130, one line, the first "
+              "recipient keeps its message and the third is never written",
+              parked.returncode == 130 and err.strip() == "interrupted (SIGINT); nothing written"
+              and got(r14, "askint") == ["bob"], f"rc={parked.returncode} {err!r} {got(r14, 'askint')}")
+        TEAMT = [*TEAM[:8], "fanterm", *TEAM[9:11], "--key", "kterm"]
+        parked, _ = blocked_send(r14, at_publish(2, "block"), *TEAMT, tag="term")
+        parked.send_signal(signal_.SIGTERM)
+        _, err = parked.communicate(timeout=STEP_TIMEOUT)
+        check("keyed alias send, SIGTERM while publishing the second: exit 143, the second "
+              "recipient's key is released, the third is never written",
+              parked.returncode == 143 and err.strip() == "interrupted (SIGTERM); nothing written"
+              and got(r14, "fanterm") == ["bob"] and len(hidden(r14)) == 4,
+              f"rc={parked.returncode} {err!r} {got(r14, 'fanterm')} {hidden(r14)}")
+        fin = run(r14, *TEAMT)
+        check("and its keyed retry completes the fan-out: each recipient exactly once",
+              fin.returncode == 0 and got(r14, "fanterm") == ["bob", "carol", "dave"]
+              and fin.stdout.count("duplicate of ") == 1, fin.stdout + fin.stderr)
+        r14c = Path(td) / "rec14c"
+        r14c.mkdir()
+        reached, rc, err = killed_send(r14c, "os.link = block", "canary", "--from", "alice", "--to", "all")
+        doc14 = run(r14c, "doctor")
+        check("canary SIGKILLed before its link: no canary message, one hidden temp, doctor still "
+              "says the canary is missing",
+              reached and rc == -9 and not list(r14c.glob("*.md")) and len(hidden(r14c)) == 1
+              and doc14.returncode == 2 and "PICKUP-CANARY" not in run(r14c, "list").stdout,
+              f"rc={rc} {hidden(r14c)} {doc14.stdout[-200:]}")
+        can = run(r14c, "canary", "--from", "alice", "--to", "all")
+        check("control: the canary filed again is one live canary",
+              can.returncode == 0 and rows(r14c, "PICKUP-CANARY") == 1, can.stderr)
+
+        print("15. the mailbox directory is renamed or replaced while a send is in flight")
+        # The tool addresses the mailbox by path. A send whose directory moves
+        # between writing its temp file and linking it must fail whole: one
+        # line, exit 1, no message under either name. What it cannot do is
+        # remove its temp file, which moved with the directory (hidden; reported
+        # by status/doctor once stale).
+        gate_link = ("real_link = os.link\n"
+                     "def link(src, dst, *a, **k):\n"
+                     "    if os.fspath(dst).endswith('.md'):\n"
+                     "        gate()\n"
+                     "    return real_link(src, dst, *a, **k)\n"
+                     "os.link = link")
+        for label, replace in (("renamed away", False), ("renamed away and replaced by a new directory", True)):
+            r15 = Path(td) / ("rec15b" if replace else "rec15")
+            r15.mkdir()
+            ctl = run(r15, *NOTE)
+            proc, ready = blocked_send(r15, gate_link, *NOTE[:8], "inflight", *NOTE[9:], tag="mv")
+            parked15 = ready.exists() and proc.poll() is None
+            moved = r15.with_name(r15.name + "-moved")
+            r15.rename(moved)
+            if replace:
+                r15.mkdir()
+            r15.with_name(r15.name + "mv.go").write_text("")
+            out, err = proc.communicate(timeout=STEP_TIMEOUT)
+            check(f"mailbox {label} mid-send: one line naming ENOENT, exit 1",
+                  parked15 and ctl.returncode == 0 and one_line_failure(proc.returncode, out, err, "ENOENT"),
+                  f"parked={parked15} rc={proc.returncode} {out!r} {err!r}")
+            there = sorted(q.name for q in r15.iterdir()) if r15.is_dir() else None
+            check("no message under either name; the old path is "
+                  + ("left empty" if replace else "not recreated"),
+                  rows(moved, "inflight") == 0 and there == ([] if replace else None)
+                  and len(list(moved.glob("*.md"))) == 1, f"{there} {sorted(q.name for q in moved.iterdir())}")
+            lst15 = run(moved, "list")
+            check("known limit: its temp file moved with the directory and stays there, hidden; "
+                  "`list` there is clean and still shows the earlier message",
+                  len(hidden(moved)) == 1 and hidden(moved)[0].endswith(".tmp")
+                  and lst15.returncode == 0 and lst15.stderr == "" and "cut" in lst15.stdout,
+                  f"{hidden(moved)} {lst15.stderr}")
+
+        print("16. duplicate ids and planted lock files: what keeps an id, what a lock may touch "
+              "(PROTOCOL.md section 36)")
+        r16 = Path(td) / "rec16"
+        r16.mkdir()
+        lease = send(r16, "bob", "--expires", soon(1), "--scope", "file:16.py", kind="CLAIM", subj="lease")
+        lid = mid(lease)
+
+        def hand16(name: str, subject: str, the_id: str, kind: str = "NOTICE", who: str = "carol") -> None:
+            (r16 / name).write_text(
+                f"---\nid: {the_id}\ntype: {kind}\nfrom: {who}\nto: bob\n"
+                f"date: {soon(0)}\nsubject: {subject}\n---\n\nhand-written\n")
+
+        hand16("00-first-by-name.md", "DUP-EARLY", lid)
+        hand16(f"{lid.lower()}.md", "DUP-NO-DASH", lid)
+        hand16("zz-last-by-name.md", "DUP-LATE", lid.lower())
+        l16 = run(r16, "list")
+        check("three hand-written files reuse a held claim's id (one sorts first, one is the bare "
+              "id in lower case, one sorts last): the claim written by `send` is the one admitted",
+              rows(r16, "[held      ] bob -> all  lease") == 1 and "DUP-" not in l16.stdout
+              and l16.returncode == 2, l16.stdout + l16.stderr)
+        check("each of the three is rejected once as a duplicate, naming the file that kept the id",
+              all(l16.stderr.count(f"REJECT {n}: duplicate id") == 1
+                  for n in ("00-first-by-name.md", f"{lid.lower()}.md", "zz-last-by-name.md"))
+              and l16.stderr.count("REJECT") == 3
+              and l16.stderr.count(f"first seen in {lid}-lease.md") == 3, l16.stderr)
+        sh16 = run(r16, "show", lid.lower())
+        hk16 = hook(r16, "bob")
+        check("`show <id>` and the pickup hook present the claim, not a hand-written file",
+              sh16.returncode == 0 and "subject: lease" in sh16.stdout and "DUP-" not in sh16.stdout
+              and "hand-written" not in hk16.stdout, sh16.stdout + hk16.stdout)
+        grab16 = send(r16, "alice", "--expires", soon(1), "--scope", "file:16.py", kind="CLAIM", subj="grab")
+        check("a rival's claim on the scope is still refused (exit 3, already held by bob)",
+              grab16.returncode == 3 and "already held by bob" in grab16.stderr, grab16.stderr)
+        renew16 = send(r16, "bob", "--expires", soon(1), "--scope", "file:16.py", "--supersedes", lid,
+                       kind="CLAIM", subj="renewed")
+        check("control: the owner can still renew the claim by its id",
+              renew16.returncode == 0 and rows(r16, "[superseded] bob -> all  lease") == 1, renew16.stderr)
+        named_lower = f"{'01ARZ3NDEKTSV4RRFFQ69G5X16'.lower()}-named-in-lower-case.md"
+        hand16("0-sorts-first.md", "LOWER-LOSER", "01ARZ3NDEKTSV4RRFFQ69G5X16")
+        hand16(named_lower, "LOWER-KEEPER", "01ARZ3NDEKTSV4RRFFQ69G5X16")
+        l16b = run(r16, "list")
+        check("the name test ignores case, as ids do: a file named <id in lower case>-... keeps its id",
+              "LOWER-KEEPER" in l16b.stdout and "LOWER-LOSER" not in l16b.stdout
+              and "REJECT 0-sorts-first.md: duplicate id" in l16b.stderr, l16b.stdout + l16b.stderr)
+        import hashlib as hl16  # noqa: PLC0415
+        r16f = Path(td) / "rec16f"
+        r16f.mkdir()
+        fifo16 = r16f / (".scope." + hl16.sha256(b"file:16f.py").hexdigest()[:24] + ".lock")
+        os.mkfifo(fifo16)
+        F16 = ["send", "--type", "CLAIM", "--from", "alice", "--to", "all", "--subject", "f",
+               "--body", "b", "--expires", soon(1), "--scope", "file:16f.py"]
+        # Linux grants flock on a FIFO; macOS refuses it. Both must end the same
+        # way, so the first case also runs with flock made to accept anything.
+        for label, patch16 in (("as this platform treats it", "pass"),
+                               ("where flock accepts a FIFO (simulated)",
+                                "import fcntl\nfcntl.flock = lambda *_a: None")):
+            rc, out, err = patched(r16f, patch16, *F16)
+            check(f"a FIFO at the scope lock name, {label}: exit 2 `cannot lock scope`, nothing "
+                  "written, the FIFO neither written to nor removed",
+                  rc == 2 and out == "" and err.startswith("cannot lock scope 'file:16f.py': ")
+                  and len(err.strip().splitlines()) == 1 and not list(r16f.glob("*.md"))
+                  and stat_.S_ISFIFO(os.lstat(fifo16).st_mode), f"rc={rc} {out!r} {err!r}")
+        fifo16.unlink()
+        rc, out, err = patched(r16f, "pass", *F16)
+        check("control: with the FIFO gone the same claim is written", rc == 0 and "wrote " in out, err)
+
     faulthandler.cancel_dump_traceback_later()
     if FAILS:
         print("\nFAILED:")
