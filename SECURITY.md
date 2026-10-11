@@ -89,4 +89,29 @@ exactly like an empty inbox.** Do not infer "no messages" from silence. Run
 
 ## Reporting
 
-Use GitHub's private vulnerability reporting (Security tab -> "Report a vulnerability") for anything exploitable, e.g. a way to make mailbox content execute rather than print. For hardening ideas and non-sensitive findings, open an issue. This is a small stdlib-only tool with no network surface and no embargo process.
+Private vulnerability reporting is enabled for this repository. For anything
+exploitable, for example a way to make mailbox content execute rather than
+print, use it: the Security tab, "Report a vulnerability", or directly
+<https://github.com/tyko84/agent-postbox/security/advisories/new>. The report
+is visible to the maintainer only. For hardening ideas and non-sensitive
+findings, open an issue. This is a small stdlib-only tool with no network
+surface and no embargo process.
+
+## How this repository is built and released
+
+The tool has no dependencies; the pipeline that tests and releases it does.
+What is done about that, and where it is described:
+
+* The one secret the repository has (a list of names that must not be
+  published) is read only by jobs that install nothing
+  (`docs/publication-safety.md`, In CI).
+* The job that writes release artifacts installs three build tools pinned by
+  hash and a build backend whose wheel is checked against a recorded SHA-256;
+  the build is reproducible and anyone can rebuild a release and compare
+  (`docs/packaging.md`).
+* Every action in the workflows is published by GitHub and pinned to a commit.
+  The Python sources and the workflow files are analysed by CodeQL on every
+  pull request, on every push to `main` and weekly.
+* Releases carry `SHA256SUMS` and a signed build provenance
+  (`docs/release-process.md`, Verifying a download).
+* The project is not on PyPI (`docs/pypi-publishing.md`).
