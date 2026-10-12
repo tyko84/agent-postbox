@@ -80,7 +80,12 @@ SDIST_ALLOWED = (
     "install.py", "check_handoff.py", "check_publication.py", "selftest.py", "stress_test.py", "agent_mail.py",
     "test_*.py", "ruff.toml", "mypy.ini", "pyproject.toml", "MANIFEST.in",
     "PKG-INFO", "setup.cfg", "hooks/*.py", "docs/*.md", "*.egg-info/*",
+    "examples/two-agents/run.py", "examples/two-agents/*.md",
 )
+# The demo ships deliberately (MANIFEST.in): what it needs to run from an unpacked sdist.
+EXAMPLE_MEMBERS = ("examples/two-agents/run.py", "examples/two-agents/README.md",
+                   "examples/two-agents/RECORDING.md", "test_examples.py", "install.py",
+                   "hooks/agent_mail_check.py", "PARTICIPANTS.template.md")
 WHEEL_ALLOWED = ("agent_mail.py", "*.dist-info/*")
 BAD_PARTS = ("__pycache__", ".git/", ".github/", ".pyc", ".bak", ".env", ".DS_Store")
 
@@ -228,6 +233,10 @@ class Packaging(unittest.TestCase):
         names = list(sdist_members(self.sdist))
         self.assertTrue(any(n.endswith("/agent_mail.py") for n in names))
         self.assertEqual(unexpected(names, SDIST_ALLOWED, strip_top=True), [])
+        # README.md's Quickstart points at the demo, so the sdist carries it, with the
+        # test that runs it (test_*.py) and everything it needs (install.py, hooks/)
+        for member in EXAMPLE_MEMBERS:
+            self.assertTrue(any(n.endswith("/" + member) for n in names), member)
 
     def test_no_private_mentions_in_either_artifact(self) -> None:
         self.assertEqual(scan(wheel_members(self.wheel)), [])
@@ -472,6 +481,8 @@ class ReproducibleBuild(unittest.TestCase):
         self.assertEqual(unexpected(list(wheel), WHEEL_ALLOWED, strip_top=False), [])
         self.assertTrue(any(n.endswith("/agent_mail.py") for n in sdist))
         self.assertEqual(unexpected(list(sdist), SDIST_ALLOWED, strip_top=True), [])
+        for member in EXAMPLE_MEMBERS:
+            self.assertTrue(any(n.endswith("/" + member) for n in sdist), member)
         self.assertEqual(scan(wheel), [])
         self.assertEqual(scan(sdist), [])
 

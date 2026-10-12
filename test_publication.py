@@ -1565,6 +1565,23 @@ class Workflows(unittest.TestCase):
             if (root / rel).is_file():   # neither ships in the sdist
                 self.assertIn("test_adapters.py", (root / rel).read_text(encoding="utf-8"), rel)
 
+    def test_the_two_agents_demo_is_tested_in_ci_and_before_a_release(self) -> None:
+        # examples/two-agents/run.py is the first thing a visitor runs (README, Quickstart):
+        # its test is a step of the required selftest job and on every other test list
+        ci = self.jobs("ci.yml")["selftest"]
+        steps = [ln.strip() for ln in ci.splitlines() if ln.strip().startswith("- run: ")]
+        self.assertIn("- run: python test_examples.py", steps)
+        self.assertIn("test_examples.py", self.jobs("release.yml")["test"])
+        root = Path(__file__).resolve().parent
+        preflight = root / "scripts" / "preflight.sh"
+        if preflight.is_file():  # not shipped in an sdist
+            self.assertIn(" test_examples.py", preflight.read_text(encoding="utf-8"))
+        template = (root / ".github" / "pull_request_template.md").read_text(encoding="utf-8")
+        self.assertIn("`python test_examples.py`", template)
+        for f in ("examples/two-agents/run.py", "test_examples.py"):
+            self.assertIn(f, self.mypy_files())
+            self.assertIn(f" {f}", template)
+
     def test_required_check_names_are_unchanged(self) -> None:
         ci = self.jobs("ci.yml")
         for job in self.REQUIRED:
@@ -1610,9 +1627,10 @@ class Workflows(unittest.TestCase):
 
     @staticmethod
     def python_files(root: Path) -> list[str]:
-        """Every .py file of the project (root, hooks/, scripts/), as the mypy line names them."""
+        """Every .py file of the project (root, hooks/, scripts/, examples/), as the mypy line
+        names them."""
         found = list(root.glob("*.py"))
-        for sub in ("hooks", "scripts"):
+        for sub in ("hooks", "scripts", "examples"):
             found += (root / sub).rglob("*.py")
         return sorted(p.relative_to(root).as_posix() for p in found)
 
@@ -1631,8 +1649,8 @@ class Workflows(unittest.TestCase):
         # every .py in the tree type-checks, so every one is named: a new file
         # is type-checked or deliberately listed here as the exception it is
         self.assertEqual([f for f in self.python_files(root) if f not in named], [],
-                         "every .py at the root and under hooks/ and scripts/ must be on the "
-                         "lint job's mypy line")
+                         "every .py at the root and under hooks/, scripts/ and examples/ must "
+                         "be on the lint job's mypy line")
         # control: the discovery that feeds the comparison sees a script the line does not name
         with tempfile.TemporaryDirectory() as tmp:
             planted = Path(tmp) / "scripts" / "new_tool.py"
@@ -1641,6 +1659,11 @@ class Workflows(unittest.TestCase):
             found = self.scripts_under(Path(tmp))
             self.assertEqual(found, ["scripts/new_tool.py"])
             self.assertEqual([s for s in found if s not in named], ["scripts/new_tool.py"])
+            example = Path(tmp) / "examples" / "new-demo" / "run.py"
+            example.parent.mkdir(parents=True)
+            example.write_text("x = 1\n", encoding="utf-8")
+            self.assertEqual([f for f in self.python_files(Path(tmp)) if f not in named],
+                             ["examples/new-demo/run.py", "scripts/new_tool.py"])
 
     def test_every_action_is_github_owned_and_pinned_to_a_commit(self) -> None:
         seen = 0

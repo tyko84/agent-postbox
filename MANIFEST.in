@@ -5,5 +5,7 @@ include install.py check_handoff.py check_publication.py selftest.py stress_test
 include test_*.py ruff.toml mypy.ini
 recursive-include hooks *.py
 recursive-include docs *.md
+# The runnable demo README.md's Quickstart points at; it needs only files listed above.
+recursive-include examples *.py *.md
 prune .github
 global-exclude __pycache__ *.py[cod] *.bak .DS_Store
