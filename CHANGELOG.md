@@ -7,7 +7,20 @@ behaviour).
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+
+- `send` with `AGENT_MAIL_DIR` set to a path the OS refuses to stat (too long) printed a
+  traceback; it is now `NO MAILBOX at <path>`, one line, exit 2, nothing written
+  (PROTOCOL.md section 38).
+- An `AGENT_MAIL_PROJECT` the OS refuses to stat printed a traceback from every command;
+  it is now ignored, as a value naming no directory always was.
+- The text views (`list`, `inbox`, `show`, `status`) printed a traceback, after a partial
+  listing, for a subject, path or body in another alphabet when stdout could only carry
+  ASCII (`PYTHONIOENCODING=ascii`, a C locale); each character stdout cannot carry is now
+  printed as its `\x`, `\u` or `\U` escape, exit 0. `--json` output was ASCII already
+  and is unchanged.
+- `--help` with stdout closed printed the help on stderr; it now prints nothing and exits
+  0, as every command does when stdout is gone (section 35).
 
 ## [0.4.0] - 2026-10-11
 
