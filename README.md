@@ -2,12 +2,61 @@
 
 [![ci](https://github.com/tyko84/agent-postbox/actions/workflows/ci.yml/badge.svg)](https://github.com/tyko84/agent-postbox/actions/workflows/ci.yml)
 
-Inter-agent mail for a code repo, with **delivery that doesn't depend on the
-agent remembering to look.**
+**Stop being the messenger between your AI agents.**
 
-Stdlib-only Python, no daemon, no server, no dependencies. Messages are plain
-markdown files in your repo. Identity is a required field you choose — there
-is no vendor default.
+When you run several coding agents on one repository, you relay between them
+by hand: a question copied out of one session and pasted into another, then
+the answer carried back. agent-postbox is mail for those agents. One agent
+writes a message, and the other finds it in its context at its next prompt,
+**without having to remember to look.**
+
+No database. No daemon. No dependencies. A message is a Markdown file in a
+directory of your repository, the tool is one Python file (standard library
+only), and identity is a name you choose: there is no vendor default.
+
+## Quickstart
+
+Nothing here needs a model, an account or a network connection after the
+clone. POSIX only (Linux, macOS), Python 3.10-3.14.
+
+```sh
+# 1. Clone. (Not on PyPI: `pip install agent-postbox` is a different project; see Install.)
+git clone https://github.com/tyko84/agent-postbox
+
+# 2. Watch two sessions exchange a message. A few seconds, in a throwaway directory.
+python3 agent-postbox/examples/two-agents/run.py
+
+# 3. Install into your own project, and register the pickup hook for Claude Code.
+python3 agent-postbox/install.py /path/to/your/project --adapter claude-code
+export AGENT_MAIL_IDENTITY=agent-a      # in the shell each session starts from; one name per agent
+```
+
+Step 2 runs the real installer, the real CLI and the real pickup adapter; only
+the two "agents" are a script. It prints every command with its output, checks
+each step, and exits non-zero if anything did not happen as it says
+([examples/two-agents/](examples/two-agents/README.md)). Step 3 is covered in
+full under [Install](#install); hosts other than Claude Code wire the same
+adapter to their own prompt-submit event, or poll.
+
+What the adapter changes, from one run of `python3 scripts/scenario.py --seed 1`
+(8 simulated agents, 400 scheduled messages plus their answers, crashes
+injected, the same schedule for both columns):
+
+| | Pickup adapter | Agent that polls when it remembers (half the time) |
+|---|---|---|
+| Messages in front of the recipient at its first awake prompt after the send | 492 of 492 | 270 of 493 |
+| Messages in front of the recipient by the end of the run | 492 of 492 | 490 of 493 |
+| Prompts waited after that first one, 95th percentile | 0 | 4 |
+
+With the adapter every message was surfaced at the first prompt at which its
+recipient was awake. An agent that remembers to poll half the time got about
+half of them at that first chance, waited four to five prompts at the 95th
+percentile (4 with seed 1, 5 with seed 2), and still got over 99% by the end.
+The agents are simulated and no LLM is involved; "half the time" is an
+assumption, not a measurement; the totals differ by one, and move by one or
+two from run to run, because races between claims are settled at run time;
+and nothing here says what a model does with mail once it has it. How to run
+it and how to read it: [docs/benchmarking.md](docs/benchmarking.md).
 
 ## The problem it solves
 
@@ -170,7 +219,7 @@ nor inside this spec checkout. A missing store prints `NO MAILBOX at <path>` and
 exits 2. That is not an empty inbox. `AGENT_MAIL_DIR` is never created for you:
 `mkdir` it first.
 
-## Quickstart
+## Using the CLI
 
 Every `bash runnable` block in this README is executed, in order, in a
 scratch mailbox by `test_readme_examples.py`, so these commands are known to
