@@ -7,6 +7,8 @@ behaviour).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-12
+
 ### Added
 
 - `scripts/team_sim.py`: an offline, deterministic simulation of task-level team outcomes
@@ -650,7 +652,8 @@ the first tag in the current repository.
 - Breaking a stale (older than 60 seconds) scope lock is not atomic; see the
   README "Security and limitations".
 
-[Unreleased]: https://github.com/tyko84/agent-postbox/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/tyko84/agent-postbox/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/tyko84/agent-postbox/releases/tag/v0.5.0
 [0.4.0]: https://github.com/tyko84/agent-postbox/releases/tag/v0.4.0
 [0.3.1]: https://github.com/tyko84/agent-postbox/releases/tag/v0.3.1
 [0.3.0]: https://github.com/tyko84/agent-postbox/releases/tag/v0.3.0

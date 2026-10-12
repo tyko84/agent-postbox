@@ -91,7 +91,7 @@ _ID_SORT_OLDEST = "\x00" * 26
 # storing a read receipt that could drift.
 FRESH_DAYS = 7
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 _SLUG = re.compile(r"[^a-z0-9]+")
 
