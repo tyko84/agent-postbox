@@ -35,6 +35,17 @@ function) made to block at the point the fault names, the same technique
 the round's other sends start, so nothing else holds the scope lock at the
 instant a claimant must be parked on it.
 
+`--pickup codex` changes only how the `hook` configuration starts the adapter:
+through `/bin/sh -c` with the command shape `install.py --adapter codex`
+registers (interpreter, quoted script path, `|| true`) and one JSON object of
+Codex's documented `UserPromptSubmit` input fields on stdin, instead of the
+interpreter on the script with nothing on stdin. The adapter, the schedule and
+every check are the same, except that `pickup-exit` can no longer fail (the
+command ends in `|| true`, as registered); the report records
+`parameters.pickup`. No Codex runs: this shows the adapter holds the
+invariants when started the documented way, not that Codex starts it
+([hosts.md](hosts.md)).
+
 **Simulated.** The agents. There is no model and no host: an "agent" is a
 name, a set of ids it has already seen, and a rule (answer every `ASK` that
 was surfaced to it, at its next turn). A "prompt boundary" is the harness

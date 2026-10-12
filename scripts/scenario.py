@@ -6,6 +6,7 @@
                                [--config hook|baseline|both] [--poll-p P]
                                [--faults all|none|NAME[,NAME]] [--json PATH]
                                [--recovery-bound N] [--max-seconds S]
+                               [--pickup direct|codex]
 
 Simulated agents drive the real tool: every send is `agent_mail.py send` as a
 subprocess, every pickup is the real adapter `hooks/agent_mail_check.py` (the
@@ -89,7 +90,7 @@ n >= 100; otherwise `n/a (n=...)`. min, max, mean and n are always printed.
                      "platform": platform.platform()}
     parameters      every parameter of the run: agents, messages, rounds, drain,
                     concurrency, poll_p, faults (the enabled names, sorted),
-                    recovery_bound, configs (the ones run), quick
+                    recovery_bound, configs (the ones run), quick, pickup
     seed            the seed
     schedule_hash   SHA-256 of the canonical JSON of the workload
     poll_hash       SHA-256 of the baseline's poll table (null if not run)
@@ -180,6 +181,14 @@ HOOK = HERE / "hooks" / "agent_mail_check.py"
 SCHEMA = 1
 FAULTS = ("interrupted-writes", "abandoned-locks", "crashes", "malformed", "delayed-polling")
 CONFIGS = ("hook", "baseline")
+# How the `hook` configuration starts the adapter. `direct`: the interpreter on
+# the script, nothing on stdin. `codex`: the way docs/hosts.md documents Codex
+# running a UserPromptSubmit command hook: a shell command of the shape
+# `install.py --adapter codex` registers (interpreter, quoted script path,
+# `|| true`), with one JSON object of the documented fields on stdin. The path
+# is this checkout's, not `$(git rev-parse --show-toplevel)`. No Codex runs.
+PICKUPS = ("direct", "codex")
+CODEX_COMMAND = '"$1" -I "$2" || true'
 TYPE_WEIGHTS = (("ASK", 35), ("NOTICE", 40), ("CLAIM", 20), ("DISPUTE", 5))
 LEASE_WEIGHTS = ((4, 25), (3600, 75))     # seconds; a quarter of the leases lapse during the run
 PERCENTILE_MIN_N = {"p50": 10, "p95": 20, "p99": 100}
@@ -237,13 +246,15 @@ class Params:
     quick: bool
     max_seconds: float
     self_test_miss: bool
+    pickup: str = "direct"
 
     def as_json(self) -> dict[str, Any]:
         return {"agents": self.agents, "messages": self.messages, "rounds": self.rounds,
                 "drain": self.drain, "concurrency": self.concurrency, "poll_p": self.poll_p,
                 "faults": sorted(self.faults), "recovery_bound": self.recovery_bound,
                 "configs": list(self.configs), "quick": self.quick,
-                "max_seconds": self.max_seconds, "self_test_miss": self.self_test_miss}
+                "max_seconds": self.max_seconds, "self_test_miss": self.self_test_miss,
+                "pickup": self.pickup}
 
 
 def weighted(rng: random.Random, table: tuple[tuple[Any, int], ...]) -> Any:
@@ -399,12 +410,13 @@ def child_env(box: Path, **extra: str) -> dict[str, str]:
     return env
 
 
-def call(cmd: list[str], env: dict[str, str]) -> tuple[int, str, str]:
+def call(cmd: list[str], env: dict[str, str], stdin: str | None = None) -> tuple[int, str, str]:
     t0 = time.monotonic()
-    proc = subprocess.Popen(cmd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE, text=True)
+    proc = subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            stdin=subprocess.DEVNULL if stdin is None else subprocess.PIPE,
+                            text=True)
     try:
-        out, err = proc.communicate(timeout=STEP_TIMEOUT)
+        out, err = proc.communicate(stdin, timeout=STEP_TIMEOUT)
     except subprocess.TimeoutExpired:
         proc.kill()
         out, err = proc.communicate(timeout=30)
@@ -571,8 +583,15 @@ class Run:
 
     def do_pickup(self, pk: Pickup) -> Pickup:
         if pk.mode == "hook":
-            pk.rc, out, _err = call([sys.executable, "-I", str(HOOK)],
-                                    child_env(self.box, AGENT_MAIL_IDENTITY=pk.agent))
+            cmd, stdin = [sys.executable, "-I", str(HOOK)], None
+            if self.p.pickup == "codex":
+                cmd = ["/bin/sh", "-c", CODEX_COMMAND, "sh", sys.executable, str(HOOK)]
+                stdin = json.dumps({
+                    "session_id": f"scenario-{pk.agent}", "transcript_path": None,
+                    "cwd": str(self.box), "hook_event_name": "UserPromptSubmit",
+                    "model": "scenario", "permission_mode": "default",
+                    "turn_id": f"round-{pk.round}", "prompt": "scenario boundary"})
+            pk.rc, out, _err = call(cmd, child_env(self.box, AGENT_MAIL_IDENTITY=pk.agent), stdin)
             pk.entries = parse_hook(out) if pk.rc == 0 else []
         elif pk.mode == "poll":
             pk.rc, out, _err = call([sys.executable, "-I", str(TOOL), "inbox", "--to", pk.agent,
@@ -1026,6 +1045,9 @@ def parse_args(argv: list[str] | None) -> tuple[Params, str | None]:
     ap.add_argument("--quick", action="store_true",
                     help="a small profile for CI: 4 agents, 40 messages, 10 rounds, 2 drain")
     ap.add_argument("--json", default=None, metavar="PATH", help="write the machine-readable report")
+    ap.add_argument("--pickup", choices=PICKUPS, default="direct",
+                    help="how the hook configuration starts the adapter: directly, or as "
+                         "Codex's documented UserPromptSubmit command hook (docs/hosts.md)")
     ap.add_argument("--self-test-miss", action="store_true",
                     help="drop one surfaced message from the hook's bookkeeping, to show the "
                          "FAIL path (test_scenario.py uses it)")
@@ -1043,7 +1065,8 @@ def parse_args(argv: list[str] | None) -> tuple[Params, str | None]:
     configs = CONFIGS if a.config == "both" else (a.config,)
     return Params(a.seed, a.agents, a.messages, a.rounds, a.drain,
                   a.concurrency or a.agents, a.poll_p, parse_faults(a.faults),
-                  a.recovery_bound, configs, a.quick, a.max_seconds, a.self_test_miss), a.json
+                  a.recovery_bound, configs, a.quick, a.max_seconds, a.self_test_miss,
+                  a.pickup), a.json
 
 
 def tool_version() -> str:
@@ -1071,7 +1094,8 @@ def run(p: Params, json_path: str | None) -> int:
     print(f"scenario: seed {p.seed}, {p.agents} agents, {len(sched['messages'])} scheduled sends "
           f"({p.messages} + {len(sched['messages']) - p.messages} reclaim), {p.rounds} rounds + "
           f"{p.drain} drain, concurrency {p.concurrency}, faults "
-          f"{','.join(p.faults) or 'none'}, {version}")
+          f"{','.join(p.faults) or 'none'}, {version}"
+          + (f", pickup {p.pickup}" if p.pickup != "direct" else ""))
     print(f"schedule_hash: {schedule_hash}")
     if poll_hash:
         print(f"poll_hash: {poll_hash}  (baseline remembers to poll with p={p.poll_p:g})")
