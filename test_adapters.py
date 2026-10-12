@@ -559,6 +559,86 @@ class ClaudeCodeInstall(unittest.TestCase):
                 self.assertIn("claude-code adapter already registered (no change)", cp.stdout)
                 self.assertEqual(self.commands(), [mine])
 
+# Runs install.py with a kill injected at the settings write, not by timing: the
+# write half-lands and the process dies (the old `Path.write_text`), or the process
+# dies at the first fsync (the temp file written, nothing yet renamed). The same
+# script tears whichever write the installer under test uses.
+KILLED_WRITE = """\
+import os, pathlib, runpy, sys
+real = pathlib.Path.write_text
+def torn(self, data, *a, **k):
+    if self.name in ("settings.json", "hooks.json"):
+        with open(self, "w") as f:
+            f.write(data[: len(data) // 2])
+        os._exit(137)
+    return real(self, data, *a, **k)
+pathlib.Path.write_text = torn
+os.fsync = lambda fd: os._exit(137)
+sys.argv = ["install.py", *sys.argv[1:]]
+runpy.run_path(%r, run_name="__main__")
+"""
+
+
+class SettingsWrite(unittest.TestCase):
+    """The user's other settings live in the file the installer rewrites."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory(prefix="test-adapters-")
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name).resolve()
+        self.project = self.root / "project"
+        (self.project / ".git").mkdir(parents=True)
+        self.files = {"claude-code": self.project / ".claude" / "settings.json",
+                      "codex": self.project / ".codex" / "hooks.json"}
+        self.theirs = json.dumps({"model": "mine", "permissions": {"allow": ["Bash(ls)"]}},
+                                 indent=4) + "\n"
+
+    def killed(self, adapter: str) -> subprocess.CompletedProcess[str]:
+        script = self.root / "killed_write.py"
+        script.write_text(KILLED_WRITE % str(INSTALL), encoding="utf-8")
+        return subprocess.run([sys.executable, "-I", str(script), str(self.project),
+                               "--adapter", adapter], capture_output=True, text=True,
+                              timeout=TIMEOUT, env=clean_env())
+
+    def test_a_write_killed_midway_leaves_the_users_file_whole(self) -> None:
+        for adapter, config in self.files.items():
+            with self.subTest(adapter=adapter):
+                config.parent.mkdir(parents=True, exist_ok=True)
+                config.write_text(self.theirs, encoding="utf-8")
+                cp = self.killed(adapter)
+                self.assertEqual(cp.returncode, 137, cp.stdout + cp.stderr)   # the fault fired
+                self.assertEqual(config.read_text(encoding="utf-8"), self.theirs)
+                # a re-run after the kill registers exactly once and keeps their keys
+                again = install(self.project, "--adapter", adapter)
+                self.assertEqual(again.returncode, 0, again.stderr)
+                data = json.loads(config.read_text(encoding="utf-8"))
+                self.assertEqual(data["model"], "mine")
+                self.assertEqual(len(data["hooks"]["UserPromptSubmit"]), 1)
+
+    @unittest.skipUnless(os.name == "posix", "permission bits")
+    def test_the_mode_is_kept_and_no_temp_file_is_left(self) -> None:
+        for adapter, config in self.files.items():
+            with self.subTest(adapter=adapter):
+                config.parent.mkdir(parents=True, exist_ok=True)
+                config.write_text(self.theirs, encoding="utf-8")
+                config.chmod(0o640)
+                self.assertEqual(install(self.project, "--adapter", adapter).returncode, 0)
+                self.assertEqual(config.stat().st_mode & 0o777, 0o640)
+                self.assertEqual([p.name for p in config.parent.iterdir() if p.name.endswith(".tmp")], [])
+
+    @unittest.skipUnless(os.name == "posix", "symlinks")
+    def test_a_symlinked_settings_file_is_written_through(self) -> None:
+        config = self.files["claude-code"]
+        config.parent.mkdir()
+        real = self.root / "dotfiles" / "settings.json"
+        real.parent.mkdir()
+        real.write_text(self.theirs, encoding="utf-8")
+        config.symlink_to(real)
+        self.assertEqual(install(self.project, "--adapter", "claude-code").returncode, 0)
+        self.assertTrue(config.is_symlink())
+        self.assertIn("agent_mail_check.py", real.read_text(encoding="utf-8"))
+        self.assertEqual(json.loads(real.read_text(encoding="utf-8"))["model"], "mine")
+
 
 @unittest.skipUnless(HOSTS_DOC.is_file(), "docs/hosts.md is not here")
 class HostsDoc(unittest.TestCase):

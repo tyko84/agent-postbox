@@ -50,8 +50,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
+import stat
 import sys
 from pathlib import Path
 
@@ -231,6 +233,48 @@ def already_registered(settings: dict) -> bool:
     return False
 
 
+def write_atomic(path: Path, data: bytes) -> None:
+    """Replace `path` with `data` so a reader, or a kill at any instant, sees the
+    old file or the new one and never a prefix: write a temp file in the SAME
+    directory (a rename across filesystems is a copy), fsync it, `os.replace` it.
+    An existing file's permission bits are kept; a new one gets 0666 minus the
+    umask, as `open()` would. A symlinked `path` is written through, not replaced."""
+    target = Path(os.path.realpath(path))
+    try:
+        mode: int | None = stat.S_IMODE(target.stat().st_mode)
+    except FileNotFoundError:
+        mode = None
+    tmp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0),
+                 0o666 if mode is None else mode)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            if mode is not None:
+                os.fchmod(f.fileno(), mode)     # the umask must not narrow it
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, target)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    try:   # make the rename itself durable; not every platform can open a directory
+        dfd = os.open(target.parent, os.O_RDONLY)
+        try:
+            os.fsync(dfd)
+        finally:
+            os.close(dfd)
+    except OSError:
+        pass
+
+
+def write_settings(path: Path, settings: dict) -> None:
+    write_atomic(path, (json.dumps(settings, indent=2) + "\n").encode("utf-8"))
+
+
 def merge_settings(path: Path, dest_rel: str, check: bool, adapter: str = "claude-code") -> str:
     trust = f". {CODEX_TRUST}" if adapter == "codex" else ""
     settings: dict = {}
@@ -253,7 +297,7 @@ def merge_settings(path: Path, dest_rel: str, check: bool, adapter: str = "claud
                             "so a moved tool directory would block every prompt")
                 shutil.copy2(path, path.with_suffix(path.suffix + ".bak"))
                 hook["command"] = old + " || true"
-                path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+                write_settings(path, settings)
                 return (f"upgraded the {adapter} adapter (the command now ends in `|| true`, so "
                         f"a moved tool directory cannot block a prompt; backup at {path.name}.bak)")
             if not interpreter_missing(old):
@@ -262,7 +306,7 @@ def merge_settings(path: Path, dest_rel: str, check: bool, adapter: str = "claud
                 return f"WOULD repair the adapter: `{old.split(' ', 1)[0]}` is not on PATH here"
             shutil.copy2(path, path.with_suffix(path.suffix + ".bak"))
             hook["command"] = hook_command(dest_rel, adapter)
-            path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+            write_settings(path, settings)
             return (f"repaired the {adapter} adapter (`{old.split(' ', 1)[0]}` was not on PATH; "
                     f"now `{python_cmd()}`; backup at {path.name}.bak)" + trust)
 
@@ -277,7 +321,7 @@ def merge_settings(path: Path, dest_rel: str, check: bool, adapter: str = "claud
     hooks["UserPromptSubmit"].append(
         {"hooks": [{"type": "command", "command": hook_command(dest_rel, adapter)}]})
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+    write_settings(path, settings)
     return f"registered the {adapter} prompt-submit adapter" + (
         f" (backup at {path.name}.bak)" if path.with_suffix(path.suffix + ".bak").exists() else ""
     ) + trust
