@@ -9,6 +9,16 @@ behaviour).
 
 ### Added
 
+- `scripts/team_sim.py`: an offline, deterministic simulation of task-level team outcomes
+  (completion, conflicting edits, missed facts, crash recovery, overhead, false success)
+  with bootstrap intervals over seeds and a sensitivity sweep over how often a control team
+  reads its shared notes. Postbox's communication goes through the real CLI and adapter;
+  agent behaviour is scripted, so it measures the effect of the mechanism under stated
+  assumptions and says nothing about real models. `docs/coordination-experiment.md` is the
+  pre-registered design for a real-agent experiment (arms, metrics computed from artifacts,
+  sample size, decision rule, threats to validity, cost model, safety rules). `test_team_sim.py`
+  pins determinism, equal workloads for both arms, the exit-status contract and that the
+  harness cannot only favour Postbox.
 - `scripts/e2e_claude.py`: real-session end-to-end tests of the Claude Code adapter in
   headless `claude -p`, with random tokens and a negative control for each check; it
   refuses sessions beyond a call budget (`--max-calls`, default 12), exits 2 when `claude`
