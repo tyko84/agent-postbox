@@ -1593,6 +1593,43 @@ def test_fuzz(root: Path) -> None:
           p.returncode == 2 and b"Traceback" not in p.stderr, repr(p.stderr[-160:]))
 
 
+def test_participants_not_utf8(root: Path) -> None:
+    print("\na PARTICIPANTS.md that is not UTF-8: one line, exit 2, never a traceback")
+    box = root / "participants-latin1"
+    box.mkdir()
+    table = "| Identity | can |\n|---|---|\n| bob | push caf\u00e9 |\n\n## Aliases\n"
+    (box / "PARTICIPANTS.md").write_bytes(table.encode("latin-1"))    # 0xe9: not UTF-8
+    hand(box, "P0", "ASK", "alice", "bob", "2030-01-01T09:00:00Z", "a real question")
+    send = ("send", "--type", "NOTICE", "--from", "alice", "--to", "bob", "--subject", "s",
+            "--body", "b")
+    cases = {
+        "send": send, "list": ("list",), "list --json": ("list", "--json"),
+        "inbox": ("inbox", "--to", "bob"), "inbox --json": ("inbox", "--to", "bob", "--json"),
+        "ask": ("ask", "--from", "alice", "--to", "bob", "--subject", "q", "--body", "b"),
+        "ask --capability": ("ask", "--from", "alice", "--to", "bob", "--subject", "q",
+                             "--body", "b", "--capability", "push"),
+        "capability": ("capability", "--identity", "bob", "--capability", "push"),
+    }
+    before = snapshot(box)
+    for name, argv in cases.items():
+        r = run(box, *argv)
+        lines = r.stderr.splitlines()
+        check(f"{name}: exit 2, nothing on stdout, one line naming the file and UTF-8",
+              r.returncode == 2 and r.stdout == "" and len(lines) == 1
+              and "PARTICIPANTS.md" in lines[0] and "not UTF-8" in lines[0]
+              and "Traceback" not in r.stderr, f"rc={r.returncode} {r.stdout!r} {r.stderr[-300:]!r}")
+    check("...and nothing was written to the mailbox", snapshot(box) == before)
+    (box / "PARTICIPANTS.md").write_text(table, encoding="utf-8")       # positive control
+    r = run(box, "list")
+    check("control: the same table saved as UTF-8 lists the ASK, exit 0",
+          r.returncode == 0 and "a real question" in r.stdout, r.stderr[-200:])
+    r = run(box, "capability", "--identity", "bob", "--capability", "push")
+    check("control: ...and capability answers from it", (r.returncode, r.stdout) == (0, "can\n"),
+          r.stdout + r.stderr)
+    r = run(box, *send)
+    check("control: ...and send writes", r.returncode == 0 and "wrote " in r.stdout, r.stderr)
+
+
 def main() -> int:
     faulthandler.dump_traceback_later(WATCHDOG, exit=True)
     with tempfile.TemporaryDirectory() as td:
@@ -1604,6 +1641,7 @@ def main() -> int:
         test_results(root)
         test_reader_gone(root)
         test_fuzz(root)
+        test_participants_not_utf8(root)
     faulthandler.cancel_dump_traceback_later()
     if KNOWN:
         print(f"\nKNOWN ({len(KNOWN)}; defects outside this file's reach, not failures):")

@@ -1055,11 +1055,29 @@ def participants_paths() -> list[Path]:
     return seen
 
 
+class ParticipantsUnreadable(ValueError):
+    """PARTICIPANTS.md exists but cannot be read as UTF-8 text. A ValueError,
+    like a soft-default capability: the command refuses with one line, exit 2
+    (`main` says it for the commands that do not catch it themselves)."""
+
+
+def _read_participants(p: Path) -> str:
+    try:
+        return p.read_text(encoding="utf-8")
+    except UnicodeDecodeError as e:
+        raise ParticipantsUnreadable(
+            f"cannot read {p}: not UTF-8 text (byte {e.start}); "
+            "save it as UTF-8, then retry") from None
+    except OSError as e:
+        raise ParticipantsUnreadable(f"cannot read {p}: {e.strerror or e}") from None
+
+
 def load_participants(path: Path | None = None) -> dict[str, dict[str, set[str]]]:
     """Parse Identity / can / cannot from a PARTICIPANTS.md table.
 
     Returns {identity_lower: {"can": set, "cannot": set}}.
-    Raises ValueError on soft-default can cells.
+    Raises ValueError on soft-default can cells, and ParticipantsUnreadable (a
+    ValueError) when the file exists but is not readable UTF-8 text.
     """
     paths = [path] if path else participants_paths()
     text = None
@@ -1067,7 +1085,7 @@ def load_participants(path: Path | None = None) -> dict[str, dict[str, set[str]]
         if p is None:
             continue
         if _is_file(p):
-            text = p.read_text(encoding="utf-8")
+            text = _read_participants(p)
             break
     if text is None:
         return {}
@@ -1387,13 +1405,15 @@ def load_aliases(path: Path | None = None) -> dict[str, list[str]]:
     Returns {alias_lower: [writer_id_lower, ...]}. Empty if undeclared.
     Scans candidate paths and returns the first file that declares a
     non-empty Aliases table (mailbox-local caps-only PARTICIPANTS must not
-    shadow a complete table elsewhere).
+    shadow a complete table elsewhere). Raises ParticipantsUnreadable for a
+    candidate that exists but is not readable UTF-8 text: guessing "no
+    aliases" there would deliver mail for an alias to nobody.
     """
     paths = [path] if path else participants_paths()
     for cand in paths:
         if cand is None or not _is_file(cand):
             continue
-        parsed = _parse_aliases_text(cand.read_text(encoding="utf-8"))
+        parsed = _parse_aliases_text(_read_participants(cand))
         if parsed:
             return parsed
     return {}
@@ -2610,6 +2630,7 @@ def cmd_list(args: argparse.Namespace) -> int:
     if err:
         print(err, file=sys.stderr)
         return 2
+    aliases = load_aliases()   # before any output: an unreadable file refuses
     if not v.json:
         print(f"# mailbox: {box}  ({mailbox_source()})")
     everything, rejects = load_messages()
@@ -2617,7 +2638,6 @@ def cmd_list(args: argparse.Namespace) -> int:
         print(r, file=sys.stderr)
     _quarantine_hint(rejects)
     rows = everything
-    aliases = load_aliases()
     idx = _Index(everything)
     if args.to:
         rows = [m for m in rows if match_identity(m.to, args.to, aliases=aliases)]
@@ -2656,13 +2676,13 @@ def cmd_inbox(args: argparse.Namespace) -> int:
     if err:
         print(err, file=sys.stderr)
         return 2
+    aliases = load_aliases()   # before any output: an unreadable file refuses
     if not v.json:
         print(f"# inbox: {identity}  mailbox: {box}  ({mailbox_source()})")
     everything, rejects = load_messages()
     for r in rejects:
         print(r, file=sys.stderr)
     _quarantine_hint(rejects)
-    aliases = load_aliases()
     idx = _Index(everything)
     rows = [m for m in everything
             if actionable(m, everything, identity, now=v.now, aliases=aliases, _idx=idx)]
@@ -3676,6 +3696,9 @@ def main(argv: list[str] | None = None) -> int:
             rc = _run(argv)
         except _ReaderGone:
             rc = EXIT_READER_GONE
+        except ParticipantsUnreadable as exc:   # one line, never a traceback (section 38)
+            print(f"refusing: {exc}", file=sys.stderr)
+            rc = 2
         except SystemExit as exc:  # argparse: --help, --version, a usage error
             if _settle_output() and exc.code in (0, None):
                 raise SystemExit(EXIT_READER_GONE) from None
