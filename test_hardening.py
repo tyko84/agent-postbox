@@ -24,6 +24,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Any
 
 HERE = Path(__file__).resolve().parent
 TOOL = str(HERE / "agent_mail.py")
@@ -93,22 +94,22 @@ def main() -> int:
         d = run(box, "doctor").stdout
         check("malformed expiry labelled with raw text", "MALFORMED_EXPIRES 'tomorrow'" in d, d)
         check("missing expiry labelled NO_EXPIRES", "NO_EXPIRES" in d, d)
-        lst = run(box, "list").stdout
-        check("neither becomes a hold", "[expired   ] x -> all  hand" in lst
-              and "[expired   ] x -> all  none" in lst, lst)
+        lst_text = run(box, "list").stdout
+        check("neither becomes a hold", "[expired   ] x -> all  hand" in lst_text
+              and "[expired   ] x -> all  none" in lst_text, lst_text)
         check("evidence still on disk", len(list(box.glob("01ARZ3NDEK*"))) == 2)
 
         print("quarantine of unaddressable / undated / unknown-type mail")
         for name, fm in [("notype", "type: BOGUS\nfrom: x\nto: all\ndate: 2026-01-01T00:00:00Z"),
                          ("noto", "type: NOTICE\nfrom: x\ndate: 2026-01-01T00:00:00Z"),
                          ("baddate", "type: NOTICE\nfrom: x\nto: all\ndate: garbage")]:
-            i = f"01ARZ3NDEKTSV4RRFFQ69G6{name[:2].upper()[0]}{len(name)}"
-            i = (i + "00000000000000000000000000")[:26]
-            (box / f"{i}-{name}.md").write_text(f"---\nid: {i}\n{fm}\nsubject: {name}\n---\n\nbody\n")
-            out = run(box, "list")
-            check(f"{name}: loud REJECT", f"{name}" in out.stderr and "REJECT" in out.stderr, out.stderr)
-            check(f"{name}: not listed as live mail", f"-{name}" not in out.stdout and
-                  f"  {name}" not in out.stdout, out.stdout)
+            hid = f"01ARZ3NDEKTSV4RRFFQ69G6{name[:2].upper()[0]}{len(name)}"
+            hid = (hid + "00000000000000000000000000")[:26]
+            (box / f"{hid}-{name}.md").write_text(f"---\nid: {hid}\n{fm}\nsubject: {name}\n---\n\nbody\n")
+            cp = run(box, "list")
+            check(f"{name}: loud REJECT", f"{name}" in cp.stderr and "REJECT" in cp.stderr, cp.stderr)
+            check(f"{name}: not listed as live mail", f"-{name}" not in cp.stdout and
+                  f"  {name}" not in cp.stdout, cp.stdout)
 
         print("duplicate ids")
         src = next(box.glob("*-hand.md"))
@@ -119,12 +120,12 @@ def main() -> int:
         print("supersede rules")
         c = send(box, "alice", "--expires", soon(2), kind="CLAIM", subj="own")
         cid = mid(c)
-        r1 = send(box, "mallory", "--expires", soon(1), "--supersedes", cid, kind="CLAIM")
-        check("another sender cannot supersede a claim", r1.returncode == 2, r1.stderr)
-        r2 = send(box, "alice", "--expires", soon(1), "--supersedes", "NOSUCHID", kind="CLAIM")
-        check("nonexistent supersede target refused", r2.returncode == 2, r2.stderr)
-        r3 = send(box, "alice", "--expires", soon(1), "--supersedes", cid, kind="CLAIM", subj="renew")
-        check("owner can renew (supersede with CLAIM)", r3.returncode == 0, r3.stderr)
+        sup1 = send(box, "mallory", "--expires", soon(1), "--supersedes", cid, kind="CLAIM")
+        check("another sender cannot supersede a claim", sup1.returncode == 2, sup1.stderr)
+        sup2 = send(box, "alice", "--expires", soon(1), "--supersedes", "NOSUCHID", kind="CLAIM")
+        check("nonexistent supersede target refused", sup2.returncode == 2, sup2.stderr)
+        sup3 = send(box, "alice", "--expires", soon(1), "--supersedes", cid, kind="CLAIM", subj="renew")
+        check("owner can renew (supersede with CLAIM)", sup3.returncode == 0, sup3.stderr)
 
         print("scope conflicts")
         a = send(box, "alice", "--expires", soon(1), "--scope", "file:f.py", kind="CLAIM", subj="a")
@@ -202,7 +203,7 @@ def main() -> int:
         # lock released even when publish blows up (disk full etc.)
         import importlib.util
         spec = importlib.util.spec_from_file_location("am", TOOL)
-        am = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
+        am: Any = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
         spec.loader.exec_module(am)  # type: ignore[union-attr]
         os.environ["AGENT_MAIL_DIR"] = str(box)
         def boom(*_a: object) -> None:
@@ -220,9 +221,9 @@ def main() -> int:
               not (box / (".idem." + hashlib.sha256(b"erin\0all\0bk").hexdigest()[:24])).exists())
 
         print("stale temp files are reported")
-        t = box / ".01ARZ-x.md.1.tmp"
-        t.write_text("partial")
-        os.utime(t, (0, 0))
+        stale = box / ".01ARZ-x.md.1.tmp"
+        stale.write_text("partial")
+        os.utime(stale, (0, 0))
         check("doctor lists stale_tmp", "stale_tmp: 1" in run(box, "doctor").stdout)
 
         print("status: read-only, deterministic, stable keys")
@@ -608,8 +609,8 @@ def main() -> int:
         half = text[:len(text) // 2]
         check("setup: the cut lands inside the frontmatter", half.startswith("---\nid: ")
               and "\n---\n" not in half[3:], repr(half))
-        bad = r5 / "01ARZ3NDEKTSV4RRFFQ69G5HLF-half.md"
-        bad.write_text(half)
+        half_md = r5 / "01ARZ3NDEKTSV4RRFFQ69G5HLF-half.md"
+        half_md.write_text(half)
         lst = run(r5, "list")
         check("list: the half file is loudly REJECTed, exit 2, no traceback",
               lst.returncode == 2 and "REJECT 01ARZ3NDEKTSV4RRFFQ69G5HLF-half.md: missing id" in lst.stderr
@@ -628,7 +629,7 @@ def main() -> int:
               str(st5))
         d = run(r5, "doctor").stdout
         check("doctor lists the reject and keeps the evidence on disk",
-              "rejects: 1" in d and "01ARZ3NDEKTSV4RRFFQ69G5HLF-half.md: missing id" in d and bad.exists(), d)
+              "rejects: 1" in d and "01ARZ3NDEKTSV4RRFFQ69G5HLF-half.md: missing id" in d and half_md.exists(), d)
 
         print("6. keyed send: a live original is waited for and never taken over (PROTOCOL.md section 31)")
         r6 = Path(td) / "rec6"
@@ -730,15 +731,15 @@ def main() -> int:
         r7b = Path(td) / "rec7b"
         r7b.mkdir()
         orig, _ = blocked_send(r7b, "agent_mail._publish = block", *KEYED)
-        mk = next(r7b.glob(".idem.*"))
-        foreign = "01ARZ3NDEKTSV4RRFFQ69GFRGN\n" + mk.read_text().split("\n")[1] + "\n"
+        mk7 = next(r7b.glob(".idem.*"))
+        foreign = "01ARZ3NDEKTSV4RRFFQ69GFRGN\n" + mk7.read_text().split("\n")[1] + "\n"
         swap = r7b / ".swap"
         swap.write_text(foreign)
-        os.replace(swap, mk)  # what a pre-section-31 sender's takeover amounts to: a new inode
+        os.replace(swap, mk7)  # what a pre-section-31 sender's takeover amounts to: a new inode
         orig.send_signal(signal_.SIGTERM)
         orig.communicate(timeout=60)
         check("giving up leaves a marker that another sender put in its place",
-              orig.returncode == 143 and mk.exists() and mk.read_text() == foreign, str(hidden(r7b)))
+              orig.returncode == 143 and mk7.exists() and mk7.read_text() == foreign, str(hidden(r7b)))
 
         print("8. keyed send: the retry of a retry, bounds, and a filesystem without flock")
         r8 = Path(td) / "rec8"
@@ -1030,12 +1031,12 @@ def main() -> int:
 
         print("12. diagnostics: what real crashed senders leave is named by status and doctor (PROTOCOL.md section 33)")
 
-        def stj(box: Path, *extra: str) -> dict[str, object]:
+        def stj(box: Path, *extra: str) -> dict[str, Any]:
             cp = run(box, "status", "--json", *extra)
             return json.loads(cp.stdout) if cp.returncode == 0 else {"error": cp.stderr}
 
         def codes(box: Path, *extra: str) -> dict[str, int]:
-            return {p["code"]: p["count"] for p in stj(box, *extra)["problems"]}  # type: ignore[union-attr,index]
+            return {p["code"]: p["count"] for p in stj(box, *extra)["problems"]}
 
         def tree(box: Path) -> dict[str, tuple[int, int]]:
             return {f.name: (f.lstat().st_mtime_ns, f.lstat().st_size) for f in sorted(box.iterdir())}
@@ -1179,7 +1180,7 @@ def main() -> int:
         lock13, marker13 = plant_lock(r13, "file:13.py"), plant_marker(r13, "k13")
         st13 = stj(r13)
         check("control: status probes the planted files and finds both orphaned",
-              st13["scope_locks"]["orphaned"] == 1 and st13["idem_markers"]["orphaned"] == 1,  # type: ignore[index]
+              st13["scope_locks"]["orphaned"] == 1 and st13["idem_markers"]["orphaned"] == 1,
               str(st13))
         fd13 = shared(lock13)
         cp = claim13(r13, "file:13.py")
@@ -1447,8 +1448,8 @@ def main() -> int:
     faulthandler.cancel_dump_traceback_later()
     if FAILS:
         print("\nFAILED:")
-        for f in FAILS:
-            print(" -", f)
+        for fail in FAILS:
+            print(" -", fail)
         return 1
     print("\nALL PASS")
     return 0

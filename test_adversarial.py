@@ -38,6 +38,7 @@ import time
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import TypedDict
 
 HERE = Path(__file__).resolve().parent
 TOOL = str(HERE / "agent_mail.py")
@@ -68,6 +69,14 @@ def send(box: Path, *, frm: str = "alice", to: str = "bob", subj: str = "s",
                    "--subject", subj, "--body-file", "-", *extra, stdin=stdin)
     return run(box, "send", "--type", kind, "--from", frm, "--to", to,
                "--subject", subj, "--body", body, *extra)
+
+
+class SendKw(TypedDict, total=False):
+    """Keyword overrides for send(), for the tables of hostile field values."""
+    frm: str
+    to: str
+    subj: str
+    extra: tuple[str, ...]
 
 
 def mid(cp: subprocess.CompletedProcess[str]) -> str:
@@ -322,13 +331,13 @@ def reader_goes_away(root: Path) -> None:
     if os.path.exists("/dev/full"):     # Linux: every write to it fails with ENOSPC
         for name in ("list", "capability"):   # one fails in a print, one in the last flush
             with open("/dev/full", "wb") as full_dev:
-                r = subprocess.run(ENTRIES["console script"] + commands[name], stdout=full_dev,
-                                   stderr=subprocess.PIPE, cwd=HERE, timeout=120,
-                                   env=dict(os.environ, AGENT_MAIL_DIR=str(pbox)))
+                rfull = subprocess.run(ENTRIES["console script"] + commands[name], stdout=full_dev,
+                                       stderr=subprocess.PIPE, cwd=HERE, timeout=120,
+                                       env=dict(os.environ, AGENT_MAIL_DIR=str(pbox)))
             check(f"`{name} > /dev/full`: a full disk behind stdout is still an error, "
                   f"not a quiet {GONE} or 0",
-                  r.returncode not in (0, GONE) and b"No space left" in r.stderr,
-                  f"rc={r.returncode} {r.stderr[-200:]!r}")
+                  rfull.returncode not in (0, GONE) and b"No space left" in rfull.stderr,
+                  f"rc={rfull.returncode} {rfull.stderr[-200:]!r}")
     else:
         print("  SKIP  stdout on a full device (no /dev/full on this platform)")
     if os.geteuid() != 0:
@@ -475,22 +484,22 @@ def main() -> int:
 
         print("control characters and escapes in headers are refused at send")
         n0 = len(md_files(box))
-        bad_headers = {
-            "newline in subject (frontmatter injection)": dict(subj="hi\nto: evil"),
-            "CR in subject": dict(subj="hi\rto: evil"),
-            "ANSI escape in subject": dict(subj="\x1b[31mred\x1b[0m"),
-            "DEL in subject": dict(subj="a\x7fb"),
-            "C1 control in subject": dict(subj="a\x85b"),
-            "U+2028 in subject": dict(subj="a b"),
-            "RTL override in subject": dict(subj="abc‮gpj.exe"),
-            "zero-width space in subject": dict(subj="ab​cd"),
-            "BOM inside subject": dict(subj="ab﻿cd"),
-            "ANSI escape in --from": dict(frm="al\x1b[2Jice"),
-            "newline in --to": dict(to="bob\nfrom: root"),
-            "RTL override in --to": dict(to="bo‮b"),
-            "space in --from": dict(frm="al ice"),
-            "colon in --to": dict(to="bob:evil"),
-            "non-ASCII homoglyph in --from": dict(frm="alіce"),
+        bad_headers: dict[str, SendKw] = {
+            "newline in subject (frontmatter injection)": SendKw(subj="hi\nto: evil"),
+            "CR in subject": SendKw(subj="hi\rto: evil"),
+            "ANSI escape in subject": SendKw(subj="\x1b[31mred\x1b[0m"),
+            "DEL in subject": SendKw(subj="a\x7fb"),
+            "C1 control in subject": SendKw(subj="a\x85b"),
+            "U+2028 in subject": SendKw(subj="a b"),
+            "RTL override in subject": SendKw(subj="abc‮gpj.exe"),
+            "zero-width space in subject": SendKw(subj="ab​cd"),
+            "BOM inside subject": SendKw(subj="ab﻿cd"),
+            "ANSI escape in --from": SendKw(frm="al\x1b[2Jice"),
+            "newline in --to": SendKw(to="bob\nfrom: root"),
+            "RTL override in --to": SendKw(to="bo‮b"),
+            "space in --from": SendKw(frm="al ice"),
+            "colon in --to": SendKw(to="bob:evil"),
+            "non-ASCII homoglyph in --from": SendKw(frm="alіce"),
         }
         for label, kw in bad_headers.items():
             cp = send(box, **kw)
@@ -513,15 +522,15 @@ def main() -> int:
         print("path traversal in identifier fields")
         n0 = len(md_files(box))
         for label, kw in {
-            "../ in --from": dict(frm="../etc/passwd"),
-            "absolute --to": dict(to="/etc/passwd"),
-            "backslash --from": dict(frm="..\\..\\evil"),
-            "slash --to": dict(to="a/b"),
-            "dotdot --to": dict(to=".."),
-            "../ in --re": dict(extra=("--re", "../../etc/passwd")),
-            "absolute --reply-to": dict(extra=("--reply-to", "/etc/passwd")),
-            "backslash --re": dict(extra=("--re", "..\\x")),
-            "../ in --supersedes": dict(extra=("--supersedes", "../../x")),
+            "../ in --from": SendKw(frm="../etc/passwd"),
+            "absolute --to": SendKw(to="/etc/passwd"),
+            "backslash --from": SendKw(frm="..\\..\\evil"),
+            "slash --to": SendKw(to="a/b"),
+            "dotdot --to": SendKw(to=".."),
+            "../ in --re": SendKw(extra=("--re", "../../etc/passwd")),
+            "absolute --reply-to": SendKw(extra=("--reply-to", "/etc/passwd")),
+            "backslash --re": SendKw(extra=("--re", "..\\x")),
+            "../ in --supersedes": SendKw(extra=("--supersedes", "../../x")),
         }.items():
             cp = send(box, **kw)
             check(f"refused: {label}", cp.returncode == 2 and len(md_files(box)) == n0,
@@ -604,9 +613,9 @@ def main() -> int:
         check("no traceback from hostile files", "Traceback" not in res.stderr + res.stdout, res.stderr)
         # Only the message lines count: the "# mailbox: <path>" header carries a random
         # temp-directory name, which can contain any short letter sequence.
-        listed = "\n".join(ln for ln in res.stdout.splitlines() if not ln.startswith("# mailbox"))
-        check("quarantined content never listed", "caseDup" not in listed and "\x1b" not in listed
-              and "gpj" not in listed)
+        listing = "\n".join(ln for ln in res.stdout.splitlines() if not ln.startswith("# mailbox"))
+        check("quarantined content never listed", "caseDup" not in listing and "\x1b" not in listing
+              and "gpj" not in listing)
         check("control: good messages survive beside the rejects",
               "good one" in res.stdout and "ok one" in res.stdout)
         shown = run(qbox, "show", ULID_E)
@@ -922,8 +931,8 @@ def main() -> int:
               out.returncode == 0 and "REJECT" not in out.stderr, out.stderr)
         stray = [p.name for p in cbox.iterdir() if p.name.endswith(".tmp")]
         check("no temp files left after the races", not stray, str(stray))
-        rival = try_claim("intruder")
-        check("control: a rival is still refused while the owner's lease is held", rival == 3, str(rival))
+        rival_rc = try_claim("intruder")
+        check("control: a rival is still refused while the owner's lease is held", rival_rc == 3, str(rival_rc))
 
         print("writers SIGKILLed at arbitrary moments, then restarted with the same keys")
         # Not at a chosen chokepoint (test_hardening.py does that): sixteen keyed
@@ -940,7 +949,7 @@ def main() -> int:
             return ["send", "--type", "NOTICE", "--from", "alice", "--to", "bob", "--subject",
                     f"storm {i:02d}", "--body-file", str(root / "kbody.txt"), "--key", f"storm-{i:02d}"]
 
-        def victim(i: int) -> int:
+        def storm_victim(i: int) -> int:
             proc = subprocess.Popen([sys.executable, "-I", TOOL, *storm_argv(i)],
                                     env=dict(os.environ, AGENT_MAIL_DIR=str(kbox)),
                                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
@@ -952,7 +961,7 @@ def main() -> int:
             return proc.wait(timeout=120)
 
         with ThreadPoolExecutor(max_workers=4) as ex:
-            deaths = list(ex.map(victim, range(16)))
+            deaths = list(ex.map(storm_victim, range(16)))
         check("control: every writer ended by SIGKILL or had already finished; at least one was killed",
               set(deaths) <= {-9, 0} and -9 in deaths, str(deaths))
         after = run(kbox, "list")
