@@ -564,6 +564,89 @@ def scenario(td: Path, box: Path) -> None:
         # The retry runs in the background: phases 3 and 4 share the mailbox with it.
         retry = background.submit(timed, box, *crash, "--key-wait", "30")
 
+    with phase("2c. a keyed claim killed, its scope taken: the refused retry leaves no orphan", 22):
+        # docs/issues-to-open.md issue 3. Its own mailbox: the killed sender's temp
+        # file stays behind there, and phase 5 asserts the main mailbox is clean.
+        obox = td / "orphan"
+        obox.mkdir()
+        o_until = iso(time.time() + 3600)
+
+        def keyed_claim(scope: str) -> tuple[str, ...]:
+            return ("send", "--type", "CLAIM", "--from", "erin", "--to", "all", "--subject",
+                    "port the parser", "--body", "on it end", "--scope", scope,
+                    "--expires", o_until, "--key", "k-parser")
+
+        def markers() -> list[str]:
+            return sorted(n for n in os.listdir(obox) if n.startswith(".idem."))
+
+        def erins() -> list[Path]:
+            return sorted(obox.glob("*-port-the-parser.md"))
+
+        oready = td / "orphan-ready"
+        o_killed = park(obox, oready, AT_LINK, *keyed_claim("file:parser.py"))
+        check("orphan: the keyed claimant is parked after reserving its key, then SIGKILLed",
+              oready.exists() and len(markers()) == 1 and kill(o_killed) == -9, box_state(obox))
+        oready.unlink(missing_ok=True)
+        o_taken = send(obox, "frank", "all", "CLAIM", "parser is mine", "mine end",
+                     "--scope", "file:parser.py", "--expires", o_until)
+        check("orphan: a rival claims the scope meanwhile", o_taken.returncode == 0, o_taken.stderr)
+        o_refused = run(obox, *keyed_claim("file:parser.py"))
+        check("orphan: the identical retry is refused at the scope stage (exit 3, nothing written)",
+              o_refused.returncode == 3 and "already held by frank" in o_refused.stderr
+              and erins() == [], o_refused.stderr)
+        o_later = status(obox, "--now", iso(time.time() + 61))
+        check("orphan: ...and its key marker is gone; status 61 s later reports no orphan",
+              markers() == [] and o_later.get("idem_markers", {}).get("orphaned") == 0
+              and "ORPHAN_IDEM_MARKER" not in json.dumps(o_later.get("problems")),
+              f"{markers()} {o_later.get('idem_markers')} {o_later.get('problems')}")
+        o_release = send(obox, "frank", "all", "CLAIM", "parser released", "done end",
+                       "--supersedes", mid(o_taken), "--expires", o_until)
+        o_again = run(obox, *keyed_claim("file:parser.py"))
+        o_dup = run(obox, *keyed_claim("file:parser.py"))
+        check("orphan: once the rival releases, the retry writes exactly one message",
+              o_release.returncode == 0 and o_again.returncode == 0 and len(erins()) == 1
+              and o_dup.returncode == 0 and mid(o_dup) == mid(o_again) != "" and len(markers()) == 1,
+              o_again.stdout + o_again.stderr + o_dup.stdout + o_dup.stderr)
+
+        # A LIVE holder's marker is never removed by a refused retry.
+        o_go = td / "orphan-go"
+        o_hold = (f"def block(*_a, **_k):\n"
+                f"    open({str(oready)!r}, 'w').close()\n"
+                f"    while not os.path.exists({str(o_go)!r}):\n"
+                f"        __import__('time').sleep(0.05)\n" + AT_LINK)
+
+        def live_claim(scope: str) -> tuple[str, ...]:
+            return ("send", "--type", "CLAIM", "--from", "gina", "--to", "all", "--subject",
+                    "port the lexer", "--body", "on it end", "--scope", scope,
+                    "--expires", o_until, "--key", "k-lexer")
+        o_live = park(obox, oready, o_hold, *live_claim("file:lexer.py"))
+        o_held_marker = markers()
+        o_busy = run(obox, *live_claim("file:lexer.py"))           # refused at the scope lock
+        o_other = send(obox, "frank", "all", "CLAIM", "tokens are mine", "mine end",
+                     "--scope", "file:tokens.py", "--expires", o_until)
+        o_rival = run(obox, *live_claim("file:tokens.py"))         # refused at the rival check
+        check("live: both scope-stage refusals exit 3 and leave the live holder's marker",
+              oready.exists() and o_live.poll() is None and o_busy.returncode == 3
+              and "being claimed right now" in o_busy.stderr and o_other.returncode == 0
+              and o_rival.returncode == 3 and "already held by frank" in o_rival.stderr
+              and markers() == o_held_marker and len(o_held_marker) == 2,
+              f"{o_busy.stderr} {o_rival.stderr} {o_held_marker} {markers()}")
+        o_go.touch()
+        o_rc: int | None
+        try:
+            o_rc = o_live.wait(timeout=STEP_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            o_rc = kill(o_live)
+        o_lexer = sorted(obox.glob("*-port-the-lexer.md"))
+        o_retry_live = run(obox, *live_claim("file:lexer.py"))
+        check("live: the held sender then publishes exactly once; a retry is its duplicate",
+              o_rc == 0 and len(o_lexer) == 1 and o_retry_live.returncode == 0
+              and "duplicate of" in o_retry_live.stdout and o_lexer[0].name.startswith(mid(o_retry_live)),
+              f"rc={o_rc} {o_lexer} {o_retry_live.stdout} {o_retry_live.stderr}")
+        for f in [*obox.iterdir(), o_go, oready]:
+            f.unlink(missing_ok=True)
+        obox.rmdir()
+
     with phase("3. ask and answer, with a retried answer", 14):
         ask = send(box, "carol", "dave", "ASK", "which port does staging use", "need it today end")
         aid = mid(ask)

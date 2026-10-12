@@ -943,6 +943,20 @@ it: the dead sender's lock is gone, so its marker is an orphan the next retry
 takes over at once; its temp files are hidden, never read as mail, and
 reported by `doctor`/`status` once stale.
 
+**Refused at the scope stage.** A keyed `CLAIM` takes its scope lock (§30)
+and checks for a rival holder before it reaches step 2, so a retry refused
+there (exit 3, `is being claimed right now` or `is already held by`) could not
+take over the orphan its own killed predecessor left, and `status` reported
+`ORPHAN_IDEM_MARKER` until a retry got past the scope. Such a refusal now looks
+at its own key's marker once and removes it only if it is in the locked format,
+carries this send's content hash, names no message, and its lock is granted
+(the holder is dead); it keeps that lock across the removal and removes only
+the inode it locked, so no rival can take the orphan over in between. A live
+holder's marker (lock refused), a resolved one, an old-format one and one with
+other content are left alone. The refusal's exit status and output are
+unchanged, and a later retry reserves the key afresh: nothing was published
+under it, so no duplicate can follow.
+
 **What callers observe.** Unchanged: exit 0 and `wrote`/`id:` for the send that
 published; exit 0 and `duplicate of <id> (key 'K'); nothing written` plus
 `id: <id>` for every retry once the message exists; exit 2 for different

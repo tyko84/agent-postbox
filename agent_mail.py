@@ -1847,6 +1847,36 @@ def _idem_legacy_takeover(marker: Path, seen: bytes) -> None:
         mutex.unlink(missing_ok=True)
 
 
+def _idem_content(mtype: str, subject: str, body: str) -> str:
+    return hashlib.sha256(f"{mtype}\0{subject}\0{body}".encode()).hexdigest()
+
+
+def _idem_drop_orphan(box: Path, sender: str, to: str, key: str, content: str) -> None:
+    """A keyed send refused at the scope stage never reaches _idem_claim, so it
+    clears its own key's ORPHAN here (PROTOCOL.md section 31, "Refused at the
+    scope stage"): the marker must be in the locked format, carry this send's
+    content, name no message, and its kernel lock must be free. While holding
+    that lock (so no rival can take the orphan over meanwhile), it is removed
+    if the name still names it. A live holder's marker (lock refused), a
+    resolved one, an old-format one and one for other content are left alone."""
+    marker = _idem_marker(box, sender, to, key)
+    ro = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        rfd = os.open(marker, ro)
+    except OSError:
+        return  # no marker (the usual case), or not one this send may open
+    try:
+        old_id, old_content, locked = _idem_parse(os.pread(rfd, 4096, 0))
+        if not (old_id and locked and old_content == content) or _idem_landed(box, old_id):
+            return
+        if _try_flock(rfd) is True and _same_inode(marker, rfd) and not _idem_landed(box, old_id):
+            marker.unlink(missing_ok=True)
+    except OSError:
+        pass
+    finally:
+        os.close(rfd)  # also releases the orphan's lock
+
+
 def _idem_claim(box: Path, sender: str, to: str, key: str, msg_id: str,
                 mtype: str, subject: str, body: str,
                 wait: float = IDEM_WAIT_DEFAULT) -> tuple[str, int | None]:
@@ -1860,7 +1890,7 @@ def _idem_claim(box: Path, sender: str, to: str, key: str, msg_id: str,
     dead holder's is taken over at once; only an old-format marker, which
     carries no liveness signal, is taken over on the strength of the wait.
     """
-    content = hashlib.sha256(f"{mtype}\0{subject}\0{body}".encode()).hexdigest()
+    content = _idem_content(mtype, subject, body)
     marker = _idem_marker(box, sender, to, key)
     ro = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
     for _ in range(8):
@@ -2243,6 +2273,9 @@ def cmd_send(args: argparse.Namespace) -> int:
                       "(flock(2) on the mailbox filesystem is required)", file=sys.stderr)
                 return 2
             if lock_fd is None:
+                if idem:
+                    _idem_drop_orphan(box, sender, to, idem,
+                                      _idem_content(mtype, args.subject, body))
                 print(f"scope {scope!r} is being claimed right now; retry", file=sys.stderr)
                 return 3
             current, _ = load_messages()
@@ -2252,6 +2285,9 @@ def cmd_send(args: argparse.Namespace) -> int:
                       and m.id.upper() != supersedes.upper()
                       and derived_status(m, current, now) == "held"]
             if rivals:
+                if idem:
+                    _idem_drop_orphan(box, sender, to, idem,
+                                      _idem_content(mtype, args.subject, body))
                 print(f"scope {scope!r} is already held by {rivals[0].sender} "
                       f"({rivals[0].id}, until {rivals[0].meta.get('expires')})",
                       file=sys.stderr)

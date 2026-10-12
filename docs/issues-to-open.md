@@ -156,6 +156,8 @@ then `python selftest.py`, `python test_cli.py` and
 
 **Title:** Keyed CLAIM killed mid-send: a retry refused with exit 3 never clears its own orphaned key marker
 
+**Resolved** on branch dev/a-hardening: a scope-stage refusal clears its own key's orphaned marker (PROTOCOL.md section 31, "Refused at the scope stage"; test_field.py phase 2c); do not open.
+
 **Context.** `send --key K` reserves a marker file `.idem.<hash>` and holds a
 kernel lock on it while it publishes (PROTOCOL.md section 31). A sender that
 dies leaves the marker; a retry with the same key takes it over at once. For
