@@ -33,6 +33,20 @@ behaviour).
 
 ### Changed
 
+- Every `.py` file in the tree type-checks under mypy and is on the CI lint job's list
+  (`selftest.py`, `test_cli.py`, `test_hardening.py` and `test_adversarial.py` joined it):
+  rebound locals were renamed, containers annotated and the hostile-field tables typed,
+  with no check name, expected value or order changed. `test_publication.py` requires
+  every `.py` at the root and under `hooks/` and `scripts/` to be on that line.
+- SECURITY.md, "How this repository is built and released": what a consumer can verify
+  about a release and how (`SHA256SUMS`, `gh attestation verify`, `scripts/repro_build.py
+  --ref TAG --verify DIR`, `scripts/verify_release.py TAG`), what none of it shows (that
+  the code is correct, that the maintainer's account was not compromised, that a future
+  release will pass), and the install stance (not on PyPI; the attached wheel or a clone,
+  never a bare name). "Reporting" asks for the `verify_release.py` output with any report
+  about a release artifact.
+- README ("Silence proves nothing") and PROTOCOL.md section 8 name `open_asks()` as the
+  batch form of `owes_reply()`, answering that question and not `derived_status()`'s.
 - The pickup adapter takes its owed ASKs, and the live test of an ASK, from `open_asks`
   instead of asking `owes_reply`/`live` without an index once per ASK. Same output; at
   100,000 messages the adapter runs in about 4.4 s instead of 19.7 s, at 10,000 in

@@ -1582,6 +1582,14 @@ class Workflows(unittest.TestCase):
         """Every .py file under <root>/scripts, as the paths the mypy line would name."""
         return sorted(p.relative_to(root).as_posix() for p in (root / "scripts").rglob("*.py"))
 
+    @staticmethod
+    def python_files(root: Path) -> list[str]:
+        """Every .py file of the project (root, hooks/, scripts/), as the mypy line names them."""
+        found = list(root.glob("*.py"))
+        for sub in ("hooks", "scripts"):
+            found += (root / sub).rglob("*.py")
+        return sorted(p.relative_to(root).as_posix() for p in found)
+
     def test_the_lint_job_type_checks_every_script(self) -> None:
         root = Path(__file__).resolve().parent
         named = self.mypy_files()
@@ -1594,6 +1602,11 @@ class Workflows(unittest.TestCase):
                          "every scripts/*.py must be on the lint job's mypy line")
         for f in ("check_publication.py", "test_publication.py"):
             self.assertIn(f, named)
+        # every .py in the tree type-checks, so every one is named: a new file
+        # is type-checked or deliberately listed here as the exception it is
+        self.assertEqual([f for f in self.python_files(root) if f not in named], [],
+                         "every .py at the root and under hooks/ and scripts/ must be on the "
+                         "lint job's mypy line")
         # control: the discovery that feeds the comparison sees a script the line does not name
         with tempfile.TemporaryDirectory() as tmp:
             planted = Path(tmp) / "scripts" / "new_tool.py"
