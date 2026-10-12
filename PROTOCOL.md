@@ -230,6 +230,14 @@ this, in a throwaway mailbox; run it whenever you touch delivery.
   read state can drift.
 * A prompt-injection adapter **fails silently on every error path**. A broken
   mailbox must never block a prompt. That is also why §8 exists.
+* After the live mail, the adapter names what the identity itself holds and
+  owes: its unsuperseded claims (scope, since when, whether the lease is live
+  or has lapsed) and the open ASKs addressed to it that still owe a reply. The
+  rows are those of §34, read through `status`'s own function, at most five
+  per list with `+N more`, and never a subject or a body (§34, §37). The block
+  is read-only and fails silently like the rest; an identity that holds a
+  claim sees it even when nothing is addressed to it. Positive controls for
+  each line are in `selftest.py` (§8).
 * Identity comes from `AGENT_MAIL_IDENTITY`. There is no default. A pickup
   (adapter or poll) without it cannot deliver to you, so one adapter file
   serves every participant.

@@ -7,7 +7,16 @@ behaviour).
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- The pickup adapter (`hooks/agent_mail_check.py`) names, after the live mail, what
+  `AGENT_MAIL_IDENTITY` holds and owes: its unsuperseded claims (scope, since when,
+  live until / `NOT live` once lapsed) and the open ASKs addressed to it that still
+  owe a reply. Five rows per list, then `+N more`; the rows are those of
+  `status --json` (PROTOCOL.md section 34), never a subject or a body. Read-only,
+  still silent on every error and when there is nothing to say (section 9).
+- `CONTRIBUTING.md`: a field report walkthrough (what to collect from `doctor`,
+  `status --json` and `--version`, and what never to paste).
 
 ## [0.4.0] - 2026-10-11
 

@@ -11,6 +11,13 @@ is no decision to look. Hosts without that event poll
 Identity comes from AGENT_MAIL_IDENTITY. There is no default: if it is unset,
 this adapter is silent. That is unreachable, not a vendor default.
 
+After the live mail, the adapter names what the identity itself holds and
+owes: its unsuperseded scope claims (scope, since when, whether the lease is
+still live) and the open ASKs addressed to it that still owe a reply. The
+claim rows are the ones `status` reports (PROTOCOL.md section 34), read
+through `agent_mail.build_status`; nothing is parsed here. Like `status`, this
+block never carries a subject or a body.
+
 FAILS SILENTLY, ALWAYS. A broken mailbox must never block a prompt, so every
 error path exits 0 with no output. That is exactly why the test suite has a
 POSITIVE control: "prints nothing" is both the success case for an empty
@@ -20,9 +27,64 @@ Reads only. Never writes, never deletes, never marks anything read.
 """
 from __future__ import annotations
 
+import datetime as dt
 import os
 import sys
 from pathlib import Path
+from typing import Any
+
+SHOWN = 5          # rows per list; the rest is "+N more"
+NOT_A_HOLD = ("EXPIRED", "NO_EXPIRES", "MALFORMED_EXPIRES")   # section 34 reasons
+
+
+def _left(seconds: object) -> str:
+    if not isinstance(seconds, int):
+        return "-"
+    d, rem = divmod(seconds, 86400)
+    h, m = divmod(rem, 3600)
+    return f"{d}d{h:02d}h" if d else f"{h}h{m // 60:02d}m"
+
+
+def _utc(when: dt.datetime | None) -> str:
+    try:
+        return when.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if when else "-"
+    except (OverflowError, ValueError):
+        return "-"
+
+
+def _more(rows: list[str], total: int) -> list[str]:
+    return rows + ([f"  +{total - len(rows)} more"] if total > len(rows) else [])
+
+
+def holdings(agent_mail: Any, me: str, everything: list[Any], box: Path,
+             now: dt.datetime) -> list[str]:
+    """What `me` holds and owes, from the rows `status` reports. Read-only."""
+    st = agent_mail.build_status(everything, [], box, now)
+    flagged = {(r["id"], r["reason"]) for r in st["claims_attention"] if r["sender"] == me}
+    claims: list[str] = []
+    for r in st["claims_held"]:
+        if r["sender"] != me:
+            continue
+        scope = "(oversize)" if r.get("scope_oversize") else (r["scope"] or "-")
+        contested = "  CONTESTED" if (r["id"], "CONTESTED_SCOPE") in flagged else ""
+        claims.append(f"  {scope}  since {r['date'] or '-'}  live until {r['expires']} "
+                      f"({_left(r['seconds_left'])} left){contested}  id: {r['id']}")
+    for r in st["claims_attention"]:
+        if r["sender"] == me and r["reason"] in NOT_A_HOLD:
+            scope = "(oversize)" if r.get("scope_oversize") else (r["scope"] or "-")
+            claims.append(f"  {scope}  NOT live ({r['reason']})  id: {r['id']}")
+    owed = [m for m in everything
+            if m.type == "ASK" and m.to == me and agent_mail.owes_reply(m, everything)]
+    out: list[str] = []
+    if claims:
+        out.append(f"You ('{me}') hold {len(claims)} claim(s); a lease is evidence, never "
+                   "permission (PROTOCOL.md section 5):")
+        out += _more(claims[:SHOWN], len(claims))
+    if owed:
+        out.append(f"You ('{me}') owe a reply to {len(owed)} open ASK(s):")
+        out += _more([f"  {m.id} from {m.sender} (since {_utc(m.sent_at)})"
+                      for m in owed[:SHOWN]], len(owed))
+    return out
 
 
 def main() -> int:
@@ -40,12 +102,18 @@ def main() -> int:
         me = (os.environ.get("AGENT_MAIL_IDENTITY") or "").strip().lower()
         if not me:
             return 0
-        everything = agent_mail.read_all()
+        now = dt.datetime.now(dt.timezone.utc)
+        everything, _rejects = agent_mail.load_messages()
         mine = [
             m for m in everything
-            if m.to == me and m.sender != me and agent_mail.live(m, everything)
+            if m.to == me and m.sender != me and agent_mail.live(m, everything, now=now)
         ]
-        if not mine:
+        held: list[str] = []
+        try:  # a failure here must not cost the live mail above it
+            held = holdings(agent_mail, me, everything, agent_mail.mail_dir(), now)
+        except Exception:
+            held = []
+        if not mine and not held:
             return 0
 
         tool = str(Path(sys.path[0]) / "agent_mail.py")
@@ -66,8 +134,11 @@ def main() -> int:
             if m.type == "CLAIM" and m.meta.get("expires"):
                 out.append(f"    holds until: {m.meta['expires']}")
             out.append(f'    read: {py} "{tool}" show {m.id}')
-        out += ["", f'Reply: {py} "{tool}" send --type ANSWER --from {me} '
-                    "--to <sender> --reply-to <id> --subject ... --body-file <file, or - for stdin>"]
+        if mine:
+            out += ["", f'Reply: {py} "{tool}" send --type ANSWER --from {me} '
+                        "--to <sender> --reply-to <id> --subject ... --body-file <file, or - for stdin>"]
+        if held:
+            out += ["", *held]
         print("\n".join(out))
         return 0
     except Exception:

@@ -55,6 +55,13 @@ authorises a push, deletion, restart, or anything otherwise prohibited.
     who owns the billing client?
 ```
 
+After the live mail, the adapter names what the identity itself holds and
+owes: its unsuperseded claims (scope, since when, whether the lease is still
+live, or `NOT live` once it has lapsed) and the open `ASK`s addressed to it
+that still owe a reply. The rows are the ones `status` reports (PROTOCOL.md
+section 34); five per list, then `+N more`; never a subject or a body. An
+identity that holds a claim sees that block even with no mail addressed to it.
+
 ## Install
 
 agent-postbox is one stdlib-only file. **POSIX only** (Linux, macOS): the

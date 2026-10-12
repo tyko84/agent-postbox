@@ -786,6 +786,70 @@ def main() -> int:
               r.returncode == 0 and "LIVE-CLAIM-TOKEN" in r.stdout)
         bad.unlink(missing_ok=True)  # §22: corrupt envelopes REJECT list; do not leave them
 
+        print("\nthe hook names what the identity holds and owes (PROTOCOL.md §34)")
+        hbox = Path(tmp) / "holds"
+        hbox.mkdir()
+        check("negative control: nothing held, nothing owed, nothing printed (proves nothing alone)",
+              pickup(hbox, "agent-h").strip() == "")
+        r = send(hbox, "--type", "CLAIM", "--from", "agent-h", "--to", "all",
+                 "--subject", "HOLD-SUBJECT-TOKEN", "--body", "HOLD-BODY-TOKEN",
+                 "--scope", "file:held.py", "--expires", iso(1))
+        held_id = [l.split("id: ", 1)[1] for l in r.stdout.splitlines() if l.startswith("id: ")][0]
+        env_h = {**os.environ, "AGENT_MAIL_DIR": str(hbox), "AGENT_MAIL_IDENTITY": "agent-h"}
+        rh = subprocess.run([sys.executable, str(HOOK)], capture_output=True, text=True, env=env_h)
+        out = rh.stdout
+        check("a held claim is named with scope, since, expiry and id, with no mail addressed to the holder",
+              "hold 1 claim(s)" in out and "  file:held.py  since 20" in out and held_id in out
+              and "  live until " in out and "0 live message(s) addressed to 'agent-h'" in out,
+              repr(out[:400]))
+        check("...exit 0 and nothing on stderr", rh.returncode == 0 and rh.stderr == "", rh.stderr)
+        check("the holdings block carries no subject and no body (§34, §37)",
+              "HOLD-SUBJECT-TOKEN" not in out and "HOLD-BODY-TOKEN" not in out, repr(out[:400]))
+        check("a claim addressed to all is not another identity's holding",
+              pickup(hbox, "agent-z").strip() == "")
+        dead = "01ARZ3NDEKTSV4RRFFQ69G5FH0"
+        (hbox / f"{dead}-lapsed.md").write_text(
+            f"---\nid: {dead}\ntype: CLAIM\nfrom: agent-h\nto: all\ndate: {iso(-2)}\n"
+            f"subject: LAPSED-SUBJECT-TOKEN\nscope: file:lapsed.py\nexpires: {iso(-1)}\n---\n\nb\n",
+            encoding="utf-8")
+        out = pickup(hbox, "agent-h")
+        check("a lapsed (unrenewed) claim is named as NOT live, after the live ones",
+              "hold 2 claim(s)" in out and "  file:lapsed.py  NOT live (EXPIRED)  id: " + dead in out
+              and out.index("file:held.py") < out.index("file:lapsed.py")
+              and "LAPSED-SUBJECT-TOKEN" not in out, repr(out[:500]))
+        r = send(hbox, "--type", "ASK", "--from", "agent-b", "--to", "agent-h",
+                 "--subject", "OWED-ASK-TOKEN", "--body", "b")
+        owed_id = [l.split("id: ", 1)[1] for l in r.stdout.splitlines() if l.startswith("id: ")][0]
+        out = pickup(hbox, "agent-h")
+        check("an open ASK to me is owed: its id and sender, under the live mail that shows it",
+              "owe a reply to 1 open ASK(s)" in out and f"  {owed_id} from agent-b (since 20" in out
+              and out.index("OWED-ASK-TOKEN") < out.index("owe a reply"), repr(out[-400:]))
+        send(hbox, "--type", "ANSWER", "--from", "agent-h", "--to", "agent-b",
+             "--reply-to", owed_id, "--subject", "re", "--body", "b")
+        out = pickup(hbox, "agent-h")
+        check("an answered ASK is no longer owed (the claims are the control that the block printed)",
+              "owe a reply" not in out and "hold 2 claim(s)" in out, repr(out[-400:]))
+        r = send(hbox, "--type", "CLAIM", "--from", "agent-h", "--to", "all",
+                 "--subject", "renew", "--body", "b", "--scope", "file:held.py",
+                 "--expires", iso(2), "--supersedes", held_id)
+        new_id = [l.split("id: ", 1)[1] for l in r.stdout.splitlines() if l.startswith("id: ")][0]
+        out = pickup(hbox, "agent-h")
+        check("a renewed claim is listed once, under the new id; the superseded one holds nothing",
+              new_id in out and held_id not in out and "hold 2 claim(s)" in out, repr(out[-400:]))
+        for n in range(6):
+            send(hbox, "--type", "CLAIM", "--from", "agent-h", "--to", "all", "--subject", f"cap {n}",
+                 "--body", "b", "--scope", f"file:cap{n}.py", "--expires", iso(1))
+        for n in range(7):
+            send(hbox, "--type", "ASK", "--from", "agent-b", "--to", "agent-h",
+                 "--subject", f"ask {n}", "--body", "b")
+        out = pickup(hbox, "agent-h")
+        rows_c = [ln for ln in out.splitlines() if ln.startswith("  file:")]
+        rows_a = [ln for ln in out.splitlines() if ln.startswith("  01") and " from agent-b (since " in ln]
+        check("each list is capped at 5 rows and says how many more there are",
+              "hold 8 claim(s)" in out and len(rows_c) == 5 and "  +3 more" in out
+              and "owe a reply to 7 open ASK(s)" in out and len(rows_a) == 5 and "  +2 more" in out,
+              repr(out[-600:]))
+
         print("\nmailbox discovery (install/tooling, not protocol)")
         env_walk = {k: v for k, v in os.environ.items()
                     if k not in ("AGENT_MAIL_DIR", "AGENT_MAIL_PROJECT",
