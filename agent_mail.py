@@ -142,18 +142,17 @@ def print(*args: Any, file: Any = _UNSET, **kwargs: Any) -> None:
         return  # that descriptor was closed before we started: nowhere to say it
     if to_stdout and stream is _Stdout.lost:
         return
-    escaped = False
+    # `builtins.print` writes its arguments one at a time, so a retry after the
+    # second one fails would repeat the first. Decide before writing anything:
+    # if the stream cannot carry the line as it is, escape every argument first.
+    encoding = getattr(stream, "encoding", None)
+    if encoding:
+        try:
+            "".join(str(a) for a in args).encode(encoding)
+        except (UnicodeEncodeError, LookupError):
+            args = tuple(_carriable(a, stream) for a in args)
     try:
-        while True:
-            try:
-                builtins.print(*args, file=stream, **kwargs)
-                return
-            except UnicodeEncodeError:
-                if escaped:
-                    raise  # the escapes themselves cannot be carried: not ours to hide
-                # A text stream encodes a whole write before buffering any of it,
-                # so nothing of the failed line reached the reader: say it escaped.
-                args, escaped = tuple(_carriable(a, stream) for a in args), True
+        builtins.print(*args, file=stream, **kwargs)
     except BrokenPipeError:
         if not to_stdout:
             return
