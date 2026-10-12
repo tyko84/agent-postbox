@@ -124,7 +124,8 @@ download`, then checks the hashes, the provenance attestations, the archives'
 contents and the builder identity, one `OK`/`FAIL` line per check, exit 1 if
 any failed. `gh` must be installed and signed in, for the download and for
 `gh attestation verify`. `--no-download --dir DIR` verifies files you already
-downloaded. `--rebuild` also rebuilds the tag with `scripts/repro_build.py`
+downloaded; without `gh`, at least check the hashes by hand with
+`shasum -a 256 -c SHA256SUMS` (`sha256sum -c SHA256SUMS` on Linux). `--rebuild` also rebuilds the tag with `scripts/repro_build.py`
 and compares byte for byte; that needs the hash-pinned build tools
 (`python -m pip install --require-hashes -r requirements-build.txt`, in a
 venv). The same checks as manual commands, with their limits:
