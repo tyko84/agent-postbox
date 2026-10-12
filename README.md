@@ -46,11 +46,11 @@ injected, the same schedule for both columns):
 |---|---|---|
 | Messages in front of the recipient at its first awake prompt after the send | 492 of 492 | 270 of 493 |
 | Messages in front of the recipient by the end of the run | 492 of 492 | 490 of 493 |
-| Prompts waited after that first one, 95th percentile | 0 | 4 |
+| Recipient's prompts between the send and the pickup, 95th percentile | 0 | 4 |
 
 With the adapter every message was surfaced at the first prompt at which its
 recipient was awake. An agent that remembers to poll half the time got about
-half of them at that first chance, waited four to five prompts at the 95th
+half of them at that first chance, let four to five prompts go by at the 95th
 percentile (4 with seed 1, 5 with seed 2), and still got over 99% by the end.
 The agents are simulated and no LLM is involved; "half the time" is an
 assumption, not a measurement; the totals differ by one, and move by one or
