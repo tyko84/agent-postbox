@@ -634,6 +634,85 @@ class PathRefusals(unittest.TestCase):
                         self.assertIn(why, check.stdout)
 
 
+class ContainedPaths(unittest.TestCase):
+    """`--dest` and `--mailbox` are relative to the project: nothing may leave it."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory(prefix="test-adapters-")
+        self.addCleanup(tmp.cleanup)
+        self.base = Path(tmp.name).resolve()
+        self.project = self.base / "project"
+        (self.project / ".git").mkdir(parents=True)
+        self.outside = self.base / "outside"
+        self.outside.mkdir()
+
+    def refused(self, why: str, *args: str) -> None:
+        before = (tree(self.project), sorted(self.base.rglob("*")))
+        cp = install(self.project, *args)
+        self.assertEqual((cp.returncode, cp.stdout), (2, ""), cp.stderr)
+        self.assertNotIn("Traceback", cp.stderr)
+        self.assertIn(why, cp.stderr)
+        self.assertTrue(cp.stderr.strip().endswith("Nothing was changed."), cp.stderr)
+        self.assertEqual((tree(self.project), sorted(self.base.rglob("*"))), before)
+        check = install(self.project, "--check", *args)
+        self.assertEqual(check.returncode, 0, check.stderr)
+        self.assertIn("WOULD REFUSE", check.stdout)
+
+    def test_parent_traversal_is_refused(self) -> None:
+        for flag in ("--dest", "--mailbox"):
+            for value in ("../outside/x", "a/../../outside/x", "..", "tools/.."):
+                for extra in ([], ["--adapter", "claude-code"], ["--adapter", "codex"]):
+                    with self.subTest(flag=flag, value=value, extra=extra):
+                        self.refused("contains '..'", flag, value, *extra)
+        self.assertEqual(list(self.outside.iterdir()), [])
+
+    def test_absolute_paths_are_refused(self) -> None:
+        for flag in ("--dest", "--mailbox"):
+            for value in (str(self.outside / "x"), "/etc/agent-postbox", "//host/share"):
+                with self.subTest(flag=flag, value=value):
+                    self.refused("absolute path", flag, value)
+        self.assertEqual(list(self.outside.iterdir()), [])
+
+    @unittest.skipUnless(os.name == "posix", "symlinks")
+    def test_a_symlink_out_of_the_project_is_refused(self) -> None:
+        (self.project / "tools").symlink_to(self.outside, target_is_directory=True)
+        self.refused("leads outside the project", "--dest", "tools/agent-postbox")
+        (self.project / "tools").unlink()
+        (self.project / "docs").symlink_to(self.outside, target_is_directory=True)
+        self.refused("leads outside the project", "--mailbox", "docs/agent-mail")
+        self.assertEqual(list(self.outside.iterdir()), [])
+
+    @unittest.skipUnless(os.name == "posix", "symlinks")
+    def test_a_payload_file_that_is_a_link_out_is_refused(self) -> None:
+        dest = self.project / "tools" / "agent-postbox"
+        dest.mkdir(parents=True)
+        victim = self.outside / "victim.py"
+        victim.write_text("keep")
+        (dest / "agent_mail.py").symlink_to(victim)
+        self.refused("symlink leading outside", "--adapter", "claude-code")
+        self.assertEqual(victim.read_text(), "keep")
+
+    def test_relative_paths_inside_the_project_still_install(self) -> None:
+        for value, where in (("vendor/pm", "vendor/pm"), ("./vendor/pm/", "vendor/pm"),
+                             ("..hidden/pm", "..hidden/pm"), ("vendor/a..b", "vendor/a..b")):
+            with self.subTest(dest=value):
+                project = self.base / ("p" + str(abs(hash(value))))
+                (project / ".git").mkdir(parents=True)
+                cp = install(project, "--dest", value, "--mailbox", "mail/box",
+                             "--adapter", "claude-code")
+                self.assertEqual(cp.returncode, 0, cp.stderr)
+                self.assertTrue((project / where / "agent_mail.py").exists())
+                self.assertTrue((project / "mail" / "box" / "PARTICIPANTS.md").exists())
+
+    @unittest.skipUnless(os.name == "posix", "symlinks")
+    def test_a_symlink_that_stays_inside_the_project_is_allowed(self) -> None:
+        (self.project / "real").mkdir()
+        (self.project / "tools").symlink_to(self.project / "real", target_is_directory=True)
+        cp = install(self.project)
+        self.assertEqual(cp.returncode, 0, cp.stderr)
+        self.assertTrue((self.project / "real" / "agent-postbox" / "agent_mail.py").exists())
+
+
 class SettingsWrite(unittest.TestCase):
     """The user's other settings live in the file the installer rewrites."""
 

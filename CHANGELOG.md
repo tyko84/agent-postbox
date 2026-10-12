@@ -165,6 +165,12 @@ behaviour).
 
 ### Fixed
 
+- `install.py` refuses a `--dest` or `--mailbox` that could write outside the project
+  (exit 2, one `ABORT` line, nothing changed; `--check` prints `WOULD REFUSE`): an
+  absolute path, a `..` part, a symlink in the path that leads out, or a payload file that
+  is a symlink out (copying would have written through it). Before, `--dest ../x` and
+  `--mailbox ../x` installed outside the project; a leading `/` was silently stripped.
+  Relative paths and symlinks that stay inside the project are unchanged.
 - `install.py` writes `.claude/settings.json` and `.codex/hooks.json` atomically (a temp
   file in the same directory, fsync, rename; the mode is kept), so an interrupted install
   can no longer leave a truncated settings file with the user's other settings in it.

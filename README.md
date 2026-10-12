@@ -193,7 +193,8 @@ python /path/to/your/project/tools/agent-postbox/selftest.py
 ```
 
 `--check` reports without changing anything; `--dest` and `--mailbox` move the
-install and mailbox paths. To register the optional prompt-injection adapter
+install and mailbox paths (relative to the project; absolute paths, `..` and symlinks
+that leave the project are refused). To register the optional prompt-injection adapter
 for Claude Code (one hook entry in the *project's* `.claude/settings.json`,
 backed up first, refuses unparseable JSON, safe to re-run):
 

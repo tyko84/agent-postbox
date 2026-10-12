@@ -102,6 +102,11 @@ where a directory must go: the mailbox path or one of its parents, `--dest` or
 one of its parents, `<dest>/hooks`, or a name it would copy over that is a
 directory.
 
+It also refuses `--dest` or `--mailbox` that is absolute, contains a `..` part, or leads
+out of the project through a symlink (in the path, or at a file it would write). Both
+are relative to the project; before this check an absolute value had its leading `/`
+stripped and a `..` was followed out of the tree.
+
 ### What this guarantees, compared with Claude Code's `UserPromptSubmit`
 
 The same event at the same point: a command runs before every submitted prompt

@@ -155,6 +155,24 @@ def not_a_config_dir(project: Path, adapter: str) -> str | None:
     return None
 
 
+def escape_refusal(project: Path, dest_arg: str, mailbox_arg: str) -> str | None:
+    """Why `--dest` or `--mailbox` could write outside the project, or None. Reads
+    only. An absolute path, a `..` part, or a symlink (in the path, or at a file the
+    installer would write) that leads out of the project is refused: both options are
+    documented as relative to the project root."""
+    root = project.resolve()
+    for flag, arg in (("--dest", dest_arg), ("--mailbox", mailbox_arg)):
+        text = arg.replace("\\", "/")
+        if text.startswith("/") or (os.name == "nt" and re.match(r"^[A-Za-z]:", text)):
+            return f"{flag} {arg!r} is an absolute path; give a path relative to the project"
+        if ".." in text.split("/"):
+            return f"{flag} {arg!r} contains '..'; give a path inside the project"
+        rel = text.strip("/")
+        if not (project / rel).resolve().is_relative_to(root):
+            return f"{flag} {arg!r} leads outside the project through a symlink"
+    return None
+
+
 def path_refusal(project: Path, dest_rel: str, mailbox_rel: str) -> str | None:
     """Why the tool or the mailbox cannot be put where asked, or None. Reads only.
     A file (or dangling link) where a directory is needed -- the mailbox path
@@ -176,6 +194,8 @@ def path_refusal(project: Path, dest_rel: str, mailbox_rel: str) -> str | None:
     targets = [dest / n for n in PAYLOAD] + [dest / "hooks" / HOOK_MARKER,
                                               project / mailbox_rel / "PARTICIPANTS.md"]
     for target in targets:
+        if not target.resolve().is_relative_to(project.resolve()):
+            return f"{target} is a symlink leading outside the project; remove it, then re-run"
         if target.is_dir():
             return f"{target} is a directory, and a file belongs there; move it, then re-run"
     return None
@@ -403,7 +423,12 @@ def main() -> int:
               file=sys.stderr)
         return 2
 
-    occupied = occupied_ancestor(project, args.mailbox)
+    escaped = escape_refusal(project, args.dest, args.mailbox)
+    if escaped and not args.check:
+        print(f"ABORT: {escaped}. Nothing was changed.", file=sys.stderr)
+        return 2
+
+    occupied = None if escaped else occupied_ancestor(project, args.mailbox)
     if occupied is not None:
         msg = (f"ABORT: mailbox already at {occupied}. This tree is occupied -- "
                "installing here would attach a second owner. Use that mailbox, "
@@ -413,7 +438,8 @@ def main() -> int:
 
     dest_rel = args.dest.replace("\\", "/").strip("/")
     dest = project / dest_rel
-    refusal = path_refusal(project, dest_rel, args.mailbox) or (
+    refusal = escaped or path_refusal(
+        project, dest_rel, args.mailbox) or (
         codex_refusal(project, dest_rel) if args.adapter == "codex"
         else claude_refusal(project) if args.adapter == "claude-code" else None)
     if refusal and not args.check:   # before anything is copied: nothing was changed
