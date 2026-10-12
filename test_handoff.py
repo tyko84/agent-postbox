@@ -7,7 +7,8 @@ import sys
 import unittest
 from pathlib import Path
 
-import check_handoff as ch
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # `-I` drops the script dir
+import check_handoff as ch  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent
 GOOD = (ROOT / "docs" / "handoff-example.md").read_text(encoding="utf-8")

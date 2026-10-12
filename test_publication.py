@@ -35,7 +35,8 @@ from collections.abc import Sequence
 from pathlib import Path
 from unittest import mock
 
-import check_publication as cp
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # `-I` drops the script dir
+import check_publication as cp  # noqa: E402
 
 WORD = "zq" + "xjv"            # stand-in forbidden word (not a real name)
 WORD2 = "plug" + "hxy"
