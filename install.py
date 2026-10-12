@@ -28,7 +28,8 @@ Safety rules for a settings merge, in priority order:
   1. Never destroy an existing config. Unparseable JSON aborts the merge; it is
      someone's hand-edited file, and a settings file we corrupt breaks every
      future session in that project.
-  2. Back up before writing.
+  2. Back up before writing. The first backup (`<name>.bak`) is the user's file as
+     it was and is never overwritten; a later write goes to `<name>.bak.1`, `.bak.2`, ...
   3. Be idempotent. Re-running must not stack duplicate hook entries.
   4. Do not create host config unless `--adapter` asked for it.
   5. Do not attach a second mailbox. If an ancestor already has docs/agent-mail,
@@ -233,7 +234,7 @@ def already_registered(settings: dict) -> bool:
     return False
 
 
-def write_atomic(path: Path, data: bytes) -> None:
+def write_atomic(path: Path, data: bytes, mode: int | None = None) -> None:
     """Replace `path` with `data` so a reader, or a kill at any instant, sees the
     old file or the new one and never a prefix: write a temp file in the SAME
     directory (a rename across filesystems is a copy), fsync it, `os.replace` it.
@@ -241,9 +242,9 @@ def write_atomic(path: Path, data: bytes) -> None:
     umask, as `open()` would. A symlinked `path` is written through, not replaced."""
     target = Path(os.path.realpath(path))
     try:
-        mode: int | None = stat.S_IMODE(target.stat().st_mode)
+        mode = stat.S_IMODE(target.stat().st_mode)
     except FileNotFoundError:
-        mode = None
+        pass    # a new file: `mode` as given, else 0666 minus the umask
     tmp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0),
                  0o666 if mode is None else mode)
@@ -271,6 +272,29 @@ def write_atomic(path: Path, data: bytes) -> None:
         pass
 
 
+def back_up(path: Path) -> str:
+    """Copy `path` aside and return the backup's name (in the same directory). The
+    first backup is `<name>.bak`; it is never overwritten, because it holds the file
+    as the user wrote it. Later ones are `<name>.bak.1`, `.bak.2`, ... Written
+    atomically too: a torn backup that a later run then kept would be worse than none."""
+    n = 0
+    while True:
+        backup = path.with_name(f"{path.name}.bak" + (f".{n}" if n else ""))
+        if not backup.exists() and not backup.is_symlink():
+            break
+        n += 1
+    write_atomic(backup, path.read_bytes(), stat.S_IMODE(path.stat().st_mode))
+    shutil.copystat(path, backup)
+    return backup.name
+
+
+def backup_note(path: Path, backup: str) -> str:
+    """What the install output says about a backup; it states the keep-the-first rule."""
+    first = f"{path.name}.bak"
+    return f"backup at {backup}" + (
+        "" if backup == first else f"; {first} still holds your original, which is never overwritten")
+
+
 def write_settings(path: Path, settings: dict) -> None:
     write_atomic(path, (json.dumps(settings, indent=2) + "\n").encode("utf-8"))
 
@@ -295,26 +319,25 @@ def merge_settings(path: Path, dest_rel: str, check: bool, adapter: str = "claud
                 if check:
                     return ("WOULD upgrade the adapter: its command does not end in `|| true`, "
                             "so a moved tool directory would block every prompt")
-                shutil.copy2(path, path.with_suffix(path.suffix + ".bak"))
+                backup = back_up(path)
                 hook["command"] = old + " || true"
                 write_settings(path, settings)
                 return (f"upgraded the {adapter} adapter (the command now ends in `|| true`, so "
-                        f"a moved tool directory cannot block a prompt; backup at {path.name}.bak)")
+                        f"a moved tool directory cannot block a prompt; {backup_note(path, backup)})")
             if not interpreter_missing(old):
                 return f"{adapter} adapter already registered (no change)"
             if check:
                 return f"WOULD repair the adapter: `{old.split(' ', 1)[0]}` is not on PATH here"
-            shutil.copy2(path, path.with_suffix(path.suffix + ".bak"))
+            backup = back_up(path)
             hook["command"] = hook_command(dest_rel, adapter)
             write_settings(path, settings)
             return (f"repaired the {adapter} adapter (`{old.split(' ', 1)[0]}` was not on PATH; "
-                    f"now `{python_cmd()}`; backup at {path.name}.bak)" + trust)
+                    f"now `{python_cmd()}`; {backup_note(path, backup)})" + trust)
 
     if check:
         return f"WOULD register the {adapter} prompt-submit adapter"
 
-    if path.exists():
-        shutil.copy2(path, path.with_suffix(path.suffix + ".bak"))
+    made = back_up(path) if path.exists() else None
     hooks = settings.setdefault("hooks", {})
     if hooks.get("UserPromptSubmit") is None:   # absent, or an explicit null
         hooks["UserPromptSubmit"] = []
@@ -323,8 +346,7 @@ def merge_settings(path: Path, dest_rel: str, check: bool, adapter: str = "claud
     path.parent.mkdir(parents=True, exist_ok=True)
     write_settings(path, settings)
     return f"registered the {adapter} prompt-submit adapter" + (
-        f" (backup at {path.name}.bak)" if path.with_suffix(path.suffix + ".bak").exists() else ""
-    ) + trust
+        f" ({backup_note(path, made)})" if made else "") + trust
 
 
 def main() -> int:

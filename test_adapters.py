@@ -615,6 +615,49 @@ class SettingsWrite(unittest.TestCase):
                 self.assertEqual(data["model"], "mine")
                 self.assertEqual(len(data["hooks"]["UserPromptSubmit"]), 1)
 
+    def test_the_first_backup_is_the_original_and_is_never_overwritten(self) -> None:
+        for adapter, config in self.files.items():
+            with self.subTest(adapter=adapter):
+                config.parent.mkdir(parents=True, exist_ok=True)
+                config.write_text(self.theirs, encoding="utf-8")
+                first = install(self.project, "--adapter", adapter)
+                self.assertIn(f"backup at {config.name}.bak)", first.stdout)
+                # a repair: the registered interpreter is no longer on PATH
+                data = json.loads(config.read_text(encoding="utf-8"))
+                data["edited"] = "after the first run"
+                hook = data["hooks"]["UserPromptSubmit"][0]["hooks"][0]
+                hook["command"] = "python9.9 " + hook["command"].split(" ", 1)[1]
+                config.write_text(json.dumps(data), encoding="utf-8")
+                second = install(self.project, "--adapter", adapter)
+                self.assertEqual(second.returncode, 0, second.stderr)
+                self.assertIn("repaired", second.stdout)
+                self.assertIn(f"backup at {config.name}.bak.1", second.stdout)
+                self.assertIn(f"{config.name}.bak still holds your original", second.stdout)
+                self.assertEqual(config.with_name(config.name + ".bak").read_text(encoding="utf-8"),
+                                 self.theirs)
+                self.assertEqual(json.loads(config.with_name(config.name + ".bak.1")
+                                            .read_text(encoding="utf-8"))["edited"],
+                                 "after the first run")
+                # and once more: .bak.2, the first two untouched
+                data = json.loads(config.read_text(encoding="utf-8"))
+                hook = data["hooks"]["UserPromptSubmit"][0]["hooks"][0]
+                hook["command"] = "python9.9 " + hook["command"].split(" ", 1)[1]
+                config.write_text(json.dumps(data), encoding="utf-8")
+                self.assertEqual(install(self.project, "--adapter", adapter).returncode, 0)
+                self.assertTrue(config.with_name(config.name + ".bak.2").is_file())
+                self.assertEqual(config.with_name(config.name + ".bak").read_text(encoding="utf-8"),
+                                 self.theirs)
+
+    def test_a_settings_file_that_was_not_there_has_no_backup_to_mention(self) -> None:
+        config = self.files["claude-code"]
+        config.parent.mkdir()
+        config.with_name("settings.json.bak").write_text("an unrelated old file", encoding="utf-8")
+        cp = install(self.project, "--adapter", "claude-code")
+        self.assertEqual(cp.returncode, 0, cp.stderr)
+        self.assertNotIn("backup", cp.stdout)
+        self.assertEqual(config.with_name("settings.json.bak").read_text(encoding="utf-8"),
+                         "an unrelated old file")
+
     @unittest.skipUnless(os.name == "posix", "permission bits")
     def test_the_mode_is_kept_and_no_temp_file_is_left(self) -> None:
         for adapter, config in self.files.items():

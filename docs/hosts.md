@@ -59,8 +59,11 @@ there is no Codex-specific script; there is a registration:
 python agent-postbox/install.py /path/to/your/project --adapter codex
 ```
 
-which merges this into the project's `.codex/hooks.json` (a backup is written
-first; a second run changes nothing):
+which merges this into the project's `.codex/hooks.json` (the file is replaced
+atomically, so an interrupted install cannot leave half a file; a backup is
+written first, and the first one, `hooks.json.bak`, is your file as it was and
+is never overwritten: a later upgrade or repair writes `hooks.json.bak.1`,
+`.bak.2`, and so on; a second run that has nothing to change writes nothing):
 
 ```json
 {
