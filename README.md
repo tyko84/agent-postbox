@@ -53,6 +53,13 @@ authorises a push, deletion, restart, or anything otherwise prohibited.
 
   ASK from agent-a [awaiting your reply]
     who owns the billing client?
+    id: 01M4H63M3EC0JTP4236918WS9S
+    read: python3 "/path/to/your/project/tools/agent-postbox/agent_mail.py" show 01M4H63M3EC0JTP4236918WS9S
+
+Reply: python3 "/path/to/your/project/tools/agent-postbox/agent_mail.py" send --type ANSWER --from agent-b --to <sender> --reply-to <id> --subject ... --body-file <file, or - for stdin>
+
+You ('agent-b') owe a reply to 1 open ASK(s):
+  01M4H63M3EC0JTP4236918WS9S from agent-a (since 2026-10-09T20:36:38Z)
 ```
 
 After the live mail, the adapter names what the identity itself holds and
@@ -105,12 +112,24 @@ both own `agent_mail.py` and the `agent-postbox` command. (Uninstalling the old
 name afterwards instead removes those files; `python -m pip install
 --force-reinstall ./agent-postbox` puts them back.)
 
-**Verifying a release download.** A wheel or sdist built by
-`scripts/repro_build.py` comes with a `SHA256SUMS` file. Check the files
-against it with `sha256sum -c SHA256SUMS` (`shasum -a 256 -c SHA256SUMS` on
-macOS), and check that they really are what the tagged source builds with
-`python scripts/repro_build.py --ref <tag> --verify <download-dir>` from a
-clone. Details and limits: [docs/packaging.md](docs/packaging.md).
+**Verifying a release download.** From a clone, one command checks a
+release the way a consumer can:
+
+```sh
+python scripts/verify_release.py v0.4.0
+```
+
+It downloads the tag's wheel, sdist and `SHA256SUMS` with `gh release
+download`, then checks the hashes, the provenance attestations, the archives'
+contents and the builder identity, one `OK`/`FAIL` line per check, exit 1 if
+any failed. `gh` must be installed and signed in, for the download and for
+`gh attestation verify`. `--no-download --dir DIR` verifies files you already
+downloaded. `--rebuild` also rebuilds the tag with `scripts/repro_build.py`
+and compares byte for byte; that needs the hash-pinned build tools
+(`python -m pip install --require-hashes -r requirements-build.txt`, in a
+venv). The same checks as manual commands, with their limits:
+[docs/release-process.md](docs/release-process.md), "Verifying the published
+release"; the build itself: [docs/packaging.md](docs/packaging.md).
 
 **Option 2: copy the single file.** `agent_mail.py` has no imports outside the
 standard library; drop it anywhere and run `python agent_mail.py ...`.
