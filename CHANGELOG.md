@@ -7,6 +7,16 @@ behaviour).
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.4.0] - 2026-10-11
+
+Two security fixes in the claim path, lost-mail fixes for fan-out, a faster send,
+machine-readable listings for agents, complete help, and a release pipeline whose
+scan job installs nothing. Existing exit statuses, message formats and
+`status --json` keys are unchanged; `list`/`inbox` abbreviations `--l`, `--li` and
+`--t` are now ambiguous and refused.
+
 ### Security
 
 - A claim no longer follows a symbolic link planted at its scope lock name: the link's
@@ -422,7 +432,8 @@ the first tag in the current repository.
 - Breaking a stale (older than 60 seconds) scope lock is not atomic; see the
   README "Security and limitations".
 
-[Unreleased]: https://github.com/tyko84/agent-postbox/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/tyko84/agent-postbox/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/tyko84/agent-postbox/releases/tag/v0.4.0
 [0.3.1]: https://github.com/tyko84/agent-postbox/releases/tag/v0.3.1
 [0.3.0]: https://github.com/tyko84/agent-postbox/releases/tag/v0.3.0
 [0.2.2]: https://github.com/tyko84/agent-postbox/releases/tag/v0.2.2
