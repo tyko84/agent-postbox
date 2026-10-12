@@ -991,6 +991,236 @@ def load_participants(path: Path | None = None) -> dict[str, dict[str, set[str]]
     return rows
 
 
+# --- Unix-user identity binding (PROTOCOL.md section 40) ---------------------
+# Opt-in. A row of the Identity table may carry a `uid` cell: a numeric uid, or
+# a user name resolved through the password database when the file is read.
+# Nothing below is consulted for a mailbox whose PARTICIPANTS.md declares no
+# binding, so such a mailbox is served exactly as it was. A binding is not
+# authentication: it compares the owner the kernel records for a message file
+# (observed OS owner) with what the row declares for the message's self-declared
+# `from:`. docs/identity.md says what that does and does not prove.
+
+IDENTITY_LIST_CAP = 200   # attention rows in status --json, as CLAIMS_LIST_CAP
+_BINDING_UID_RE = re.compile(r"^[0-9]{1,10}$")
+_BINDING_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.@-]{0,63}$")
+_BINDING_UID_MAX = 2 ** 32 - 2   # 2**32-1 is "no uid" to chown(2)
+IDENTITY_REASONS = ("IDENTITY_MISMATCH", "IDENTITY_SHARED_INODE")
+
+
+class IdentityBinding:
+    """One row's `uid` cell: the text it declares, the uid that resolves to,
+    and, when it resolves to none, why. `declared` is the cell as the file
+    wrote it, escaped if it was not printable; no name from the password
+    database is ever stored here."""
+    __slots__ = ("identity", "declared", "uid", "problem")
+
+    def __init__(self, identity: str, declared: str, uid: int | None, problem: str) -> None:
+        self.identity, self.declared, self.uid, self.problem = identity, declared, uid, problem
+
+    def as_json(self) -> dict[str, Any]:
+        return {"identity": self.identity, "declared": self.declared, "uid": self.uid,
+                "problem": self.problem or None}
+
+    def text(self) -> str:
+        if self.uid is None:
+            return f"{self.identity}: bound to {self.declared} ({self.problem})"
+        if _BINDING_UID_RE.match(self.declared):
+            return f"{self.identity}: bound to uid {self.uid}"
+        return f"{self.identity}: bound to {self.declared} (uid {self.uid})"
+
+
+def _resolve_binding(identity: str, cell: str) -> IdentityBinding:
+    """A `uid` cell to a binding. Digits are a uid; anything shaped like a user
+    name is looked up now, through `pwd`, which is POSIX-only: without it a
+    name is unresolvable and a numeric uid still works. Never raises."""
+    declared = cell.strip().strip("`").strip()
+    if _BINDING_UID_RE.match(declared):
+        uid = int(declared)
+        if uid > _BINDING_UID_MAX:
+            return IdentityBinding(identity, declared, None, "uid out of range")
+        return IdentityBinding(identity, declared, uid, "")
+    if not _BINDING_NAME_RE.match(declared):
+        shown = _arg_text(declared) if (len(declared) > 64 or not declared.isprintable()) else repr(declared)
+        return IdentityBinding(identity, shown, None, "not a numeric uid or a user name")
+    try:
+        import pwd
+    except ImportError:
+        return IdentityBinding(identity, repr(declared), None,
+                               "user names cannot be resolved on this platform; declare a numeric uid")
+    try:
+        uid = int(pwd.getpwnam(declared).pw_uid)
+    except (KeyError, OSError, ValueError, AttributeError):
+        return IdentityBinding(identity, repr(declared), None, "no such user in the password database")
+    return IdentityBinding(identity, repr(declared), uid, "")
+
+
+def _parse_bindings_text(text: str) -> dict[str, str]:
+    """{identity_lower: raw cell} for rows of the Identity table whose `uid`
+    cell is not empty. The column is found by its header, as can/cannot are;
+    a table without one declares nothing."""
+    ident_idx = uid_idx = None
+    out: dict[str, str] = {}
+    for line in text.splitlines():
+        if not line.strip().startswith("|"):
+            continue
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        lower = [c.lower().strip("`*") for c in cells]
+        if ident_idx is None:
+            if "identity" in lower and "uid" in lower:
+                ident_idx, uid_idx = lower.index("identity"), lower.index("uid")
+            continue
+        if all(set(c) <= set("-: ") for c in cells):
+            continue  # separator
+        if uid_idx is None or len(cells) <= max(ident_idx, uid_idx):
+            continue
+        ident = cells[ident_idx].strip().strip("`").lower()
+        cell = cells[uid_idx].strip().strip("`").strip()
+        if not ident or ident == "identity" or not cell:
+            continue
+        out.setdefault(ident, cell)
+    return out
+
+
+def load_identity_bindings(path: Path | None = None) -> dict[str, IdentityBinding]:
+    """The Unix-user bindings of PARTICIPANTS.md (section 40), read from the
+    file `load_participants` reads: the first candidate path that exists.
+    `{}` when no row declares one, which is every mailbox that has not opted
+    in, and when the file cannot be read. Sorted by identity. Never raises."""
+    paths = [path] if path else participants_paths()
+    for p in paths:
+        if p is None or not _is_file(p):
+            continue
+        try:
+            text = p.read_text(encoding="utf-8")
+        except (OSError, ValueError):
+            return {}
+        raw = _parse_bindings_text(text)
+        return {ident: _resolve_binding(ident, cell) for ident, cell in sorted(raw.items())}
+    return {}
+
+
+def _reader_uid() -> int | None:
+    """The effective uid this process runs as, or None where the platform has none."""
+    geteuid = getattr(os, "geteuid", None)
+    if geteuid is None:
+        return None
+    try:
+        return int(geteuid())
+    except OSError:
+        return None
+
+
+def binding_refusal(sender: str, bindings: dict[str, IdentityBinding] | None = None) -> str:
+    """Why `send --from sender` may not proceed under section 40, or "" when it
+    may: the sender has no binding, or this process's effective uid is the
+    bound one. The file `send` would write is owned by that uid, so this is the
+    same comparison the readers make, made before anything is written. A
+    binding that cannot be resolved refuses too (fail closed)."""
+    table = bindings if bindings is not None else load_identity_bindings()
+    b = table.get((sender or "").strip().lower())
+    if b is None:
+        return ""
+    out = "remove the uid cell of that row to send without the binding"
+    if b.uid is None:
+        return (f"--from {b.identity} is bound to {b.declared} in PARTICIPANTS.md "
+                f"({b.problem}); fix or {out}")
+    me = _reader_uid()
+    if me is None:
+        return (f"--from {b.identity} is bound to uid {b.uid} in PARTICIPANTS.md and this "
+                f"platform cannot say which uid this process runs as; {out}")
+    if me != b.uid:
+        return (f"--from {b.identity} is bound to uid {b.uid} in PARTICIPANTS.md and this "
+                f"process runs as uid {me}; {out}")
+    return ""
+
+
+def identity_report(everything: list[Message], bindings: dict[str, IdentityBinding],
+                    box: Path) -> dict[str, Any]:
+    """Section 40, read-only. For every admitted message whose self-declared
+    sender has a resolved binding: the owner the kernel records for the file
+    (`lstat`, never following a link, so a link planted at a message name is
+    reported as its planter's; admitted messages are regular files, section
+    5a) against the bound uid. A file with another name (`st_nlink > 1`) is
+    reported too: its owner wrote it, but not necessarily here. Uids are
+    numbers; the only name printed is one the file declared."""
+    reader = _reader_uid()
+    mailbox: dict[str, Any] = {"owner_uid": None, "mode": None, "shared_writable": None,
+                               "is_symlink": None}
+    try:
+        mailbox["is_symlink"] = stat.S_ISLNK(os.lstat(box).st_mode)
+        dst = os.stat(box)   # the directory the files are in, through an operator-chosen link
+        mailbox["owner_uid"] = dst.st_uid
+        mailbox["mode"] = f"{stat.S_IMODE(dst.st_mode):04o}"
+        mailbox["shared_writable"] = bool(dst.st_mode & (stat.S_IWGRP | stat.S_IWOTH))
+    except (OSError, ValueError):
+        pass
+    attention: list[dict[str, Any]] = []
+    checked = matched = unobserved = 0
+    for m in everything:
+        b = bindings.get(m.sender)
+        if b is None or b.uid is None:
+            continue   # unbound, or reported once as the binding's own problem
+        try:
+            st = os.lstat(m.path)
+        except (OSError, ValueError):
+            unobserved += 1   # gone or unexaminable mid-scan: no information, never a pass
+            continue
+        checked += 1
+        row = {"id": m.id, "sender": m.sender, "path": m.path.name,
+               "observed_uid": st.st_uid, "bound_uid": b.uid, "links": st.st_nlink}
+        if st.st_uid == b.uid:
+            matched += 1
+        else:
+            attention.append({**row, "reason": "IDENTITY_MISMATCH"})
+        if st.st_nlink > 1:
+            attention.append({**row, "reason": "IDENTITY_SHARED_INODE"})
+    resolved = [b for b in bindings.values() if b.uid is not None]
+    return {
+        "reader_uid": reader,
+        "mailbox": mailbox,
+        "bindings": [b.as_json() for b in bindings.values()],
+        "unresolved": [b.identity for b in bindings.values() if b.uid is None],
+        "checked": checked,
+        "matched": matched,
+        "unobserved": unobserved,
+        "mismatched": sum(1 for r in attention if r["reason"] == "IDENTITY_MISMATCH"),
+        "shared_inode": sum(1 for r in attention if r["reason"] == "IDENTITY_SHARED_INODE"),
+        "attention": attention[:IDENTITY_LIST_CAP],
+        "attention_truncated": max(0, len(attention) - IDENTITY_LIST_CAP),
+        # False when every resolved binding names the reader's own uid: on a
+        # shared account or in a one-uid container the check tells nothing.
+        "distinguishing": not (resolved and reader is not None
+                               and all(b.uid == reader for b in resolved)),
+    }
+
+
+def identity_lines(rep: dict[str, Any], bullet: str = "  ") -> list[str]:
+    """Text of an identity report, for `status` and `doctor` (section 40)."""
+    mb = rep["mailbox"]
+    reader = "unknown" if rep["reader_uid"] is None else str(rep["reader_uid"])
+    where = ("unexaminable" if mb["owner_uid"] is None
+             else f"owner uid {mb['owner_uid']} mode {mb['mode']}"
+             + (" (group/world-writable)" if mb["shared_writable"] else "")
+             + (" (a symbolic link)" if mb["is_symlink"] else ""))
+    out = [f"identity_bindings: {len(rep['bindings'])}  reader uid {reader}  mailbox {where}"]
+    for b in rep["bindings"][:20]:
+        shown = IdentityBinding(b["identity"], b["declared"], b["uid"], b["problem"] or "")
+        out.append(f"{bullet}{shown.text()}")
+    out.append(f"identity_check: checked={rep['checked']} matched={rep['matched']} "
+               f"mismatched={rep['mismatched']} shared_inode={rep['shared_inode']} "
+               f"unobserved={rep['unobserved']}  "
+               "(observed OS owner of the file vs the bound uid of its self-declared sender)")
+    for r in rep["attention"][:20]:
+        detail = (f"observed OS owner uid {r['observed_uid']}, bound uid {r['bound_uid']}"
+                  if r["reason"] == "IDENTITY_MISMATCH"
+                  else f"the file has {r['links']} names; owner uid {r['observed_uid']} wrote it, "
+                       "not necessarily here")
+        out.append(f"{bullet}{r['reason']}  {r['id']}  self-declared sender {r['sender']}  {detail}")
+    more = len(rep["attention"]) - min(20, len(rep["attention"])) + rep["attention_truncated"]
+    if more:
+        out.append(f"{bullet}... and {more} more")
+    return out
+
 
 def _parse_aliases_text(text: str) -> dict[str, list[str]]:
     """Parse Alias/Writers table from one PARTICIPANTS.md body."""
@@ -1722,6 +1952,13 @@ def cmd_send(args: argparse.Namespace) -> int:
     if err:
         print(f"refusing to send: {err}", file=sys.stderr)
         return 2
+    # PROTOCOL.md section 40: a sender whose row binds it to a Unix user must
+    # run as that user. Checked once, before anything is written; a mailbox
+    # with no binding never reaches load_identity_bindings' table.
+    err = binding_refusal(args.sender)
+    if err:
+        print(f"refusing to send: {err}", file=sys.stderr)
+        return 2
     key_wait_flag = getattr(args, "key_wait", None)
     key_wait = IDEM_WAIT_DEFAULT
     if (getattr(args, "key", "") or "").strip():
@@ -2359,6 +2596,7 @@ PROBLEM_CODES = (
     "QUARANTINED", "STALE_TMP", "ORPHAN_IDEM_MARKER", "ORPHAN_SCOPE_LOCK", "STALLED_LOCK_HOLDER",
     "STALE_TAKEOVER_MUTEX", "MALFORMED_CLAIM_EXPIRY", "FOREIGN_SUPERSEDE", "DANGLING_REPLY",
     "STALLED_AGENT", "CONTESTED_SCOPE",
+    "IDENTITY_MISMATCH", "IDENTITY_UNRESOLVED", "IDENTITY_SHARED_INODE",   # section 40
 )
 CLAIMS_LIST_CAP = 200    # rows per list in status --json (PROTOCOL.md section 34)
 CLAIMS_TEXT_ROWS = 20    # rows of the held-claims table in text status
@@ -2566,7 +2804,8 @@ def claim_report(everything: list[Message], idx: _Index, now: dt.datetime,
 
 def build_status(everything: list[Message], rejects: list[str], box: Path,
                  now: dt.datetime, stalled_hours: float = DEFAULT_STALLED_HOURS,
-                 scope_filter: str | None = None) -> dict[str, Any]:
+                 scope_filter: str | None = None,
+                 bindings: dict[str, IdentityBinding] | None = None) -> dict[str, Any]:
     """Pure, read-only summary of a mailbox. Deterministic for a given (files, now).
 
     Stable JSON key set (STATUS_SCHEMA = 1; keys are only ever added, never
@@ -2612,6 +2851,15 @@ def build_status(everything: list[Message], rejects: list[str], box: Path,
       claims_attention_truncated  rows left out by the cap
       contested_scopes       scopes held by more than one sender
       scope_filter           the --scope the two lists were filtered by, or null
+
+    Added by PROTOCOL.md section 40 (schema still 1), see identity_report().
+    Present only when PARTICIPANTS.md binds at least one identity to a Unix
+    user; a mailbox without a binding is reported key for key as before:
+
+      identity               {reader_uid, mailbox, bindings, unresolved, checked,
+                             matched, unobserved, mismatched, shared_inode,
+                             attention, attention_truncated, distinguishing}
+    `bindings` is None here means "read PARTICIPANTS.md"; {} means none.
     """
     idx = _Index(everything)
     by_type = {t: 0 for t in sorted(KNOWN_TYPES)}
@@ -2681,7 +2929,7 @@ def build_status(everything: list[Message], rejects: list[str], box: Path,
         "STALLED_AGENT": len(stalled),
         "CONTESTED_SCOPE": report["contested_scopes"],
     }
-    return {
+    st: dict[str, Any] = {
         "schema": STATUS_SCHEMA,
         "now": now.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "mailbox": str(box),
@@ -2699,9 +2947,23 @@ def build_status(everything: list[Message], rejects: list[str], box: Path,
         "takeover_mutexes": hidden["takeover_mutexes"],
         "foreign_supersedes": len(idx.foreign_supersedes),
         "dangling_replies": dangling,
-        "problems": [{"code": c, "count": counts[c]} for c in PROBLEM_CODES if counts[c] > 0],
+        "problems": [{"code": c, "count": counts[c]} for c in PROBLEM_CODES if counts.get(c, 0) > 0],
         **{k: v for k, v in report.items() if k != "contested"},
     }
+
+    # --- PROTOCOL.md section 40: Unix-user identity binding. Opt-in: with no
+    # binding declared nothing below runs and the dict above is returned as it
+    # is. The three codes are last in PROBLEM_CODES, so appending keeps order.
+    table = load_identity_bindings() if bindings is None else bindings
+    if table:
+        ident = identity_report(everything, table, box)
+        st["identity"] = ident
+        for code, n in (("IDENTITY_MISMATCH", ident["mismatched"]),
+                        ("IDENTITY_UNRESOLVED", len(ident["unresolved"])),
+                        ("IDENTITY_SHARED_INODE", ident["shared_inode"])):
+            if n > 0:
+                st["problems"].append({"code": code, "count": n})
+    return st
 
 
 def _held_table(st: dict[str, Any]) -> list[str]:
@@ -2787,6 +3049,9 @@ def cmd_status(args: argparse.Namespace) -> int:
               f"  age={_fmt_age(a['age_seconds'])}")
     if st["stalled_agents"]:
         print("STALLED: " + ", ".join(st["stalled_agents"]))
+    if "identity" in st:   # section 40: only a mailbox that declares a binding
+        for line in identity_lines(st["identity"]):
+            print(line)
     if st["problems"]:
         print("PROBLEMS: " + " ".join(f"{p['code']}={p['count']}" for p in st["problems"]))
     for r in rejects[:20]:
@@ -2862,6 +3127,26 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         label = (repr(scope) if len(scope) <= MAX_FIELD_CHARS
                  else f"(oversize scope, {len(scope)} characters)")
         print(f"  - {label}: " + ", ".join(f"{who} ({mid})" for who, mid in contested[scope][:20]))
+
+    # PROTOCOL.md section 40: Unix-user identity binding. Nothing is printed for
+    # a mailbox that declares none. A mismatch, or a binding that cannot be
+    # resolved, fails: the check was asked for and did not pass (fail closed).
+    bindings = load_identity_bindings()
+    if bindings:
+        ident = identity_report(everything, bindings, box)
+        for line in identity_lines(ident, bullet="  - "):
+            print(line)
+        if not ident["distinguishing"]:
+            print(f"  - note: every binding names this reader's own uid ({ident['reader_uid']}): "
+                  "bindings do not distinguish participants here (shared account or one-uid "
+                  "container); the check carries no information")
+        if ident["unresolved"]:
+            failures.append("identity binding unresolvable for "
+                            + ", ".join(ident["unresolved"][:20])
+                            + " (fix the uid cell, or remove it)")
+        if ident["mismatched"]:
+            failures.append(f"identity mismatch: {ident['mismatched']} message(s) whose observed "
+                            "OS owner is not the bound uid of the self-declared sender")
 
     canary = find_live_canary(everything, now=now)
     if canary is None:
@@ -3000,6 +3285,21 @@ def _worktree_bytes(repo: Path, rel: str) -> bytes | None:
         return None
 
 
+def _owner_text(m: Message, b: IdentityBinding) -> str:
+    """One `verify` line: observed OS owner of the file against the sender's binding."""
+    if b.uid is None:
+        return (f"self-declared sender {m.sender} bound to {b.declared}, {b.problem}: "
+                "CANNOT_VERIFY")
+    try:
+        st = os.lstat(m.path)
+    except (OSError, ValueError):
+        return f"self-declared sender {m.sender} bound to uid {b.uid}; file unexaminable: CANNOT_VERIFY"
+    verdict = "MATCH" if st.st_uid == b.uid else "MISMATCH"
+    extra = f"; the file has {st.st_nlink} names" if st.st_nlink > 1 else ""
+    return (f"self-declared sender {m.sender} bound to uid {b.uid}; observed OS owner "
+            f"uid {st.st_uid}{extra}: {verdict}")
+
+
 def cmd_verify(args: argparse.Namespace) -> int:
     """Remasure scoped fingerprints against HEAD (default). Never executes recipes.
 
@@ -3044,6 +3344,11 @@ def cmd_verify(args: argparse.Namespace) -> int:
 
     print(f"id: {m.id}")
     print(f"type: {m.type}")
+    # PROTOCOL.md section 40: printed only when the sender has a binding; it
+    # reports, and leaves verify's exit status to the fingerprints, as before.
+    bound = load_identity_bindings().get(m.sender)
+    if bound is not None:
+        print(f"sender_owner: {_owner_text(m, bound)}")
     if result:
         print(f"result: {result}")
     if reason:

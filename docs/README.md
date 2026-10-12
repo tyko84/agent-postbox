@@ -3,6 +3,9 @@
 * [../README.md](../README.md): what this is, install, quickstart.
 * [../PROTOCOL.md](../PROTOCOL.md): the whole spec.
 * [../SECURITY.md](../SECURITY.md): threat model.
+* [identity.md](identity.md): optional Unix-user identity binding (PROTOCOL.md
+  section 40): what a message file's owner proves, what it does not, and the
+  attacks it was checked against.
 * [packaging.md](packaging.md): building and checking the wheel and sdist.
 * [handoff-example.md](handoff-example.md): a filled-in handoff packet
   (validated by `test_handoff.py`).

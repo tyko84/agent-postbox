@@ -469,6 +469,302 @@ def reader_goes_away(root: Path) -> None:
 
 
 
+# ---- Unix-user identity binding (PROTOCOL.md section 40) --------------------
+# An hour ahead of the real clock: three consecutive `status --json` calls must
+# agree byte for byte, and nothing sent during the run may count as stalled.
+IDENT_NOW = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+ULID_I = "01ARZ3NDEKTSV4RRFFQ69G5F"   # + two characters per hand-written message below
+
+
+def participants(box: Path, rows: dict[str, str], column: str | None = "uid") -> None:
+    """Write PARTICIPANTS.md into the mailbox: the real table shape, plus a
+    `uid` column whose cells are `rows`' values (empty string: no binding).
+    column=None writes the table without the column at all."""
+    head = ["Identity", "Reachable", "Mechanism", "Verified", "can", "cannot"]
+    if column is not None:
+        head.append(column)
+    lines = ["# Participants", "", "| " + " | ".join(head) + " |", "|" + "---|" * len(head)]
+    for ident, cell in rows.items():
+        row = [f"`{ident}`", "**no**", "poll", "not observed", "", ""]
+        if column is not None:
+            row.append(cell)
+        lines.append("| " + " | ".join(row) + " |")
+    lines += ["", "## Aliases (PROTOCOL.md §27)", "", "| Alias | Writers |", "|---|---|",
+              "| `team` | `alice`, `bob` |", ""]
+    (box / "PARTICIPANTS.md").write_text("\n".join(lines), encoding="utf-8")
+
+
+def status_json(box: Path) -> dict:
+    cp = run(box, "status", "--json", "--now", IDENT_NOW)
+    check("harness: status --json parses", cp.returncode == 0 and cp.stdout.startswith("{"),
+          cp.stdout[:80] + cp.stderr[-200:])
+    return json.loads(cp.stdout) if cp.stdout.startswith("{") else {}
+
+
+def ident_rows(st: dict, reason: str) -> list[dict]:
+    return [r for r in st.get("identity", {}).get("attention", []) if r["reason"] == reason]
+
+
+def identity_binding(root: Path) -> None:
+    print("Unix-user identity binding (PROTOCOL.md section 40): opt-in, observed owner vs "
+          "self-declared sender")
+    me = os.geteuid()
+    other = me + 1 if me + 1 < 60000 else me - 1
+    try:
+        import pwd  # noqa: PLC0415
+        my_name: str | None = pwd.getpwuid(me).pw_name
+    except (ImportError, KeyError):
+        my_name = None
+    ibox = root / "ident"
+    ibox.mkdir()
+
+    # -- opt-out: no binding anywhere means the same bytes -------------------
+    send(ibox, frm="alice", to="bob", subj="plain from alice")
+    hand(ibox, ULID_I + "00", name=ULID_I + "00-bob.md",
+         head=f"id: {ULID_I}00\ntype: ASK\nfrom: bob\nto: alice\n"
+              "date: 2099-01-01T00:00:00Z\nsubject: hand-written as bob\n")
+    canary = run(ibox, "canary", "--from", "alice", "--to", "alice")
+    check("control: canary filed so doctor can pass", canary.returncode == 0, canary.stderr)
+    ok = send(ibox, frm="bob", to="alice", subj="bob unbound")
+    check("opt-out: send --from an identity no row binds is unchanged (exit 0)", ok.returncode == 0,
+          ok.stderr)
+    unb = send(ibox, frm="erin", to="alice", subj="erin has no row at all")
+    probes = (("status", "--json", "--now", IDENT_NOW), ("status", "--now", IDENT_NOW),
+              ("doctor",), ("inbox", "--to", "alice"), ("list", "--json", "--now", IDENT_NOW),
+              ("list",), ("inbox", "--to", "alice", "--json", "--now", IDENT_NOW))
+    none = [run(ibox, *p) for p in probes]
+    st0 = json.loads(none[0].stdout)
+    check("control: without PARTICIPANTS.md, status --json has no identity key, doctor passes "
+          "and prints no identity line",
+          "identity" not in st0 and st0["problems"] == [] and none[2].returncode == 0
+          and "identity" not in none[2].stdout, none[2].stdout[-300:])
+    participants(ibox, {"alice": "", "bob": ""}, column=None)
+    without = [run(ibox, *p) for p in probes]
+    participants(ibox, {"alice": "", "bob": ""})
+    empty = [run(ibox, *p) for p in probes]
+    same = all((a.stdout, a.stderr, a.returncode) == (b.stdout, b.stderr, b.returncode)
+               == (c.stdout, c.stderr, c.returncode) for a, b, c in zip(none, without, empty, strict=True))
+    check("opt-out: no PARTICIPANTS.md, a table without a uid column, and one whose uid cells "
+          "are empty give byte-identical stdout, stderr and exit for status (text and --json), "
+          "doctor, inbox and list", same,
+          str([(a.returncode, b.returncode, c.returncode) for a, b, c in zip(none, without, empty, strict=True)]))
+
+    # -- a binding that matches, and one that does not ------------------------
+    participants(ibox, {"alice": str(me), "bob": str(other)})
+    st = status_json(ibox)
+    ident = st.get("identity", {})
+    check("status --json: an identity block appears only now; schema still 1; every other key "
+          "is what it was without bindings",
+          st.get("schema") == 1 and ident
+          and {k: v for k, v in st.items() if k not in ("identity", "problems")}
+          == {k: v for k, v in st0.items() if k not in ("identity", "problems")},
+          str(sorted(set(st) ^ set(st0))))
+    check("alice's files (sent by this uid) match her binding: counted, no attention row",
+          ident.get("matched") == 2 and ident.get("checked") == 4 and ident.get("reader_uid") == me
+          and not [r for r in ident.get("attention", []) if r["sender"] == "alice"],
+          json.dumps(ident)[:400])
+    mism = ident_rows(st, "IDENTITY_MISMATCH")
+    check("bob's two files, owned by this uid but bound to another: one IDENTITY_MISMATCH row "
+          "each, observed uid = this process, bound uid = the row's, id and sender named",
+          len(mism) == 2 and all(r["observed_uid"] == me and r["bound_uid"] == other
+                                 and r["sender"] == "bob" and r["id"] for r in mism)
+          and any(r["id"] == ULID_I + "00" for r in mism), json.dumps(mism)[:400])
+    check("problems carries IDENTITY_MISMATCH=2 and nothing else",
+          st.get("problems") == [{"code": "IDENTITY_MISMATCH", "count": 2}], str(st.get("problems")))
+    check("the mailbox directory's observed owner and mode are reported, as numbers",
+          ident.get("mailbox", {}).get("owner_uid") == me
+          and isinstance(ident["mailbox"]["mode"], str) and ident["mailbox"]["is_symlink"] is False,
+          str(ident.get("mailbox")))
+    text = run(ibox, "status", "--now", IDENT_NOW)
+    check("text status: binding lines, the check line and the mismatch row, worded as observed "
+          "OS owner vs self-declared sender, exit 0",
+          text.returncode == 0 and f"alice: bound to uid {me}" in text.stdout
+          and f"IDENTITY_MISMATCH  {ULID_I}00  self-declared sender bob  observed OS owner uid {me}, "
+              f"bound uid {other}" in text.stdout
+          and "PROBLEMS: IDENTITY_MISMATCH=2" in text.stdout, text.stdout[-500:])
+    doc = run(ibox, "doctor")
+    check("doctor: fails closed on the mismatch (exit 2), names the row, keeps every other line",
+          doc.returncode == 2 and "FAIL: identity mismatch: 2 message(s)" in doc.stdout
+          and f"  - IDENTITY_MISMATCH  {ULID_I}00" in doc.stdout and "canary: OK" in doc.stdout
+          and "store: OK" in doc.stdout and not doc.stderr, doc.stdout[-500:] + doc.stderr)
+    n0 = len(md_files(ibox))
+    refused = send(ibox, frm="bob", to="alice", subj="as bob")
+    check("send --from bob (bound to another uid) is refused: exit 2, one stderr line, nothing "
+          "written, and the line says how to opt out",
+          refused.returncode == 2 and len(md_files(ibox)) == n0
+          and refused.stderr.count("\n") == 1
+          and f"bound to uid {other}" in refused.stderr and f"runs as uid {me}" in refused.stderr
+          and "remove the uid cell" in refused.stderr, refused.stderr)
+    asked = run(ibox, "ask", "--from", "bob", "--to", "alice", "--subject", "q", "--body", "b")
+    can = run(ibox, "canary", "--from", "bob", "--to", "bob")
+    check("ask and canary go through the same check: refused, nothing written",
+          asked.returncode == 2 and can.returncode == 2 and len(md_files(ibox)) == n0,
+          asked.stderr + can.stderr)
+    fine = send(ibox, frm="alice", to="bob", subj="as alice, bound to this uid")
+    check("control: send --from alice (bound to this uid) still writes, exit 0",
+          fine.returncode == 0 and len(md_files(ibox)) == n0 + 1, fine.stderr)
+    ver = run(ibox, "verify", ULID_I + "00")
+    check("verify prints the owner line for a bound sender (MISMATCH) and keeps its exit status",
+          ver.returncode == 0 and f"sender_owner: self-declared sender bob bound to uid {other}; "
+          f"observed OS owner uid {me}: MISMATCH" in ver.stdout, ver.stdout + ver.stderr)
+    ver_a = run(ibox, "verify", mid(fine))
+    check("...and MATCH for alice; the line is absent for an unbound sender",
+          "MATCH" in ver_a.stdout and "sender_owner" not in run(ibox, "verify", mid(unb)).stdout,
+          ver_a.stdout)
+
+    # -- a hostile or shared-writable mailbox directory changes nothing above --
+    mode0 = stat.S_IMODE(os.stat(ibox).st_mode)
+    os.chmod(ibox, mode0 | stat.S_IWGRP | stat.S_IWOTH)
+    try:
+        st = status_json(ibox)
+        check("a group/world-writable mailbox is reported as such; the owner of each file is still "
+              "the kernel's answer, so the mismatch rows are unchanged",
+              st["identity"]["mailbox"]["shared_writable"] is True
+              and len(ident_rows(st, "IDENTITY_MISMATCH")) == 2, str(st["identity"]["mailbox"]))
+    finally:
+        os.chmod(ibox, mode0)
+
+    # -- names: resolved through pwd at read time; never printed unless declared --
+    if my_name:
+        participants(ibox, {"alice": str(me), "bob": str(other), "carol": f"`{my_name}`",
+                            "dave": "no-such-user-zz"})
+        st = status_json(ibox)
+        bnd = {b["identity"]: b for b in st["identity"]["bindings"]}
+        check("a user name in the uid cell resolves through the password database to a uid",
+              bnd.get("carol", {}).get("uid") == me and bnd["carol"]["problem"] is None, str(bnd))
+        check("a name the database does not know is unresolved: listed, counted, a problem code",
+              bnd.get("dave", {}).get("uid") is None and bnd["dave"]["problem"]
+              and st["identity"]["unresolved"] == ["dave"]
+              and {"code": "IDENTITY_UNRESOLVED", "count": 1} in st["problems"], str(bnd.get("dave")))
+        doc = run(ibox, "doctor")
+        check("doctor fails closed on an unresolvable binding and says which row",
+              doc.returncode == 2 and "FAIL: identity binding unresolvable for dave" in doc.stdout,
+              doc.stdout[-400:])
+        refused = send(ibox, frm="dave", to="alice", subj="as dave")
+        check("send --from a sender whose binding cannot be resolved is refused (fail closed)",
+              refused.returncode == 2 and "no such user" in refused.stderr
+              and refused.stderr.count("\n") == 1, refused.stderr)
+        participants(ibox, {"alice": str(me), "bob": str(other)})
+        outs = [run(ibox, "status", "--now", IDENT_NOW).stdout, run(ibox, "doctor").stdout,
+                send(ibox, frm="bob", to="alice", subj="x").stderr,
+                json.dumps(status_json(ibox)["identity"])]
+        leak = [o for o in outs if my_name in "\n".join(
+            ln for ln in o.splitlines() if "mailbox" not in ln)]
+        check("no user name from the password database is ever printed: with numeric bindings "
+              "only, this user's name appears in no status, doctor, refusal or JSON line",
+              not leak or len(my_name) < 3, my_name + " in " + str(leak)[:200])
+
+    # -- hostile uid cells: no traceback, unresolved, escaped, one line each ----
+    hostile = {"../../etc/passwd": "path", "1" * 300: "300 digits", "\x1b[31m0": "ANSI escape",
+               "4294967295": "uid -1", "-1": "negative", "0x1F": "hex", "root\nalice": "newline",
+               "a" * 200: "200-char name", "`" + str(me) + "`": "backticked uid (valid)",
+               str(me) + " ": "trailing space (valid)"}
+    for cell, label in hostile.items():
+        participants(ibox, {"alice": cell.replace("\n", "\\n") if "\n" in cell else cell})
+        st_h = status_json(ibox)
+        doc = run(ibox, "doctor")
+        b = st_h.get("identity", {}).get("bindings", [{}])[0]
+        valid = label.endswith("(valid)")
+        if valid:
+            check(f"uid cell {label}: resolves to this uid", b.get("uid") == me, str(b))
+        else:
+            check(f"uid cell {label}: unresolved, no traceback, nothing unprintable echoed, "
+                  "send refused in one line",
+                  b.get("uid") is None and b.get("problem")
+                  and "Traceback" not in doc.stderr + doc.stdout and doc.returncode == 2
+                  and "\x1b" not in doc.stdout and all(len(ln) < 400 for ln in doc.stdout.splitlines())
+                  and send(ibox, frm="alice", to="bob", subj="h").returncode == 2,
+                  str(b)[:200] + doc.stdout[-200:])
+
+    # -- symlinks, hard links, a linked mailbox, a renamed row ------------------
+    outside = root / "ident-outside"
+    outside.mkdir()
+    orig = outside / "orig.md"
+    orig.write_text(f"---\nid: {ULID_I}01\ntype: NOTICE\nfrom: alice\nto: bob\n"
+                    "date: 2099-01-01T00:00:00Z\nsubject: hard-linked in\n---\n\nbody\n")
+    planted = outside / "planted.md"
+    planted.write_text(f"---\nid: {ULID_I}02\ntype: NOTICE\nfrom: alice\nto: bob\n"
+                       "date: 2099-01-01T00:00:00Z\nsubject: via symlink\n---\n\nbody\n")
+    participants(ibox, {"alice": str(me), "bob": str(other)})
+    os.symlink(planted, ibox / f"{ULID_I}02-link.md")
+    os.link(orig, ibox / f"{ULID_I}01-hard.md")
+    st = status_json(ibox)
+    lst = run(ibox, "list")
+    check("a symlinked message file is quarantined before the owner check sees it: REJECT, not "
+          "admitted, no identity row and no uid reported for it",
+          f"REJECT {ULID_I}02-link.md" in lst.stderr and "symlink" in lst.stderr
+          and ULID_I + "02" not in json.dumps(st["identity"]) and st["quarantined"] == 1,
+          lst.stderr[-200:] + json.dumps(st["identity"])[:200])
+    shared = ident_rows(st, "IDENTITY_SHARED_INODE")
+    check("a hard link to a file the bound user owns is admitted and MATCHES (ownership cannot be "
+          "forged this way) but is flagged IDENTITY_SHARED_INODE with its link count",
+          len(shared) == 1 and shared[0]["id"] == ULID_I + "01" and shared[0]["links"] == 2
+          and shared[0]["observed_uid"] == me and not [
+              r for r in ident_rows(st, "IDENTITY_MISMATCH") if r["id"] == ULID_I + "01"]
+          and {"code": "IDENTITY_SHARED_INODE", "count": 1} in st["problems"], json.dumps(shared))
+    doc = run(ibox, "doctor")
+    check("doctor names the shared inode but it is not by itself a FAIL line",
+          f"IDENTITY_SHARED_INODE  {ULID_I}01" in doc.stdout
+          and "FAIL: identity mismatch" in doc.stdout and "shared" not in "".join(
+              ln for ln in doc.stdout.splitlines() if ln.startswith("FAIL")), doc.stdout[-400:])
+    orig.unlink()
+    st = status_json(ibox)
+    check("once the other name is gone the link count is 1 and the row disappears: the hard-link "
+          "signal exists only while both names do",
+          not ident_rows(st, "IDENTITY_SHARED_INODE") and st["identity"]["matched"] >= 3, str(st["problems"]))
+    (ibox / f"{ULID_I}02-link.md").unlink()
+    linkbox = root / "ident-link"
+    os.symlink(ibox, linkbox)
+    st_l = status_json(linkbox)
+    check("an operator-chosen symlinked mailbox directory: is_symlink reported, the owner is the "
+          "target directory's, the rows are those of the real path",
+          st_l["identity"]["mailbox"]["is_symlink"] is True
+          and st_l["identity"]["mailbox"]["owner_uid"] == me
+          and st_l["identity"]["attention"] == status_json(ibox)["identity"]["attention"],
+          json.dumps(st_l["identity"]["mailbox"]))
+    before = status_json(ibox)["identity"]
+    participants(ibox, {"alicia": str(me), "bob": str(other)})
+    st = status_json(ibox)
+    check("a renamed row (alice -> alicia) binds nobody who wrote: alice's files are no longer "
+          "checked, alicia is listed with nothing to check, bob's rows are unchanged",
+          st["identity"]["checked"] == before["checked"] - before["matched"]
+          and [b["identity"] for b in st["identity"]["bindings"]] == ["alicia", "bob"]
+          and ident_rows(st, "IDENTITY_MISMATCH") == ident_rows({"identity": before}, "IDENTITY_MISMATCH"),
+          json.dumps(st["identity"])[:300])
+    participants(ibox, {"alice": str(me), "bob": ""})
+    n0 = len(md_files(ibox))
+    freed = send(ibox, frm="bob", to="alice", subj="bob after the cell was emptied")
+    st = status_json(ibox)
+    check("the documented way out: emptying bob's uid cell lifts the refusal and the rows "
+          "(alice stays bound and checked)",
+          freed.returncode == 0 and len(md_files(ibox)) == n0 + 1
+          and not ident_rows(st, "IDENTITY_MISMATCH") and st["problems"] == []
+          and [b["identity"] for b in st["identity"]["bindings"]] == ["alice"], freed.stderr)
+
+    # -- a shared account: every binding is this reader's uid -------------------
+    participants(ibox, {"alice": str(me), "bob": str(me)})
+    st = status_json(ibox)
+    doc = run(ibox, "doctor")
+    check("when every binding names the reader's own uid, doctor says bindings do not distinguish "
+          "participants (one informational line), passes, and status says distinguishing=false",
+          st["identity"]["distinguishing"] is False and doc.returncode == 0
+          and "bindings do not distinguish participants" in doc.stdout
+          and doc.stdout.count("note: every binding") == 1 and "PASS" in doc.stdout, doc.stdout[-400:])
+    participants(ibox, {"alice": str(me), "bob": str(other)})
+    check("control: one binding to another uid and the note is gone, distinguishing=true",
+          status_json(ibox)["identity"]["distinguishing"] is True
+          and "do not distinguish" not in run(ibox, "doctor").stdout)
+
+    # -- a PARTICIPANTS.md the tool cannot read declares nothing ----------------
+    (ibox / "PARTICIPANTS.md").write_bytes(b"| Identity | uid |\n|---|---|\n| `alice` | \xff\xfe |\n")
+    st = status_json(ibox)
+    doc = run(ibox, "doctor")
+    check("a PARTICIPANTS.md that is not UTF-8 binds nobody: no identity key, no traceback",
+          "identity" not in st and "Traceback" not in doc.stderr and doc.returncode == 0,
+          doc.stderr[-200:])
+    (ibox / "PARTICIPANTS.md").unlink()
+
+
 def main() -> int:
     faulthandler.dump_traceback_later(WATCHDOG, exit=True)
     with tempfile.TemporaryDirectory() as td:
@@ -1005,6 +1301,7 @@ def main() -> int:
               and not [f.name for f in kbox.iterdir() if f.name.endswith((".lock", ".takeover"))],
               str(sorted(f.name for f in kbox.iterdir() if f.name.startswith("."))[:6]))
 
+        identity_binding(root)
         reader_goes_away(root)
 
     faulthandler.cancel_dump_traceback_later()

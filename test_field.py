@@ -904,6 +904,106 @@ def scenario(td: Path, box: Path) -> None:
         stray = sorted(p.name for p in td.iterdir() if p.name != "mail")
         check("nothing left next to the mailbox", not stray, str(stray))
 
+    with phase("5b. identity binding (PROTOCOL.md section 40): no binding means the same bytes, "
+               "a binding means a checked owner", 30):
+        fixed = iso(time.time() + 3600)   # one instant for every probe below
+        probes = (("status", "--json", "--now", fixed), ("status", "--now", fixed), ("doctor",),
+                  ("inbox", "--to", "alice"), ("inbox", "--to", "bob", "--json", "--now", fixed),
+                  ("list", "--json", "--now", fixed), ("list",), ("latency",))
+        parts = box / "PARTICIPANTS.md"
+
+        def table(cells: dict[str, str] | None) -> str:
+            """The shipped PARTICIPANTS.md shape; cells=None leaves the uid column out."""
+            head = ["Identity", "Reachable", "Mechanism", "Verified", "can", "cannot"]
+            if cells is not None:
+                head.append("uid")
+            out = ["# Participants", "", "| " + " | ".join(head) + " |", "|" + "---|" * len(head)]
+            for a in AGENTS:
+                row = [f"`{a}`", "**no**", "poll", "not observed", "`review`", "`press`"]
+                if cells is not None:
+                    row.append(cells.get(a, ""))
+                out.append("| " + " | ".join(row) + " |")
+            return "\n".join(out) + "\n"
+
+        def snapshot() -> list[tuple[str, str, int]]:
+            return [(cp.stdout, cp.stderr, cp.returncode) for cp in (run(box, *p) for p in probes)]
+
+        base = snapshot()
+        check("control: the probes run (every exit 0; doctor passes on the closed mailbox)",
+              all(rc == 0 for _, _, rc in base) and "PASS" in base[2][0]
+              and "identity" not in base[0][0] and "identity" not in base[2][0],
+              str([rc for _, _, rc in base]) + base[2][0][-200:])
+        parts.write_text(table(None), encoding="utf-8")
+        no_column = snapshot()
+        parts.write_text(table({}), encoding="utf-8")
+        empty_cells = snapshot()
+        check("compatibility: no PARTICIPANTS.md, one without a uid column, and one with an empty "
+              "uid column give byte-identical stdout, stderr and exit status for status (text, "
+              "--json), doctor, inbox (text, --json), list (text, --json) and latency",
+              base == no_column == empty_cells,
+              str([(i, a == b, a == c) for i, (a, b, c) in enumerate(zip(base, no_column, empty_cells, strict=True))]))
+        me = os.geteuid()
+        parts.write_text(table(dict.fromkeys(AGENTS, str(me))), encoding="utf-8")
+        bound = snapshot()
+        st_b = json.loads(bound[0][0])
+        st_0 = json.loads(base[0][0])
+        ident = st_b.get("identity", {})
+        check("positive: every agent bound to this uid: status --json gains an identity block in "
+              "which every message is checked and matches, and no other key changes",
+              ident.get("checked") == st_0["messages"]["total"] == ident.get("matched")
+              and ident.get("mismatched") == 0 and ident.get("attention") == []
+              and {k: v for k, v in st_b.items() if k != "identity"} == st_0,
+              json.dumps(ident)[:300])
+        check("positive: doctor still passes, prints the binding lines, and notes that bindings "
+              "that all name the reader's uid do not distinguish participants",
+              bound[2][2] == 0 and "identity_bindings: 4" in bound[2][0]
+              and f"identity_check: checked={st_0['messages']['total']}" in bound[2][0]
+              and "do not distinguish participants" in bound[2][0], bound[2][0][-400:])
+        check("the reader views never change with a binding: inbox (text, --json), list (text, "
+              "--json) and latency are byte-identical to the unbound run",
+              bound[3:] == base[3:], str([a == b for a, b in zip(bound[3:], base[3:], strict=True)]))
+        n0 = len(list(box.glob("*.md")))
+        bound_sends = [send(box, a, "all", "NOTICE", f"bound {a}", "still writes end") for a in AGENTS]
+        check("positive: every bound agent still sends (exit 0, one file each)",
+              all(cp.returncode == 0 for cp in bound_sends) and len(list(box.glob("*.md"))) == n0 + 4,
+              str([(cp.returncode, cp.stderr[:80]) for cp in bound_sends]))
+        other = me + 1 if me + 1 < 60000 else me - 1
+        cells = dict.fromkeys(AGENTS, str(me))
+        cells["alice"] = str(other)
+        parts.write_text(table(cells), encoding="utf-8")
+        st_m = status(box, "--now", fixed)
+        n_alice = st_m["messages"]["total"] - sum(
+            1 for r in st_m.get("identity", {}).get("attention", []) if r["sender"] != "alice")
+        rows_ = st_m.get("identity", {}).get("attention", [])
+        check("alice bound to another uid: one IDENTITY_MISMATCH row per message she sent, each "
+              "with observed uid = this process and bound uid = the row's; the others still match",
+              rows_ and all(r["reason"] == "IDENTITY_MISMATCH" and r["sender"] == "alice"
+                            and r["observed_uid"] == me and r["bound_uid"] == other for r in rows_)
+              and st_m["identity"]["mismatched"] == len(rows_)
+              and st_m["identity"]["matched"] + len(rows_) == st_m["messages"]["total"]
+              and st_m["problems"] == [{"code": "IDENTITY_MISMATCH", "count": len(rows_)}],
+              json.dumps(rows_)[:300] + str(n_alice))
+        doc = run(box, "doctor")
+        denied = send(box, "alice", "all", "NOTICE", "as alice", "must not land end")
+        okay = send(box, "bob", "all", "NOTICE", "as bob", "lands end")
+        check("doctor fails closed (exit 2, FAIL line names the count); send --from alice is "
+              "refused in one line and writes nothing; bob still sends",
+              doc.returncode == 2 and f"FAIL: identity mismatch: {len(rows_)} message(s)" in doc.stdout
+              and denied.returncode == 2 and denied.stderr.count("\n") == 1
+              and "remove the uid cell" in denied.stderr and okay.returncode == 0
+              and len(list(box.glob("*.md"))) == n0 + 5, doc.stdout[-300:] + denied.stderr)
+        parts.unlink()
+        after = snapshot()
+        check("opt-out again: removing PARTICIPANTS.md restores the unbound output for the "
+              "same mailbox (status --json minus the five new messages, doctor PASS)",
+              "identity" not in after[0][0] and after[2][2] == 0 and "identity" not in after[2][0]
+              and json.loads(after[0][0])["messages"]["total"] == st_0["messages"]["total"] + 5,
+              after[2][0][-200:])
+        check("...and the reader views are what they were plus those five rows",
+              after[6][2] == 0 and len(after[6][0].splitlines()) == len(base[6][0].splitlines()) + 10,
+              str((len(after[6][0].splitlines()), len(base[6][0].splitlines()))))
+
+
 
 def main() -> int:
     started = time.monotonic()

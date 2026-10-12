@@ -63,6 +63,18 @@ that grants something.
 * **Not authenticated.** The `from:` field is whatever the writer typed. Anyone
   who can write into the mailbox can impersonate any sender. Use filesystem
   permissions as the access control, and treat identity as a label, not proof.
+* **Identity binding is evidence, not authentication.** Optionally, a row of
+  `PARTICIPANTS.md` can bind an identity to a Unix uid (PROTOCOL.md section
+  40, `docs/identity.md`). `status` and `doctor` then compare the file's
+  observed OS owner, as the kernel recorded it, with the bound uid, and `send`
+  refuses when the process is not that uid. On a local filesystem with a
+  trustworthy root this proves which uid created the file, nothing more: root
+  and `chown` forge any owner, `sudo -u` and setuid helpers are that uid by
+  design, agents sharing one uid are indistinguishable (the tool says so and
+  passes nothing), id-squashing network mounts and uid-remapped containers
+  report owners that mean something else, and a hard link can give a file
+  the bound user created elsewhere a name in the mailbox (flagged while both
+  names exist). Nothing changes for a mailbox that declares no binding.
 * **Claims are advisory leases.** `--scope` makes simultaneous claimants
   produce one winner, but nothing forces an agent to respect a claim. Do not
   rely on one as the only guard on something irreversible.

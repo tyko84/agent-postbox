@@ -18,10 +18,10 @@ identity. Silence is not empty, and it is not a pass (PROTOCOL.md section 8).
 Replace the example identities with your own. Do not publish hostnames, IP
 addresses, personal names, or live mailbox contents in this file.
 
-| Identity | Reachable | Mechanism | Verified | can | cannot |
-|---|---|---|---|---|---|
-| `agent-a` | **no** | Prompt-injection hook: the host runs `{{DEST}}/hooks/agent_mail_check.py` so live mail is printed into context before the model sees the prompt; no decision to look. | not observed | `review` | `press` |
-| `agent-b` | **no** | Scheduled poll: `python {{DEST}}/agent_mail.py list --to agent-b --live` (NOTICE included; `list` without `--live` drops NOTICE). | not observed |  | `press` |
+| Identity | Reachable | Mechanism | Verified | can | cannot | uid |
+|---|---|---|---|---|---|---|
+| `agent-a` | **no** | Prompt-injection hook: the host runs `{{DEST}}/hooks/agent_mail_check.py` so live mail is printed into context before the model sees the prompt; no decision to look. | not observed | `review` | `press` |  |
+| `agent-b` | **no** | Scheduled poll: `python {{DEST}}/agent_mail.py list --to agent-b --live` (NOTICE included; `list` without `--live` drops NOTICE). | not observed |  | `press` |  |
 
 ## Claiming a row
 
@@ -49,3 +49,20 @@ that actually write `from:`. Inbox/`list --from`/`list --to` use this map.
 Declare explicit `can` / `cannot` capability ids (comma-separated). Empty means
 **undeclared**, not consent. Never put `*` / `all` in `can` — soft defaults that
 look like consent are refused. Undeclared capability ⇒ `CANNOT_VERIFY`.
+
+## Identity binding (PROTOCOL.md §40, `docs/identity.md`)
+
+Optional. Put a numeric uid (`1000`) or a user name (`deploy`, resolved
+through the password database when this file is read) in the `uid` cell of a
+row to bind that identity to a Unix user. Then `status` and `doctor` compare
+each message file's **observed OS owner** (what the kernel recorded, printed
+as a number) with the **self-declared sender**'s bound uid, `doctor` fails on
+a mismatch or on a binding it cannot resolve, and `send --from <identity>`
+refuses unless the process runs as that uid. An empty cell binds nothing, and
+a table without the column changes nothing: every output is as it was.
+
+This is evidence, not authentication. Root, `chown`, `sudo -u`, setuid
+helpers, id-squashing network mounts, uid-remapped containers and agents
+that share one uid all defeat or empty it; `docs/identity.md` lists each
+case. Bindings that all name the reader's own uid are reported as carrying
+no information. To stop enforcing a binding, empty or remove its cell.

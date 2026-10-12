@@ -1792,3 +1792,81 @@ mailbox prints `NO MAILBOX at <path>` first and a `hint:` line second;
 nothing on stderr. (f) No argument drawn from a table of hostile values produces a
 traceback on any command. `selftest.py` pins (a), (b), (d), (e) and the first
 four rows of (c); `test_cli.py` pins all six.
+
+---
+
+<!-- placeholder: another branch adds its own heading here, numbered 39; the integrator removes this line -->
+
+## 40. Identity binding: what the file owner proves
+
+`--from` and `AGENT_MAIL_IDENTITY` are self-declared (§2, §9): anyone who
+can run `send` can name any sender. That is by design and stays so. This
+section adds one **optional** piece of evidence a reader can compare: the
+owner the kernel records for the message file. It is not authentication,
+and nothing here changes a mailbox that does not declare a binding.
+`docs/identity.md` holds the full account, including every limit; this
+section is the rule.
+
+**Declaring.** A `uid` column in the Identity table of `PARTICIPANTS.md`
+(§21, §27). A cell is a numeric uid, or a user name resolved through the
+password database when the file is read; empty, or no column, declares
+nothing. Read from the same file as the capability columns.
+
+**Vocabulary, used in every line the tool prints.** *Self-declared sender*:
+the `from:` field, metadata. *Observed OS owner*: `st_uid` of the file,
+from `lstat`, printed as a number. No name from the password database is
+ever printed; the only name shown is the one the row itself declares.
+
+**Rule (readers).** For every admitted message whose self-declared sender
+has a resolved binding, `status` and `doctor` compare the observed OS owner
+with the bound uid, read-only, never following a link. A difference is an
+attention row (`IDENTITY_MISMATCH`: id, sender, observed uid, bound uid) in
+`status` text and `--json` (an `identity` object and problem codes, schema
+still 1, keys only added, and absent without bindings) and a line in
+`doctor`, which then FAILs (exit 2). A binding that resolves to nothing
+(`IDENTITY_UNRESOLVED`) FAILs the same way: the check was asked for and
+could not run. A checked file with more than one name (`st_nlink > 1`,
+`IDENTITY_SHARED_INODE`) is reported and is not a failure. `verify` prints
+one `sender_owner:` line for a bound sender and keeps its exit status.
+`list`, `inbox`, `show` and the pickup adapter are unchanged: a mismatched
+message is still delivered as the ordinary mail it is.
+
+**Rule (writer).** When `--from` has a binding, `send` (and `ask` and
+`canary` through it) refuses unless the process's effective uid is the
+bound uid: one line on stderr, exit 2, nothing written. Not configurable;
+the way out is to edit or remove the cell. An unresolvable binding refuses
+too.
+
+**Degeneracy.** Where every resolved binding equals the reader's own uid
+(a shared account, a one-uid container) the check carries no information:
+`doctor` prints one `note:` line, `status --json` says `distinguishing:
+false`, and nothing fails and nothing passes.
+
+**What the owner proves.** On a local POSIX filesystem with a trustworthy
+root, that a process running as that uid created the inode, somewhere. Not
+who chose the name or the directory, not that the uid is a person, and
+nothing at all through root, `chown`, `sudo`, a setuid helper, id-mapped
+network mounts or uid-remapped containers. A symbolic link at a message
+name is quarantined before this check (§5a, §36); a hard link keeps its
+owner, so ownership cannot be forged, but a file the bound user created
+elsewhere can be given a name here, which is what `IDENTITY_SHARED_INODE`
+flags while both names exist. `docs/identity.md` states each limit.
+
+**What callers observe.** Without a binding: nothing. With one: the lines,
+keys, codes and the `send` refusal above. No existing line, key, code or
+exit status changes meaning.
+
+**Invariant a test must pin.** (a) With no binding, no `uid` column, and an
+empty `uid` column, `status` (text and `--json`), `doctor`, `inbox`, `list`
+and `latency` are byte-identical in stdout, stderr and exit status. (b) A
+sender bound to the reader's uid: every file matches, `doctor` passes and
+notes that bindings do not distinguish; bound to another uid: one
+`IDENTITY_MISMATCH` row per file, `doctor` exit 2, `send`/`ask`/`canary`
+refused in one line with nothing written, and emptying the cell lifts all
+of it. (c) An unknown user name, a malformed cell and a non-UTF-8 file: no
+traceback, nothing unprintable echoed, unresolved or no bindings. (d) A
+symlinked message is rejected before the check and gets no uid; a hard link
+matches and is flagged until its other name is gone; a symlinked mailbox
+directory reports `is_symlink`; a renamed row unbinds the old identity.
+`test_adversarial.py` pins (b), (c) and (d); `test_field.py` pins (a) and
+(b) on the field mailbox.
