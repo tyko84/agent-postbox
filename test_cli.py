@@ -41,13 +41,13 @@ KNOWN: list[str] = []
 
 NOW = "2030-01-01T12:00:00Z"
 P = "01ARZ3NDEKTSV4RRFFQ69G5F"   # 24 characters; a two-character tail makes an id
-ROW_KEYS = ["date", "expires", "from", "id", "oversize", "owes_reply", "reply_to", "scope",
-            "status", "subject", "supersedes", "to", "type"]
+ROW_KEYS = ["date", "expires", "from", "id", "oversize", "owes_reply", "reply_to", "result",
+            "scope", "status", "subject", "supersedes", "to", "type"]   # "result": section 39
 TOP_KEYS = ["filters", "limit", "mailbox", "matched", "messages", "now", "quarantined",
             "returned", "schema", "total", "truncated", "view"]
 FILTER_KEYS = ["from", "live", "scope", "since", "status", "to", "type"]
 SHOW_KEYS = ["body_untrusted", "headers", "mailbox", "message", "notice", "now", "quarantined",
-             "schema", "view"]
+             "reason", "result", "schema", "view"]   # "reason", "result": section 39
 BASE_ENV = {k: v for k, v in os.environ.items()
             if not k.startswith("AGENT_MAIL") and k != "CLAUDE_PROJECT_DIR"}
 
@@ -629,11 +629,11 @@ def test_views(root: Path) -> None:
         "returned": 2, "schema": 1, "total": 5, "truncated": 1, "view": "list",
         "messages": [
             {"date": "2030-01-01T09:00:00Z", "expires": None, "from": "alice", "id": ids[1],
-             "oversize": [], "owes_reply": False, "reply_to": None, "scope": None,
+             "oversize": [], "owes_reply": False, "reply_to": None, "result": None, "scope": None,
              "status": "answered", "subject": "who owns the billing client?", "supersedes": None,
              "to": "bob", "type": "ASK"},
             {"date": "2030-01-01T11:00:00Z", "expires": None, "from": "carol", "id": ids[4],
-             "oversize": [], "owes_reply": True, "reply_to": None, "scope": None,
+             "oversize": [], "owes_reply": True, "reply_to": None, "result": None, "scope": None,
              "status": "open", "subject": "may I rename retry()?", "supersedes": None,
              "to": "bob", "type": "ASK"},
         ],
@@ -959,6 +959,308 @@ def test_views(root: Path) -> None:
     check("a blank variable is no identity: refused, exit 2, one line, no guess",
           r.returncode == 2 and r.stdout == ""
           and r.stderr == "inbox requires --to <identity> (or set AGENT_MAIL_IDENTITY)\n", r.stderr)
+
+
+# ---------------------------------------------------------------------------
+def test_results(root: Path) -> None:
+    print("\nresult on ANSWER: claimed, not proven (section 39)")
+    box = root / "results"
+    box.mkdir()
+
+    def sent(r: subprocess.CompletedProcess[str]) -> str:
+        return next((ln.split("id: ", 1)[1] for ln in r.stdout.splitlines()
+                     if ln.startswith("id: ")), "")
+
+    def rows(b: Path, *argv: str) -> dict[str, dict]:
+        return {m["id"]: m for m in doc(run(b, "list", "--json", *argv)).get("messages", [])}
+
+    def owed(b: Path, identity: str) -> dict:
+        code = ("import json, sys\n"
+                f"sys.path.insert(0, {str(HERE)!r})\n"
+                "import agent_mail\n"
+                "everything, _ = agent_mail.load_messages()\n"
+                f"slow = [m.id for m in everything if m.type == 'ASK' and m.to == {identity!r}\n"
+                "        and agent_mail.owes_reply(m, everything)]\n"
+                f"fast = [m.id for m in agent_mail.open_asks(everything, {identity!r})]\n"
+                "print(json.dumps({'slow': slow, 'fast': fast}))\n")
+        r = subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True,
+                           env={**BASE_ENV, "AGENT_MAIL_DIR": str(b)}, timeout=STEP_TIMEOUT)
+        try:
+            return json.loads(r.stdout)
+        except ValueError:
+            return {"error": r.stderr[-300:]}
+
+    # (a) positive: the whole path through send, list, inbox, show and status
+    ask = sent(run(box, "send", "--type", "ASK", "--from", "alice", "--to", "bob",
+                   "--subject", "add the retry test", "--body", "please"))
+    r = run(box, "send", "--type", "ANSWER", "--from", "bob", "--to", "alice", "--subject", "re",
+            "--reply-to", ask, "--result", "done", "--reason", "tests/test_retry.py, 3 cases",
+            "--body", "added")
+    ans = sent(r)
+    stored = next(box.glob(f"{ans}-*.md")).read_text(encoding="utf-8") if ans else ""
+    check("(a) send --type ANSWER --result done stores result: DONE (upper-cased) and the reason",
+          r.returncode == 0 and "\nresult: DONE\n" in stored
+          and "\nreason: tests/test_retry.py, 3 cases\n" in stored,
+          repr((r.returncode, r.stderr[-200:], stored[:300])))
+    by = rows(box)
+    check("(a) the ASK's row: status answered, owes_reply false, result DONE; the ANSWER's row "
+          "carries its own result",
+          by.get(ask, {}).get("status") == "answered" and by.get(ask, {}).get("owes_reply") is False
+          and by.get(ask, {}).get("result") == "DONE" and by.get(ans, {}).get("result") == "DONE",
+          repr(by)[:400])
+    check("(a) every list --json and inbox --json row has exactly the fourteen keys",
+          bool(by) and all(sorted(m) == ROW_KEYS for m in by.values())
+          and all(sorted(m) == ROW_KEYS
+                  for m in doc(run(box, "inbox", "--to", "alice", "--json")).get("messages", [])),
+          repr(by)[:300])
+    sh, sha = doc(run(box, "show", ask, "--json")), doc(run(box, "show", ans, "--json"))
+    check("(a) show --json: the ASK carries the standing result and its reason, the ANSWER its own, "
+          "and headers are still as stored",
+          sorted(sh) == SHOW_KEYS and sh.get("result") == "DONE"
+          and sh.get("reason") == "tests/test_retry.py, 3 cases"
+          and sha.get("result") == "DONE" and sha.get("reason") == "tests/test_retry.py, 3 cases"
+          and sha.get("headers", {}).get("result") == "DONE"
+          and sh.get("message", {}).get("result") == "DONE",
+          repr((sorted(sh), sh.get("result"), sh.get("reason"), sha.get("headers")))[:400])
+    st = run(box, "status")
+    check("(a) text status: one results line, worded as a claim, DONE=1, nothing to look at",
+          st.returncode == 0 and st.stderr == ""
+          and "ask results (claimed, not proven): with_result=1 (DONE=1)  answered=0  unanswered=0"
+          in st.stdout and "results attention" not in st.stdout, st.stdout + st.stderr)
+    sj = doc(run(box, "status", "--json"))
+    check("(a) status --json: no problem code, asks.open 0, and no new top-level key",
+          sj.get("problems") == [] and sj.get("asks") == {"open": 0, "oldest_open_id": None,
+                                                           "oldest_open_age_seconds": None}
+          and not any("result" in k for k in sj), repr((sj.get("problems"), sj.get("asks"))))
+    check("(a) the answered ASK is out of bob's inbox and owes nothing, exactly as without a result",
+          doc(run(box, "inbox", "--to", "bob", "--json")).get("messages") == []
+          and owed(box, "bob") == {"slow": [], "fast": []}, repr(owed(box, "bob")))
+    text = run(box, "list")
+    check("control: the text listing is unchanged in shape (two lines per message, no result)",
+          text.returncode == 0 and len(text.stdout.splitlines()) == 5
+          and "DONE" not in text.stdout, text.stdout)
+
+    # (b) negative: refused at send, flagged when planted
+    nbox = root / "results-neg"
+    nbox.mkdir()
+    nask = sent(run(nbox, "send", "--type", "ASK", "--from", "alice", "--to", "bob",
+                    "--subject", "s", "--body", "b"))
+    before = snapshot(nbox)
+    for label, value in (("MAYBE", "MAYBE"), ("a value with an escape", "\x1b[31mDONE"),
+                         ("a 5000-character value", "x" * 5000), ("DONE,PARTIAL", "DONE,PARTIAL")):
+        r = run(nbox, "send", "--type", "ANSWER", "--from", "bob", "--to", "alice", "--subject", "re",
+                "--reply-to", nask, "--result", value, "--body", "x")
+        check(f"(b) --result {label} on an ANSWER: exit 2, one line naming the five values, "
+              "nothing on stdout, nothing written",
+              r.returncode == 2 and r.stdout == "" and len(r.stderr.splitlines()) == 1
+              and "DONE, PARTIAL, FAILED, DECLINED, CANNOT_VERIFY" in r.stderr
+              and "Traceback" not in r.stderr and len(r.stderr) < 400 and snapshot(nbox) == before,
+              repr((r.returncode, r.stdout[:80], r.stderr[-300:])))
+    r = run(nbox, "send", "--type", "ANSWER", "--from", "bob", "--to", "alice", "--subject", "re",
+            "--reply-to", nask, "--result", "partial", "--reason", "one case left", "--body", "x")
+    check("control: --result partial (any case) is written and the ASK reports PARTIAL",
+          r.returncode == 0 and rows(nbox).get(nask, {}).get("result") == "PARTIAL",
+          r.stderr + repr(rows(nbox).get(nask)))
+    for mtype, value in (("NOTICE", "CANNOT_VERIFY"), ("NOTICE", "whatever the sender likes"),
+                         ("ASK", "DONE"), ("DISPUTE", "nope")):
+        r = run(nbox, "send", "--type", mtype, "--from", "carol", "--to", "bob", "--subject", "s",
+                "--result", value, "--body", "b")
+        rid = sent(r)
+        check(f"control: --result on a {mtype} is still the free field it was (written, row result null)",
+              r.returncode == 0 and rid in rows(nbox) and rows(nbox)[rid]["result"] is None,
+              r.stderr + repr(rows(nbox).get(rid)))
+
+    mbox = root / "results-malformed"
+    mbox.mkdir()
+    hand(mbox, "M1", "ASK", "alice", "bob", "2030-01-01T09:00:00Z", "one")
+    hand(mbox, "M2", "ANSWER", "bob", "alice", "2030-01-01T09:05:00Z", "re", reply_to=P + "M1",
+         result="maybe")
+    hand(mbox, "M3", "ASK", "alice", "bob", "2030-01-01T09:10:00Z", "two")
+    hand(mbox, "M4", "ANSWER", "bob", "alice", "2030-01-01T09:15:00Z", "re", reply_to=P + "M3",
+         result="x" * 5000)
+    hand(mbox, "M5", "ASK", "alice", "bob", "2030-01-01T09:20:00Z", "three")
+    hand(mbox, "M6", "ANSWER", "bob", "alice", "2030-01-01T09:25:00Z", "re", reply_to=P + "M5",
+         result='DONE "or" \\ not {"id": 1} <b>')
+    mrows = rows(mbox, "--now", NOW)
+    sj = doc(run(mbox, "status", "--json", "--now", NOW))
+    check("(b) a planted result outside the five is MALFORMED_RESULT: the problem code counts "
+          "three, each ASK stays answered with result null, each ANSWER's row has result null",
+          sj.get("problems") == [{"code": "MALFORMED_RESULT", "count": 3}]
+          and all(mrows[P + t]["status"] == "answered" and mrows[P + t]["result"] is None
+                  for t in ("M1", "M3", "M5"))
+          and all(mrows[P + t]["result"] is None for t in ("M2", "M4", "M6")),
+          repr((sj.get("problems"), {k: (v["status"], v["result"]) for k, v in mrows.items()})))
+    st = run(mbox, "status", "--now", NOW)
+    att = [ln for ln in st.stdout.splitlines() if ln.startswith("  MALFORMED_RESULT")]
+    check("(b) text status lists each one on one bounded line, quoted and escaped, the ASK as -",
+          st.returncode == 0 and len(att) == 3 and all(len(ln) < 200 for ln in att)
+          and f"  MALFORMED_RESULT  -  {P}M2  bob  'maybe'" in att
+          and "\x1b" not in st.stdout and "ask results (claimed, not proven): with_result=0"
+          "  answered=3  unanswered=0" in st.stdout, st.stdout)
+    for argv in (["status", "--now", NOW], ["status", "--json", "--now", NOW], ["list", "--now", NOW],
+                 ["list", "--json", "--now", NOW], ["inbox", "--to", "bob", "--now", NOW],
+                 ["inbox", "--to", "alice", "--json", "--now", NOW],
+                 ["show", P + "M4", "--json", "--now", NOW], ["show", P + "M4"], ["latency"]):
+        r = run(mbox, *argv)
+        check(f"(b) `{' '.join(argv)}` with malformed results: exit 0, no traceback",
+              r.returncode == 0 and "Traceback" not in r.stderr,
+              repr((r.returncode, r.stderr[-300:])))
+
+    # (c) compatibility: a mailbox written by the 0.4.0 CLI, with no result, derives identically
+    g = subprocess.run(["git", "-C", str(HERE), "show", "v0.4.0:agent_mail.py"],
+                       capture_output=True, timeout=STEP_TIMEOUT)
+    if g.returncode != 0 or not g.stdout.startswith(b"#!"):
+        print("  SKIP  (c) the 0.4.0 CLI is not available here (git show v0.4.0:agent_mail.py)")
+    else:
+        old_dir = root / "old-cli"
+        old_dir.mkdir()
+        old = old_dir / "agent_mail.py"
+        old.write_bytes(g.stdout)
+        cbox = root / "compat"
+        cbox.mkdir()
+
+        def old_run(*argv: str) -> subprocess.CompletedProcess[str]:
+            return subprocess.run([sys.executable, "-I", str(old), *argv], capture_output=True,
+                                  text=True, env={**BASE_ENV, "AGENT_MAIL_DIR": str(cbox)},
+                                  timeout=STEP_TIMEOUT, input="")
+
+        soon = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        cask = sent(old_run("send", "--type", "ASK", "--from", "alice", "--to", "bob",
+                            "--subject", "who owns the billing client?", "--body", "q"))
+        cans = sent(old_run("send", "--type", "ANSWER", "--from", "bob", "--to", "alice",
+                            "--subject", "re", "--reply-to", cask, "--body", "me"))
+        old_run("send", "--type", "NOTICE", "--from", "carol", "--to", "bob", "--subject", "n",
+                "--body", "b")
+        old_run("send", "--type", "CLAIM", "--from", "alice", "--to", "all", "--subject", "c",
+                "--scope", "billing/client.py", "--expires", soon, "--body", "b")
+        old_run("send", "--type", "ASK", "--from", "dave", "--to", "bob", "--subject", "open?",
+                "--body", "q")
+        check("control: the 0.4.0 CLI wrote the fixture (five messages, one ANSWER citing the ASK)",
+              bool(cask) and bool(cans) and len(list(cbox.glob("*.md"))) == 5
+              and f"reply_to: {cask}" in next(cbox.glob(f"{cans}-*.md")).read_text(encoding="utf-8"),
+              repr(sorted(f.name for f in cbox.iterdir())))
+        pairs = [("status --json", ["status", "--json", "--now", NOW]),
+                 ("status (text)", ["status", "--now", NOW]),
+                 ("list (text)", ["list", "--now", NOW]),
+                 ("inbox (text)", ["inbox", "--to", "bob", "--now", NOW]),
+                 ("show (text)", ["show", cask])]
+        for label, argv in pairs:
+            o, n = old_run(*argv), run(cbox, *argv)
+            check(f"(c) {label}: byte-identical under 0.4.0 and now, same exit status",
+                  o.returncode == n.returncode == 0 and o.stdout == n.stdout and o.stderr == n.stderr,
+                  repr((o.returncode, n.returncode, o.stdout[-200:], n.stdout[-200:])))
+
+        def strip(d: dict, keys: tuple[str, ...]) -> dict:
+            out = {k: v for k, v in d.items() if k not in keys}
+            if "messages" in out:
+                out["messages"] = [{k: v for k, v in m.items() if k not in keys} for m in out["messages"]]
+            if "message" in out:
+                out["message"] = {k: v for k, v in out["message"].items() if k not in keys}
+            return out
+
+        for label, argv in (("list --json", ["list", "--json", "--now", NOW]),
+                            ("inbox --json", ["inbox", "--to", "bob", "--json", "--now", NOW]),
+                            ("show --json", ["show", cask, "--json", "--now", NOW])):
+            od, nd = doc(old_run(*argv)), doc(run(cbox, *argv))
+            if argv[0] == "show":
+                added, extra = {"result", "reason"}, set(nd) - set(od)
+                nulls = [nd.get("result"), nd.get("reason")]
+            else:
+                added = {"result"}
+                extra = {k for m in nd.get("messages", []) for k in m} - {
+                    k for m in od.get("messages", []) for k in m}
+                nulls = [m.get("result") for m in nd.get("messages", [])]
+            check(f"(c) {label}: identical but for the added key(s) {sorted(added)}, which are null",
+                  bool(od) and bool(nd) and strip(nd, tuple(added)) == od and extra == added
+                  and all(v is None for v in nulls) and bool(nulls),
+                  repr((sorted(extra), nulls))[:300])
+
+    # (d) adversarial: planted results that must attach to nothing, or be flagged
+    abox = root / "results-adv"
+    abox.mkdir()
+    hand(abox, "R1", "ASK", "alice", "bob", "2030-01-01T09:00:00Z", "one")
+    hand(abox, "R2", "ANSWER", "bob", "alice", "2030-01-01T09:05:00Z", "re", reply_to=P + "R1",
+         result="DONE", reason="done it")
+    hand(abox, "R3", "ANSWER", "bob", "alice", "2030-01-01T09:06:00Z", "re",
+         reply_to="01ARZ3NDEKTSV4RRFFQ69G5ZZZ", result="DONE")           # a foreign ASK id
+    hand(abox, "R4", "ANSWER", "bob", "alice", "2030-01-01T09:07:00Z", "re", reply_to=P + "R4",
+         result="DONE")                                                   # cites itself
+    hand(abox, "R5", "ANSWER", "bob", "alice", "2030-01-01T09:08:00Z", "re", result="FAILED")  # cites nothing
+    hand(abox, "R6", "ASK", "alice", "bob", "2030-01-01T09:10:00Z", "two")
+    hand(abox, "R7", "ANSWER", "carol", "alice", "2030-01-01T09:15:00Z", "re", reply_to=P + "R6",
+         result="DECLINED")                                               # a third party
+    hand(abox, "R8", "ASK", "alice", "bob", "2030-01-01T09:20:00Z", "three")
+    hand(abox, "R9", "ANSWER", "bob", "alice", "2030-01-01T10:00:00Z", "re", reply_to=P + "R8",
+         result="DONE")
+    hand(abox, "RA", "ANSWER", "bob", "alice", "2030-01-01T11:00:00Z", "re", reply_to=P + "R8",
+         result="FAILED")                                                 # the latest by date
+    hand(abox, "RB", "ANSWER", "bob", "alice", "2030-01-01T10:30:00Z", "re", reply_to=P + "R8",
+         result="FAILED")                                                 # a higher id, an earlier date
+    hand(abox, "RE", "ASK", "alice", "bob", "2030-01-01T09:30:00Z", "four")
+    hand(abox, "RF", "NOTICE", "bob", "alice", "2030-01-01T09:35:00Z", "fyi", reply_to=P + "RE",
+         result="DONE")                                                   # not an ANSWER
+    hand(abox, "RH", "ASK", "alice", "bob", "2030-01-01T09:40:00Z", "five", mid="not-a-ulid")  # quarantined
+    hand(abox, "RG", "ANSWER", "bob", "alice", "2030-01-01T09:45:00Z", "re", reply_to="not-a-ulid",
+         result="DONE")
+    hand(abox, "RJ", "ANSWER", "bob", "alice", "2030-01-01T09:50:00Z", "re", reply_to=P + "R2",
+         result="DONE")                                                   # cites an ANSWER
+    hand(abox, "RK", "ASK", "alice", "bob", "2030-01-01T09:55:00Z", "six")   # still open
+    hand(abox, "RM", "ASK", "alice", "bob", "2030-01-01T09:56:00Z", "seven")
+    hand(abox, "RN", "ANSWER", "bob", "alice", "0001-01-01T00:00:00+14:00", "re",
+         reply_to=P + "RM", result="DONE")                                # an instant UTC cannot hold
+    hand(abox, "RP", "ANSWER", "bob", "alice", "9999-12-31T23:59:59-12:00", "re",
+         reply_to=P + "RM", result="PARTIAL")                             # ...and another
+    before = snapshot(abox)
+    arows = rows(abox, "--now", NOW)
+    sj = doc(run(abox, "status", "--json", "--now", NOW))
+    want_applied = {"R1": "DONE", "R6": "DECLINED", "R8": "FAILED", "RE": None, "RK": None,
+                    "RM": "PARTIAL"}
+    check("(d) what stands: R1 DONE; R6 the third party's DECLINED; R8 the latest by date (FAILED, "
+          "not the higher id); the NOTICE-cited and the open ASK nothing",
+          {t: arows.get(P + t, {}).get("result") for t in want_applied} == want_applied
+          and arows[P + "RE"]["status"] == "answered" and arows[P + "RK"]["status"] == "open"
+          and arows[P + "RM"]["status"] == "answered",
+          repr({t: arows.get(P + t, {}).get("result") for t in want_applied}))
+    check("(d) the five unattached results are applied to nothing and each ANSWER still shows its own",
+          all(arows[P + t]["result"] == v for t, v in
+              (("R3", "DONE"), ("R4", "DONE"), ("R5", "FAILED"), ("RG", "DONE"), ("RJ", "DONE")))
+          and arows[P + "RF"]["result"] is None,
+          repr({t: arows[P + t]["result"] for t in ("R3", "R4", "R5", "RG", "RJ", "RF")}))
+    check("(d) problems: the planted conditions, counted, in the fixed order after the old codes",
+          sj.get("problems") == [{"code": "QUARANTINED", "count": 1},
+                                 {"code": "DANGLING_REPLY", "count": 2},
+                                 {"code": "UNATTACHED_RESULT", "count": 5},
+                                 {"code": "CONTESTED_RESULT", "count": 2},
+                                 {"code": "RESULT_FROM_THIRD_PARTY", "count": 1}],
+          repr(sj.get("problems")))
+    st = run(abox, "status", "--now", NOW)
+    lines = st.stdout.splitlines()
+    att = [ln.strip() for ln in lines
+           if ln.startswith("  ") and ("_RESULT" in ln or "THIRD_PARTY" in ln)]
+    check("(d) text status: with_result=3 (DONE=1 FAILED=1 DECLINED=1), answered=1, unanswered=1, "
+          "and the attention rows name reason, ask, answer, sender and result in the fixed order",
+          st.returncode == 0
+          and "ask results (claimed, not proven): with_result=4 (DONE=1 PARTIAL=1 FAILED=1 "
+              "DECLINED=1)  answered=1  unanswered=1" in st.stdout
+          and att == [f"UNATTACHED_RESULT  -  {P}R3  bob  DONE",
+                      f"UNATTACHED_RESULT  -  {P}R4  bob  DONE",
+                      f"UNATTACHED_RESULT  -  {P}R5  bob  FAILED",
+                      f"UNATTACHED_RESULT  -  {P}RG  bob  DONE",
+                      f"UNATTACHED_RESULT  -  {P}RJ  bob  DONE",
+                      f"CONTESTED_RESULT  {P}R8  {P}RA  bob  DONE/FAILED",
+                      f"CONTESTED_RESULT  {P}RM  {P}RP  bob  DONE/PARTIAL",
+                      f"RESULT_FROM_THIRD_PARTY  {P}R6  {P}R7  carol  DECLINED"]
+          and "PROBLEMS: QUARANTINED=1 DANGLING_REPLY=2 UNATTACHED_RESULT=5 CONTESTED_RESULT=2 "
+              "RESULT_FROM_THIRD_PARTY=1" in st.stdout, st.stdout)
+    sh = doc(run(abox, "show", P + "R8", "--json", "--now", NOW))
+    check("(d) show --json of the contested ASK: the standing value, no reason (its ANSWER has none)",
+          sh.get("result") == "FAILED" and sh.get("reason") is None
+          and doc(run(abox, "show", P + "R1", "--json")).get("reason") == "done it", repr(sh)[:300])
+    check("(e) open_asks is what it was: the one uncited ASK, by both definitions",
+          owed(abox, "bob") == {"slow": [P + "RK"], "fast": [P + "RK"]}, repr(owed(abox, "bob")))
+    again = doc(run(abox, "status", "--json", "--now", NOW))
+    check("(f) deterministic and read-only: the same document twice; no file, mtime or hash changed",
+          again == sj and snapshot(abox) == before)
 
 
 # ---------------------------------------------------------------------------
@@ -1299,6 +1601,7 @@ def main() -> int:
         test_refusals(root)
         test_empty(root)
         test_views(root)
+        test_results(root)
         test_reader_gone(root)
         test_fuzz(root)
     faulthandler.cancel_dump_traceback_later()

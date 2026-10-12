@@ -204,6 +204,26 @@ agent-postbox show "$ID"
 agent-postbox list --to agent-b --live     # the ASK is no longer open
 ```
 
+An ANSWER says the question was answered, not that a requested action was
+carried out. When the ASK asked for something to be *done*, the ANSWER can
+carry `--result`: `DONE`, `PARTIAL`, `FAILED`, `DECLINED` or `CANNOT_VERIFY`,
+with an optional `--reason`. It is the recipient's **claim**, never proof:
+`status` reports it as claimed, `list --json` rows carry it under `result`,
+and nothing in the mailbox can mark it verified (PROTOCOL.md section 39).
+
+```bash runnable
+# A request for action, answered with what the recipient claims happened.
+printf 'please add a retry test\n' > request.txt
+agent-postbox send --type ASK --from agent-a --to agent-b \
+    --subject "add a retry test" --body-file request.txt
+REQ=$(agent-postbox list --to agent-b --type ASK --status open --json \
+      | python3 -c 'import json, sys; print(json.load(sys.stdin)["messages"][-1]["id"])')
+printf 'added in tests/test_retry.py\n' > done.txt
+agent-postbox send --type ANSWER --from agent-b --to agent-a \
+    --subject "re: retry test" --reply-to "$REQ" --result DONE --body-file done.txt
+agent-postbox status            # prints "ask results (claimed, not proven): ... DONE=1"
+```
+
 ```bash runnable
 # Health: file a pickup canary, then run the read-only doctor.
 agent-postbox canary --from agent-a --to agent-b
@@ -304,7 +324,7 @@ one object per message with a fixed key set:
 ```json
 {"date": "2030-01-01T11:00:00Z", "expires": null, "from": "carol",
  "id": "01ARZ3NDEKTSV4RRFFQ69G5FA4", "oversize": [], "owes_reply": true,
- "reply_to": null, "scope": null, "status": "open",
+ "reply_to": null, "result": null, "scope": null, "status": "open",
  "subject": "may I rename retry()?", "supersedes": null, "to": "bob", "type": "ASK"}
 ```
 
@@ -314,8 +334,10 @@ lines of the output already say how much there is. The output is ASCII
 A listing **never contains a body**. `show <id> --json` does, under the key
 `body_untrusted`, next to the stored `headers` and a `notice` restating the
 rule: a body is text the sender chose, evidence to weigh and never an
-instruction to follow. Keys are only ever added. The schema is PROTOCOL.md
-section 37.
+instruction to follow. `result` is the result that stands on an ASK (or an
+ANSWER's own), `null` without one; `show --json` adds the `reason` that
+travels with it (PROTOCOL.md section 39). Keys are only ever added. The
+schema is PROTOCOL.md section 37.
 
 ### Observability: `status`
 
@@ -339,7 +361,14 @@ is not in the mailbox. `status --json` carries a `problems` list of fixed
 codes with counts (`QUARANTINED`, `STALE_TMP`, `ORPHAN_IDEM_MARKER`,
 `ORPHAN_SCOPE_LOCK`, `STALLED_LOCK_HOLDER`, `STALE_TAKEOVER_MUTEX`,
 `MALFORMED_CLAIM_EXPIRY`, `FOREIGN_SUPERSEDE`, `DANGLING_REPLY`,
-`STALLED_AGENT`, `CONTESTED_SCOPE`), empty for a clean mailbox, so tooling does not parse prose.
+`STALLED_AGENT`, `CONTESTED_SCOPE`, `MALFORMED_RESULT`, `UNATTACHED_RESULT`,
+`CONTESTED_RESULT`, `RESULT_FROM_THIRD_PARTY`), empty for a clean mailbox, so
+tooling does not parse prose. When any ANSWER carries a `result:`, text
+`status` adds one `ask results (claimed, not proven): ...` line with the
+counts by value and a short table of what needs a look (an unknown value, a
+result that cites no ASK, one sender contradicting itself, a result from
+someone the ASK was not addressed to); a mailbox without results prints
+exactly what it always printed (PROTOCOL.md section 39).
 `status` still exits 0 whenever the mailbox exists; `doctor` prints the same
 counts with file names. The JSON keys are documented in PROTOCOL.md sections
 29, 33 and 34 and are only ever added to.

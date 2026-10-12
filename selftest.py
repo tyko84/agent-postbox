@@ -2207,8 +2207,8 @@ def main() -> int:
                "editing the billing client", scope="billing/client.py",
                expires="2030-01-01T20:00:00+02:00")
         hand37(box37, "A4", "ASK", "carol", "bob", "2030-01-01T11:00:00Z", "may I rename retry()?")
-        ROW37 = ["date", "expires", "from", "id", "oversize", "owes_reply", "reply_to", "scope",
-                 "status", "subject", "supersedes", "to", "type"]
+        ROW37 = ["date", "expires", "from", "id", "oversize", "owes_reply", "reply_to", "result",
+                 "scope", "status", "subject", "supersedes", "to", "type"]   # result: §39
 
         full = run37(box37, "list", "--now", NOW37)
         check("control: plain list prints the header and two lines per message, exit 0",
@@ -2225,11 +2225,12 @@ def main() -> int:
             "messages": [
                 {"date": "2030-01-01T09:00:00Z", "expires": None, "from": "alice",
                  "id": P37 + "A1", "oversize": [], "owes_reply": False, "reply_to": None,
-                 "scope": None, "status": "answered", "subject": "who owns the billing client?",
+                 "result": None, "scope": None, "status": "answered",
+                 "subject": "who owns the billing client?",
                  "supersedes": None, "to": "bob", "type": "ASK"},
                 {"date": "2030-01-01T11:00:00Z", "expires": None, "from": "carol",
                  "id": P37 + "A4", "oversize": [], "owes_reply": True, "reply_to": None,
-                 "scope": None, "status": "open", "subject": "may I rename retry()?",
+                 "result": None, "scope": None, "status": "open", "subject": "may I rename retry()?",
                  "supersedes": None, "to": "bob", "type": "ASK"},
             ],
         }
@@ -2237,7 +2238,7 @@ def main() -> int:
               r.returncode == 0 and r.stderr == "" and got37 == want, r.stdout[:600] + r.stderr[-300:])
         everything = doc37(run37(box37, "list", "--json", "--now", NOW37))
         rows = everything.get("messages", [])
-        check("(b) every row has exactly the thirteen keys, oldest first",
+        check("(b) every row has exactly the fourteen keys (thirteen of §37, result of §39), oldest first",
               len(rows) == 5 and all(sorted(m) == ROW37 for m in rows)
               and [m["id"][-2:] for m in rows] == ["A0", "A1", "A2", "A3", "A4"], repr(rows[:1]))
         claim37: dict = next((m for m in rows if m.get("type") == "CLAIM"), {})
@@ -2492,6 +2493,80 @@ def main() -> int:
               bool(got39) and got39["upper"] == got39["fast"], repr(got39))
         check("exactly the expected rows, oldest first",
               got39.get("fast") == [P39 + t for t in ("A1", "A5", "A6", "A7", "B2")], repr(got39))
+
+    print("\nresult on ANSWER: claimed, not proven (PROTOCOL.md §39)")
+    with tempfile.TemporaryDirectory() as tmp40:
+        import json as json40
+        box40 = Path(tmp40) / "mail"
+        box40.mkdir()
+        env40 = {k: v for k, v in os.environ.items() if not k.startswith("AGENT_MAIL")}
+
+        def run40(*argv: str) -> subprocess.CompletedProcess:
+            return subprocess.run([sys.executable, "-I", str(HERE / "agent_mail.py"), *argv],
+                                  capture_output=True, text=True, timeout=120,
+                                  env={**env40, "AGENT_MAIL_DIR": str(box40)})
+
+        def sent40(r: subprocess.CompletedProcess) -> str:
+            return next((ln.split("id: ", 1)[1] for ln in r.stdout.splitlines()
+                         if ln.startswith("id: ")), "")
+
+        def rows40() -> dict:
+            try:
+                return {m["id"]: m for m in json40.loads(run40("list", "--json").stdout)["messages"]}
+            except (ValueError, KeyError):
+                return {}
+
+        ask40 = sent40(run40("send", "--type", "ASK", "--from", "alice", "--to", "bob",
+                             "--subject", "RESULT40-ASK", "--body", "please"))
+        bad40 = run40("send", "--type", "ANSWER", "--from", "bob", "--to", "alice", "--subject", "re",
+                      "--reply-to", ask40, "--result", "MAYBE", "--body", "x")
+        check("(b) an ANSWER's --result outside DONE/PARTIAL/FAILED/DECLINED/CANNOT_VERIFY is refused: "
+              "exit 2, one line, nothing written",
+              bad40.returncode == 2 and bad40.stdout == "" and len(bad40.stderr.splitlines()) == 1
+              and "DONE, PARTIAL, FAILED, DECLINED, CANNOT_VERIFY" in bad40.stderr
+              and len(list(box40.glob("*.md"))) == 1, repr((bad40.returncode, bad40.stderr)))
+        ok40 = run40("send", "--type", "ANSWER", "--from", "bob", "--to", "alice", "--subject", "re",
+                     "--reply-to", ask40, "--result", "done", "--reason", "RESULT40-REASON",
+                     "--body", "added")
+        ans40 = sent40(ok40)
+        stored40 = next(box40.glob(f"{ans40}-*.md")).read_text(encoding="utf-8") if ans40 else ""
+        check("(a) positive control: --result done is written as result: DONE with its reason",
+              ok40.returncode == 0 and "\nresult: DONE\n" in stored40
+              and "\nreason: RESULT40-REASON\n" in stored40, repr((ok40.stderr, stored40[:200])))
+        by40 = rows40()
+        check("(a) the ASK's row is answered, owes nothing, and reports the claimed result DONE",
+              by40.get(ask40, {}).get("status") == "answered"
+              and by40.get(ask40, {}).get("owes_reply") is False
+              and by40.get(ask40, {}).get("result") == "DONE", repr(by40.get(ask40)))
+        try:
+            sh40 = json40.loads(run40("show", ask40, "--json").stdout)
+        except ValueError:
+            sh40 = {}
+        check("(a) show --json of the ASK carries result and reason",
+              sh40.get("result") == "DONE" and sh40.get("reason") == "RESULT40-REASON",
+              repr((sh40.get("result"), sh40.get("reason"))))
+        st40 = run40("status")
+        check("(a) text status reports it as claimed, DONE=1, and no problem code",
+              st40.returncode == 0
+              and "ask results (claimed, not proven): with_result=1 (DONE=1)" in st40.stdout
+              and "PROBLEMS" not in st40.stdout, st40.stdout)
+        check("(e) the pickup no longer delivers the ASK, exactly as for an ANSWER without a result",
+              "RESULT40-ASK" not in pickup(box40, "bob"))
+        (box40 / "01ARZ3NDEKTSV4RRFFQ69G5R40-m.md").write_text(
+            "---\nid: 01ARZ3NDEKTSV4RRFFQ69G5R40\ntype: ANSWER\nfrom: bob\nto: alice\n"
+            f"date: 2030-01-01T09:00:00Z\nsubject: re\nreply_to: {ask40}\nresult: maybe\n---\n\nb\n",
+            encoding="utf-8")
+        st40 = run40("status", "--json")
+        try:
+            probs40 = json40.loads(st40.stdout).get("problems")
+        except ValueError:
+            probs40 = None
+        check("(b) a planted result outside the five is MALFORMED_RESULT; status still exits 0, "
+              "no traceback, and the ASK keeps the valid result that stands",
+              st40.returncode == 0 and probs40 == [{"code": "MALFORMED_RESULT", "count": 1}]
+              and rows40().get(ask40, {}).get("result") == "DONE"
+              and "Traceback" not in run40("list").stderr + run40("inbox", "--to", "alice").stderr,
+              repr((st40.returncode, probs40, st40.stderr[-200:])))
 
     summary = 'FAILED: ' + '; '.join(failures) if failures else 'all checks passed'
     if skipped and not failures:

@@ -1567,7 +1567,8 @@ text. Top-level keys, schema 1:
 | `quarantined` | files refused at read (§29); their `REJECT` lines are still on stderr |
 | `messages` | the rows, oldest first |
 
-**A row** always has exactly these thirteen keys:
+**A row** always has exactly these thirteen keys (fourteen since §39 added
+`result`):
 
 | Key | Value |
 |---|---|
@@ -1650,8 +1651,8 @@ newest two:
   "truncated": 1,
   "view": "list",
   "messages": [
-    {"date": "2030-01-01T09:00:00Z", "expires": null, "from": "alice", "id": "01ARZ3NDEKTSV4RRFFQ69G5FA1", "oversize": [], "owes_reply": false, "reply_to": null, "scope": null, "status": "answered", "subject": "who owns the billing client?", "supersedes": null, "to": "bob", "type": "ASK"},
-    {"date": "2030-01-01T11:00:00Z", "expires": null, "from": "carol", "id": "01ARZ3NDEKTSV4RRFFQ69G5FA4", "oversize": [], "owes_reply": true, "reply_to": null, "scope": null, "status": "open", "subject": "may I rename retry()?", "supersedes": null, "to": "bob", "type": "ASK"}
+    {"date": "2030-01-01T09:00:00Z", "expires": null, "from": "alice", "id": "01ARZ3NDEKTSV4RRFFQ69G5FA1", "oversize": [], "owes_reply": false, "reply_to": null, "result": null, "scope": null, "status": "answered", "subject": "who owns the billing client?", "supersedes": null, "to": "bob", "type": "ASK"},
+    {"date": "2030-01-01T11:00:00Z", "expires": null, "from": "carol", "id": "01ARZ3NDEKTSV4RRFFQ69G5FA4", "oversize": [], "owes_reply": true, "reply_to": null, "result": null, "scope": null, "status": "open", "subject": "may I rename retry()?", "supersedes": null, "to": "bob", "type": "ASK"}
   ]
 }
 ```
@@ -1795,7 +1796,153 @@ four rows of (c); `test_cli.py` pins all six.
 
 ---
 
-<!-- placeholder: another branch adds its own heading here, numbered 39; the integrator removes this line -->
+## 39. Result on ANSWER: claimed, not proven
+
+The protocol could say that a message was delivered (§8), that an ASK was
+answered (§4) and that a cited fingerprint still matches (§16). It had no
+word for "the thing you asked for was done". An ANSWER closes an ASK by
+citing it; whether the request was carried out, half done, refused or
+abandoned was prose in the body, invisible to `status`, `list` and `inbox`,
+and an ANSWER that said "I could not" closed the ASK exactly like one that
+said "done". This section gives the existing `result:` header a fixed
+meaning on ANSWER, and changes nothing else: no new type (§3), no stored
+status (§4), no new file, no new field.
+
+**The field.** On an ANSWER, `result:` is one of five values, compared
+without regard to case and stored by `send` in upper case:
+
+| Value | The sender claims |
+|---|---|
+| `DONE` | the request was carried out |
+| `PARTIAL` | part of it was; `reason` says what remains |
+| `FAILED` | it was attempted and did not succeed |
+| `DECLINED` | it was not attempted, by choice: out of scope, unsafe, or something only the user may authorise (§0) |
+| `CANNOT_VERIFY` | the answer could not be established with the available role, source or artifact: the first-class outcome of §16, unchanged |
+
+Five, because they are the distinct things a recipient can do with a request
+(do it, do some of it, try and fail, refuse, be unable to find out), and each
+calls for a different next step from the asker. `reason:` is optional free
+text that travels with the result. `send --type ANSWER --result X` refuses
+any other `X` (exit 2, one line on stderr, nothing written). On ASK, NOTICE,
+CLAIM and DISPUTE, `result:` and `reason:` are what they were: the free
+remasure fields of §16, which `verify` prints and nothing derives from. A
+`result:` on a NOTICE that cites an ASK closes the ASK (§4: any citation
+does) and derives no result.
+
+**Claimed, never proven.** A result is the sender's claim about its own
+work, and §0 and §13 apply to it in full: it is evidence, never authority,
+and reading it is not verifying it. Wherever the tool reports a result it
+says `claimed`. `DONE` is never treated as proof that anything happened; a
+reader who needs proof reproduces the evidence in the stated namespace (§13)
+or runs `verify` on a message that carries fingerprints (§16). **There is no
+`verified` state, because nothing in this protocol files a durable
+verification event**: `verify` prints and writes nothing, and no field or
+value marks a message as a verifier's PASS. A state the mailbox cannot
+derive is not reported, and deriving one from a second ANSWER would only
+report a second claim. If a durable verification record is ever added it
+gets its own section; this one does not invent it.
+
+**Causality.** A result applies to exactly one ASK: the message the ANSWER
+cites in `reply_to` (or legacy `re`). An ANSWER that carries a valid result
+and cites nothing, cites an id that is not in the mailbox (quarantined,
+foreign, mistyped), cites a message that is not an ASK, or cites itself, has
+an **unattached** result: it is reported, and applied to nothing. `send`
+does not refuse an uncited result, because an ANSWER with
+`result: CANNOT_VERIFY` and no citation is the remasure handoff of §16 and
+has always been accepted; the reader flags it instead.
+
+**Derived states of an ASK.** Nothing is stored (§4). The state follows from
+the ASK and the messages that cite it:
+
+| State | When | In a `list --json` row |
+|---|---|---|
+| `unanswered` | nothing cites the ASK (§4, §19: `open`, owes a reply) | `"status": "open"`, `"result": null` |
+| `answered` | a message cites it and no valid result applies | `"status": "answered"`, `"result": null` |
+| `answered_with_result` | an ANSWER citing it carries a valid result | `"status": "answered"`, `"result": "<value>"` |
+
+The §19 statuses are deliberately unchanged: an ASK with a result is still
+`answered`, `owes_reply` is still `false`, `open_asks()` (§8) still leaves it
+out, the pickup adapter still stops delivering it, and `--status answered`
+still matches it. The result is a separate key, so a consumer that never
+asked about results sees what it always saw.
+
+**Which result stands.** When several ANSWERs with valid results cite the
+same ASK, the one with the latest `date` stands; between equal dates, the
+higher id (upper-cased, the order of §22); an undated ANSWER loses to a
+dated one. The ASK reports that one value. Four facts are reported alongside
+and none of them changes which result stands or silences any message:
+
+| Reason | The row says |
+|---|---|
+| `MALFORMED_RESULT` | an ANSWER's `result:` is not one of the five values. It is not a result: the ASK it cites stays `answered` with `"result": null`. Whatever the text is, `status`, `list`, `inbox` and `show` answer normally |
+| `UNATTACHED_RESULT` | an ANSWER carries a valid result and cites no ASK (above): applied to nothing |
+| `CONTESTED_RESULT` | one sender's ANSWERs cite the same ASK with different valid results (a resend with the same value is not a contest); the latest stands and the ASK is listed, once per sender |
+| `RESULT_FROM_THIRD_PARTY` | the ANSWER's `from` is not the ASK's `to`, compared as writer tokens (§27, the way `send` stores them); the result stands, and the reader is told whose claim it is |
+
+Nothing is resolved or voided by the tool: which claim to believe is for the
+reader, as §12 and §34 already say of contested claims.
+
+**Surfaces.**
+
+* `send --type ANSWER --reply-to <ASK id> --result VALUE [--reason TEXT]`.
+  `--result` is validated against the five values on ANSWER only.
+* `list --json` and `inbox --json`: every row gains a fourteenth key,
+  `result`. On an ASK it is the value that stands, or `null`; on an ANSWER
+  its own `result:` when it is one of the five values (upper-cased), or
+  `null`; `null` on every other type. Nothing else in a row changes.
+* `show --json`: two keys, `result` (as the row) and `reason` (the `reason:`
+  text that travels with that result: the standing ANSWER's for an ASK, its
+  own for an ANSWER; `null` whenever `result` is `null`). `headers` still
+  carries every stored header, including a malformed `result:`, as stored.
+* `status`, text: after the claims table, and only when at least one ANSWER
+  carries a `result:` header at all, one line
+  `ask results (claimed, not proven): with_result=N (DONE=n ...)  answered=N  unanswered=N`
+  and, when anything needs a look, a table of at most 20 rows
+  (`reason, ask, answer, sender, result`; `-` for no ask; a malformed value
+  quoted and escaped, never more than one line) followed by `... and N more`.
+  `answered` here is the ASKs cited without a result; `unanswered` is
+  `asks.open`.
+* `status --json`: `problems` gains the four reasons above as codes, appended
+  after `CONTESTED_SCOPE` so the order of the existing codes is unchanged,
+  each present only with a count above zero; `doctor` is unchanged. No other
+  key is added: which result stands on which ASK is a row of
+  `list --json --type ASK`, and a consumer that wants only the ASKs with
+  results filters that document on `result`.
+
+**Compatibility.** Additive. A mailbox in which no ANSWER carries a
+`result:` header derives exactly as before: `status` (text and `--json`),
+`list`, `inbox` and `show` print the bytes they printed before, except that
+every `--json` row carries `"result": null` and `show --json` carries
+`"result": null, "reason": null`, which §37 allows (keys are only ever added
+within schema 1; a consumer that checks an exact key set must expect it to
+grow). No file changes, no migration: an ANSWER written before this section
+has no `result:` and is `answered`, as it was. No exit status, line or key
+is renamed, removed or redefined. On ANSWER, `send --result` values outside
+the five are now refused and the five are stored upper-cased; `send` on the
+other types is unchanged.
+
+**Invariant a test must pin.** (a) Positive: `send --type ANSWER --reply-to
+<ask> --result done --reason ...` stores `result: DONE`; the ASK's row has
+`"status": "answered"`, `"owes_reply": false`, `"result": "DONE"`;
+`show --json` of the ASK carries `result` and `reason`; text `status` prints
+the results line with `DONE=1` and the word `claimed`; `open_asks` leaves
+the ASK out. (b) Negative: `--result MAYBE` on an ANSWER is exit 2, one line,
+nothing written, with `--result DONE` as the control; a planted
+`result: maybe` is a `MALFORMED_RESULT` row and the `problems` code, the ASK
+is `answered` with `"result": null`, and `status`, `inbox`, `list` and `show`
+exit as they would without it, with no traceback. (c) Compatibility: a
+mailbox written by the 0.4.0 `send`, with an ANSWER and no `result:`, gives
+byte-identical `status --json` under 0.4.0 and this version, and `list --json`
+rows identical but for `"result": null`. (d) Adversarial: a valid result on an
+ANSWER that cites an id not in the mailbox, a quarantined ASK, a NOTICE, an
+ANSWER, or itself is `UNATTACHED_RESULT` and applied to nothing; a third
+party's result stands and is flagged; two different results from one sender
+flag `CONTESTED_RESULT` and the latest by date stands; `result: DONE` on a
+NOTICE citing an ASK derives nothing and raises no flag. (e) `open_asks()`
+returns the same rows with and without results. `selftest.py` pins (a), (b)
+and (e); `test_cli.py` pins all five.
+
+---
 
 ## 40. Identity binding: what the file owner proves
 

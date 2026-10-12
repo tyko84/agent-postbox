@@ -692,13 +692,15 @@ class _Index:
     Pure derivation (nothing stored). It exists so list/inbox/status stay
     O(n) on a big box instead of re-scanning every message per message.
     """
-    __slots__ = ("replied", "superseded_by", "foreign_supersedes")
+    __slots__ = ("replied", "superseded_by", "foreign_supersedes", "_everything", "_results")
 
     def __init__(self, everything: list[Message]) -> None:
         # Ids are Crockford Base32: compared without regard to case (section 32).
         self.replied: set[str] = {m.re_id.upper() for m in everything if m.re_id}
         self.superseded_by: dict[str, set[str]] = {}
         self.foreign_supersedes: list[str] = []  # ids of messages whose supersedes is ignored
+        self._everything = everything
+        self._results: _Results | None = None   # built on first use (section 39)
         by_id = {m.id.upper(): m for m in everything}
         for m in everything:
             if not m.supersedes or m.supersedes.upper() == m.id.upper():
@@ -711,6 +713,120 @@ class _Index:
 
     def is_superseded(self, mid: str) -> bool:
         return bool(self.superseded_by.get(mid.upper(), set()) - {mid.upper()})
+
+    def results(self) -> _Results:
+        """The result view of section 39, built once per index, only when asked
+        for: `open_asks()` (the pickup path) never pays for it."""
+        if self._results is None:
+            self._results = _Results(self._everything)
+        return self._results
+
+
+RESULT_VALUES = ("DONE", "PARTIAL", "FAILED", "DECLINED", "CANNOT_VERIFY")   # section 39
+RESULT_ATTENTION_REASONS = ("MALFORMED_RESULT", "UNATTACHED_RESULT", "CONTESTED_RESULT",
+                            "RESULT_FROM_THIRD_PARTY")
+RESULTS_TEXT_ROWS = 20   # attention rows in text status
+
+
+def _latest_key(m: Message) -> tuple[bool, str, str]:
+    """Order of section 39: by date, then id (section 22); an undated message
+    loses to a dated one. Dates compare as UTC text (`_utc_text`), which never
+    overflows on a hand-written extreme instant."""
+    sent = m.sent_at
+    return (sent is not None, _utc_text(sent) if sent is not None else "", m.id.upper())
+
+
+class _Results:
+    """Which result stands on each ASK, and what needs a look (PROTOCOL.md
+    section 39). Pure: headers only, nothing stored, deterministic for a
+    given list of messages. A result is the ANSWER sender's claim about its
+    own work; nothing here treats it as proof.
+
+    `applied`:   ASK id (upper) -> (value, the ANSWER whose result stands)
+    `own`:       ANSWER id (upper) -> its own result, when it is one of RESULT_VALUES
+    `attention`: rows {reason, ask, answer, sender, result}, in RESULT_ATTENTION_REASONS
+                 order then by ask id and answer id
+    `seen`:      how many ANSWERs carry any `result:` header at all
+    """
+    __slots__ = ("applied", "own", "attention", "seen")
+
+    def __init__(self, everything: list[Message]) -> None:
+        by_id = {m.id.upper(): m for m in everything}
+        self.applied: dict[str, tuple[str, Message]] = {}
+        self.own: dict[str, str] = {}
+        self.attention: list[dict[str, Any]] = []
+        self.seen = 0
+        cited: dict[str, list[Message]] = {}
+        for m in everything:
+            if m.type != "ANSWER":
+                continue   # result: on any other type is the free field of section 16
+            raw = (m.meta.get("result") or "").strip()
+            if not raw:
+                continue
+            self.seen += 1
+            value = raw.upper()
+            if value not in RESULT_VALUES:
+                self._flag("MALFORMED_RESULT", None, m, raw)
+                continue
+            self.own[m.id.upper()] = value
+            ref = m.re_id.strip().upper()
+            target = by_id.get(ref) if ref else None
+            if target is None or target.type != "ASK" or target.id.upper() == m.id.upper():
+                self._flag("UNATTACHED_RESULT", None, m, value)   # reported, applied to nothing
+                continue
+            cited.setdefault(target.id.upper(), []).append(m)
+        for ask_id, answers in cited.items():
+            ask = by_id[ask_id]
+            # The latest by date wins; equal or missing dates fall back to id order
+            # (section 22); an undated ANSWER loses to a dated one.
+            winner = max(answers, key=_latest_key)
+            self.applied[ask_id] = (self.own[winner.id.upper()], winner)
+            per_sender: dict[str, list[Message]] = {}
+            for a in answers:
+                per_sender.setdefault(a.sender, []).append(a)
+                if a.sender != ask.to:
+                    self._flag("RESULT_FROM_THIRD_PARTY", ask, a, self.own[a.id.upper()])
+            for theirs in per_sender.values():
+                values = sorted({self.own[a.id.upper()] for a in theirs})
+                if len(values) > 1:
+                    self._flag("CONTESTED_RESULT", ask, max(theirs, key=_latest_key),
+                               "/".join(values))
+        order = {r: n for n, r in enumerate(RESULT_ATTENTION_REASONS)}
+        self.attention.sort(key=lambda row: (order[row["reason"]], (row["ask"] or "").upper(),
+                                             (row["answer"] or "").upper()))
+
+    def _flag(self, reason: str, ask: Message | None, answer: Message, result: str) -> None:
+        self.attention.append({"reason": reason, "ask": ask.id if ask else None,
+                               "answer": answer.id, "sender": answer.sender, "result": result})
+
+    def counts(self) -> dict[str, int]:
+        out = {r: 0 for r in RESULT_ATTENTION_REASONS}
+        for row in self.attention:
+            out[row["reason"]] += 1
+        return out
+
+    def row_result(self, m: Message) -> str | None:
+        """The `result` key of a list/inbox/show row (section 39)."""
+        if m.type == "ASK":
+            applied = self.applied.get(m.id.upper())
+            return applied[0] if applied else None
+        if m.type == "ANSWER":
+            return self.own.get(m.id.upper())
+        return None
+
+    def row_reason(self, m: Message) -> str | None:
+        """The `reason:` text that travels with row_result(); None without one."""
+        if m.type == "ASK":
+            applied = self.applied.get(m.id.upper())
+            return ((applied[1].meta.get("reason") or "").strip() or None) if applied else None
+        if m.type == "ANSWER" and m.id.upper() in self.own:
+            return (m.meta.get("reason") or "").strip() or None
+        return None
+
+
+def ask_results(everything: list[Message]) -> _Results:
+    """The result view of section 39 for a whole mailbox; see _Results."""
+    return _Results(everything)
 
 
 def owes_reply(msg: Message, everything: list[Message], _idx: _Index | None = None) -> bool:
@@ -1929,6 +2045,16 @@ def cmd_send(args: argparse.Namespace) -> int:
               "lock: an agent that dies mid-session would hold it forever.",
               file=sys.stderr)
         return 2
+    result = (getattr(args, "result", "") or "").strip()
+    if mtype == "ANSWER" and result:
+        # PROTOCOL.md section 39: a closed set on ANSWER, stored upper-case. On
+        # the other types --result stays the free field of section 16.
+        if result.upper() not in RESULT_VALUES:
+            print(f"--result {_arg_text(result)}: an ANSWER's result must be one of "
+                  f"{', '.join(RESULT_VALUES)} (a claim, never proof; PROTOCOL.md section 39)",
+                  file=sys.stderr)
+            return 2
+        args.result = result.upper()
     if args.expires:
         err = _expiry_error(args.expires, _now())
         if err:
@@ -2391,6 +2517,7 @@ def _row_json(m: Message, everything: list[Message], idx: _Index,
         "supersedes": m.supersedes.strip() or None,
         "scope": (m.meta.get("scope") or "").strip() or None,
         "expires": _utc_text(exp) if exp else None,
+        "result": idx.results().row_result(m),   # section 39: claimed, never proven
     }
     over = sorted(k for k, cap in _ROW_LIMITS.items()
                   if isinstance(row[k], str) and len(row[k]) > cap)
@@ -2596,6 +2723,7 @@ PROBLEM_CODES = (
     "QUARANTINED", "STALE_TMP", "ORPHAN_IDEM_MARKER", "ORPHAN_SCOPE_LOCK", "STALLED_LOCK_HOLDER",
     "STALE_TAKEOVER_MUTEX", "MALFORMED_CLAIM_EXPIRY", "FOREIGN_SUPERSEDE", "DANGLING_REPLY",
     "STALLED_AGENT", "CONTESTED_SCOPE",
+    "MALFORMED_RESULT", "UNATTACHED_RESULT", "CONTESTED_RESULT", "RESULT_FROM_THIRD_PARTY",
     "IDENTITY_MISMATCH", "IDENTITY_UNRESOLVED", "IDENTITY_SHARED_INODE",   # section 40
 )
 CLAIMS_LIST_CAP = 200    # rows per list in status --json (PROTOCOL.md section 34)
@@ -2852,6 +2980,10 @@ def build_status(everything: list[Message], rejects: list[str], box: Path,
       contested_scopes       scopes held by more than one sender
       scope_filter           the --scope the two lists were filtered by, or null
 
+    Added by PROTOCOL.md section 39 (schema still 1): the four result codes in
+    `problems`, each present only with a count above zero. Which result stands
+    on an ASK is a row key of `list --json` (see _Results), not a status key.
+
     Added by PROTOCOL.md section 40 (schema still 1), see identity_report().
     Present only when PARTICIPANTS.md binds at least one identity to a Unix
     user; a mailbox without a binding is reported key for key as before:
@@ -2928,6 +3060,7 @@ def build_status(everything: list[Message], rejects: list[str], box: Path,
         "DANGLING_REPLY": dangling,
         "STALLED_AGENT": len(stalled),
         "CONTESTED_SCOPE": report["contested_scopes"],
+        **idx.results().counts(),
     }
     st: dict[str, Any] = {
         "schema": STATUS_SCHEMA,
@@ -2992,6 +3125,35 @@ def _held_table(st: dict[str, Any]) -> list[str]:
     return out
 
 
+def _results_lines(everything: list[Message], st: dict[str, Any]) -> list[str]:
+    """Text `status` lines for results on ANSWERs (section 39). Nothing is printed
+    for a mailbox in which no ANSWER carries a `result:` header, so such a
+    mailbox prints exactly what it printed before. For people: `--json` rows
+    (`list --json`) carry the values; `problems` carries the counts."""
+    res = ask_results(everything)
+    if not res.seen:
+        return []
+    by_value = {v: 0 for v in RESULT_VALUES}
+    for value, _answer in res.applied.values():
+        by_value[value] += 1
+    n_ask = int(st["messages"]["by_type"].get("ASK", 0))
+    unanswered = int(st["asks"]["open"])
+    with_result = len(res.applied)
+    values = " ".join(f"{v}={n}" for v, n in by_value.items() if n)
+    out = [f"ask results (claimed, not proven): with_result={with_result}"
+           + (f" ({values})" if values else "")
+           + f"  answered={max(0, n_ask - unanswered - with_result)}  unanswered={unanswered}"]
+    if res.attention:
+        out.append("results attention (reason, ask, answer, sender, result):")
+        for row in res.attention[:RESULTS_TEXT_ROWS]:
+            shown = row["result"] if row["reason"] != "MALFORMED_RESULT" else _arg_text(row["result"])
+            out.append(f"  {row['reason']}  {row['ask'] or '-'}  {row['answer']}  "
+                       f"{str(row['sender'])[:32]}  {shown}")
+        if len(res.attention) > RESULTS_TEXT_ROWS:
+            out.append(f"  ... and {len(res.attention) - RESULTS_TEXT_ROWS} more")
+    return out
+
+
 def _fmt_age(seconds: object) -> str:
     if not isinstance(seconds, int):
         return "-"
@@ -3039,6 +3201,8 @@ def cmd_status(args: argparse.Namespace) -> int:
           + (f"  ({asks['oldest_open_id']})" if asks["oldest_open_id"] else ""))
     print("claims: " + "  ".join(f"{k}={v}" for k, v in claims.items()))
     for line in _held_table(st):
+        print(line)
+    for line in _results_lines(everything, st):
         print(line)
     print(f"quarantined: {st['quarantined']}  stale_tmp: {st['stale_tmp']}")
     print("scope_locks: " + "  ".join(f"{k}={v}" for k, v in st["scope_locks"].items()))
@@ -3218,6 +3382,8 @@ def _show_json(args: argparse.Namespace, box: Path) -> int:
         "message": _row_json(m, everything, idx, v.now),
         "headers": dict(m.meta),
         "body_untrusted": m.body,
+        "result": idx.results().row_result(m),   # section 39: claimed, never proven
+        "reason": idx.results().row_reason(m),
     }
     print(json.dumps(doc, indent=2, sort_keys=True))
     return 0
@@ -3629,10 +3795,14 @@ def _run(argv: list[str] | None) -> int:
                     help="short single-line body only; multi-line / shell metacharacters refused")
     s.add_argument("--body-file", default="", metavar="PATH",
                     help="read body from PATH, or - for stdin (preferred for real mail)")
-    s.add_argument("--result", default="",
-                    help="optional outcome, e.g. CANNOT_VERIFY")
-    s.add_argument("--reason", default="",
-                    help="e.g. INSUFFICIENT_PRIVILEGE")
+    s.add_argument("--result", default="", metavar="VALUE",
+                   help="on an ANSWER that cites an ASK (--reply-to): what the sender claims "
+                        "happened, one of " + ", ".join(RESULT_VALUES) + " (a claim, never "
+                        "proof; status reports it as claimed; PROTOCOL.md section 39). On the "
+                        "other types a free evidence field, e.g. CANNOT_VERIFY (section 16)")
+    s.add_argument("--reason", default="", metavar="TEXT",
+                   help="free text that travels with --result: what remains after PARTIAL, "
+                        "why DECLINED, or e.g. INSUFFICIENT_PRIVILEGE for CANNOT_VERIFY")
     s.add_argument("--namespace", default="",
                    help="evidence field: where the finding applies (PROTOCOL.md section 16)")
     s.add_argument("--resolved-at", dest="resolved_at", default="",
