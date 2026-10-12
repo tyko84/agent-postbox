@@ -9,6 +9,10 @@ behaviour).
 
 ### Added
 
+- `agent_mail.open_asks(everything, to)`: the ASKs addressed to an identity that still
+  owe a reply, in mailbox order, with the citation index built once. The batch form of
+  `owes_reply()`; `selftest.py` checks it against the slow definition on answered,
+  unanswered, re-asked, superseded and quarantined cases, with a positive control.
 - `scripts/verify_release.py`: the consumer-side check of a published (or draft) release
   in one command. It downloads the assets with `gh release download`, checks the asset
   names, every `SHA256SUMS` line, `gh attestation verify` for the wheel and the sdist,
@@ -29,6 +33,21 @@ behaviour).
 
 ### Changed
 
+- The pickup adapter takes its owed ASKs, and the live test of an ASK, from `open_asks`
+  instead of asking `owes_reply`/`live` without an index once per ASK. Same output; at
+  100,000 messages the adapter runs in about 4.4 s instead of 19.7 s, at 10,000 in
+  393 ms instead of 502 ms (the rest is reading the mailbox).
+- README: the install section's "Verifying a release download" leads with
+  `python scripts/verify_release.py v0.4.0` (what it checks, `gh` signed in,
+  `--no-download --dir DIR`, `--rebuild` with the hash-pinned build tools, the manual
+  checksum command) and points to docs/release-process.md for the manual commands; the
+  30-second demo's adapter output block shows the `id:`, `read:` and `Reply:` lines and
+  the "owe a reply" block the hook prints today.
+- The CI lint job type-checks every file that passes mypy today, `scripts/repro_build.py`
+  and `scripts/verify_release.py` among them (six files before, thirteen now).
+  `selftest.py`, `test_adversarial.py`, `test_cli.py` and `test_hardening.py` are not yet
+  clean and are not checked. `test_publication.py` requires every `scripts/*.py` to be on
+  the lint job's mypy line, so a new script cannot be added without being type-checked.
 - README states the supported interpreters as Python 3.10-3.14 (it still said 3.10-3.13
   after 3.14 joined the CI matrix and the classifiers). `test_readme_examples.py` derives
   the range from pyproject.toml's `Programming Language :: Python :: 3.X` classifiers
