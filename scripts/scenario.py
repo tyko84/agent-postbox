@@ -46,7 +46,6 @@ Faults, each switchable with --faults and scheduled by the seed:
                       send next round, which must take the key over and write
                       exactly one message
   abandoned-locks     a claimant is SIGKILLed while holding the kernel scope
-                      lock (the real send, with the publish step made to
                       lock (the real send, with the lock function made to
                       block once it holds the lock); the lock file stays with
                       no holder; next round the holder retries its claim and

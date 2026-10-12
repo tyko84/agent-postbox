@@ -9,6 +9,38 @@ behaviour).
 
 ### Added
 
+- `result:` on ANSWER has a fixed meaning (PROTOCOL.md section 39): one of DONE, PARTIAL,
+  FAILED, DECLINED, CANNOT_VERIFY, with an optional `reason:`, applied only to the ASK the
+  ANSWER cites. It is the sender's claim, never proof; nothing in the protocol can mark it
+  verified. `send --type ANSWER --result` validates the value (exit 2, nothing written) and
+  stores it upper-cased. `list --json` and `inbox --json` rows gain `result`; `show --json`
+  gains `result` and `reason`. `status` prints an `ask results (claimed, not proven)` line
+  and an attention table when any ANSWER carries a result, and `problems` gains the codes
+  MALFORMED_RESULT, UNATTACHED_RESULT, CONTESTED_RESULT and RESULT_FROM_THIRD_PARTY.
+  Mailboxes without results derive and print exactly as before.
+- Optional Unix-user identity binding (PROTOCOL.md section 40, `docs/identity.md`): a
+  `uid` cell in a PARTICIPANTS.md row binds an identity to a numeric uid or a user name
+  resolved through the password database at read time. `status` and `doctor` compare each
+  message file's observed OS owner (lstat, never following a link) with the bound uid of
+  its self-declared sender; `status --json` gains an `identity` object and the problem
+  codes IDENTITY_MISMATCH, IDENTITY_UNRESOLVED and IDENTITY_SHARED_INODE, present only
+  when a binding is declared; `doctor` fails on a mismatch or an unresolvable binding and
+  notes when every binding names the reader's own uid; `verify` prints a `sender_owner:`
+  line; `send`, `ask` and `canary` refuse (exit 2, nothing written) when the process's
+  effective uid is not the sender's bound uid. Evidence, not authentication: the docs list
+  what the owner proves and what root, chown, sudo, id-squashing mounts, uid-remapped
+  containers, shared accounts, symlinks and hard links do to it. With no binding declared
+  every output and exit status is byte-identical to before.
+- `scripts/scenario.py`: a reproducible benchmark and reliability harness
+  (docs/benchmarking.md). Simulated agents drive the real `send`, the pickup adapter (or
+  `inbox --json` as a polling baseline that remembers with probability `--poll-p`) and
+  `status --json` under a seeded workload with a checked schedule hash; it injects
+  interrupted writes, abandoned scope locks, agent crashes, planted malformed files and
+  delayed polling; measures delivery latency in seconds and prompt boundaries (percentiles
+  only when the sample justifies them), missed and duplicate deliveries, conflicting and
+  expired claims, unanswered ASKs and recovery; prints OK/FAIL lines for the hook's
+  invariants and writes a documented `--json` report. `--quick` runs in the `selftest` CI
+  job; `test_scenario.py` pins determinism, a planted FAIL and the exit-status contract.
 - `agent_mail.open_asks(everything, to)`: the ASKs addressed to an identity that still
   owe a reply, in mailbox order, with the citation index built once. The batch form of
   `owes_reply()`; `selftest.py` checks it against the slow definition on answered,
@@ -33,6 +65,9 @@ behaviour).
 
 ### Changed
 
+- The section 37 row has fourteen keys (`result` added); the show document has `result`
+  and `reason`. Consumers checking exact key sets must add them.
+- `PARTICIPANTS.md` and `PARTICIPANTS.template.md` carry a `uid` column (empty by default).
 - Every `.py` file in the tree type-checks under mypy and is on the CI lint job's list
   (`selftest.py`, `test_cli.py`, `test_hardening.py` and `test_adversarial.py` joined it):
   rebound locals were renamed, containers annotated and the hostile-field tables typed,

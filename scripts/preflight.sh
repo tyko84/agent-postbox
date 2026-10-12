@@ -27,7 +27,8 @@ DIST="$(mktemp -d)"
 trap 'rm -rf "$DIST"' EXIT INT TERM
 
 for t in selftest.py stress_test.py test_hardening.py test_adversarial.py test_handoff.py \
-         test_readme_examples.py test_publication.py test_packaging.py test_field.py test_cli.py; do
+         test_readme_examples.py test_publication.py test_packaging.py test_field.py test_cli.py \
+         test_scenario.py; do
     echo "preflight: $t" >&2
     "$PY" "$t" >/dev/null
 done
