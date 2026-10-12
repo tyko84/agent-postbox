@@ -1233,6 +1233,23 @@ def load_identity_bindings(path: Path | None = None) -> dict[str, IdentityBindin
     return {}
 
 
+def identity_bindings_unreadable(path: Path | None = None) -> str:
+    """Why `load_identity_bindings` saw no table, when the cause is that the
+    PARTICIPANTS.md it would have read cannot be read (permissions, not UTF-8):
+    "PermissionError", "UnicodeDecodeError" and so on. "" when the file is
+    absent or readable. `load_identity_bindings` itself still returns `{}` for
+    both; this only lets `doctor` say which. Never raises."""
+    for p in [path] if path else participants_paths():
+        if p is None or not _is_file(p):
+            continue
+        try:
+            p.read_text(encoding="utf-8")
+        except (OSError, ValueError) as e:
+            return e.__class__.__name__
+        return ""
+    return ""
+
+
 def _reader_uid() -> int | None:
     """The effective uid this process runs as, or None where the platform has none."""
     geteuid = getattr(os, "geteuid", None)
@@ -3352,6 +3369,11 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     # a mailbox that declares none. A mismatch, or a binding that cannot be
     # resolved, fails: the check was asked for and did not pass (fail closed).
     bindings = load_identity_bindings()
+    if not bindings and (why := identity_bindings_unreadable()):
+        # Additive, doctor only, no effect on the exit status: an unreadable table
+        # reads as "no bindings", which is indistinguishable from not having opted in.
+        print(f"identity_bindings: UNREADABLE ({why}); PARTICIPANTS.md could not be read, "
+              "so the identity checks did not run")
     if bindings:
         ident = identity_report(everything, bindings, box)
         for line in identity_lines(ident, bullet="  - "):

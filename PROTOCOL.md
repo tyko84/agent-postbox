@@ -2013,6 +2013,14 @@ owner, so ownership cannot be forged, but a file the bound user created
 elsewhere can be given a name here, which is what `IDENTITY_SHARED_INODE`
 flags while both names exist. `docs/identity.md` states each limit.
 
+**An unreadable table (`doctor` only).** A `PARTICIPANTS.md` that exists
+but cannot be read (no permission, not UTF-8) declares no binding, as it
+always has, so `status` and the readers do not run the checks above. `doctor`
+now says so with one extra line, `identity_bindings: UNREADABLE (<exception
+class>); PARTICIPANTS.md could not be read, so the identity checks did not
+run`, and its exit status is unchanged. An absent file, and a readable one,
+print nothing new.
+
 **What callers observe.** Without a binding: nothing. With one: the lines,
 keys, codes and the `send` refusal above. No existing line, key, code or
 exit status changes meaning.

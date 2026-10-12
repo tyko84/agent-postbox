@@ -762,6 +762,28 @@ def identity_binding(root: Path) -> None:
     check("a PARTICIPANTS.md that is not UTF-8 binds nobody: no identity key, no traceback",
           "identity" not in st and "Traceback" not in doc.stderr and doc.returncode == 0,
           doc.stderr[-200:])
+    check("...and doctor says so in one extra line, without changing its exit status (0)",
+          doc.stdout.count("identity_bindings: UNREADABLE (UnicodeDecodeError)") == 1
+          and doc.returncode == 0, doc.stdout[-400:])
+    if os.name == "posix" and os.geteuid() != 0:   # root reads any file; Windows has no 000
+        (ibox / "PARTICIPANTS.md").write_bytes(b"| Identity | uid |\n|---|---|\n| `alice` | 1 |\n")
+        (ibox / "PARTICIPANTS.md").chmod(0)
+        try:
+            doc = run(ibox, "doctor")
+            check("a PARTICIPANTS.md without read permission: doctor says UNREADABLE (PermissionError) "
+                  "once; status still prints no identity key",
+                  doc.stdout.count("identity_bindings: UNREADABLE (PermissionError)") == 1
+                  and "identity" not in status_json(ibox), doc.stdout[-300:])
+        finally:
+            (ibox / "PARTICIPANTS.md").chmod(0o644)
+    (ibox / "PARTICIPANTS.md").unlink()
+    doc = run(ibox, "doctor")
+    check("control: no PARTICIPANTS.md, or a readable one, and doctor prints no UNREADABLE line",
+          "UNREADABLE" not in doc.stdout and "identity_bindings" not in doc.stdout, doc.stdout[-300:])
+    participants(ibox, {"alice": str(me)})
+    check("...a readable table with a binding prints the ordinary line",
+          "identity_bindings: 1 " in run(ibox, "doctor").stdout
+          and "UNREADABLE" not in run(ibox, "doctor").stdout)
     (ibox / "PARTICIPANTS.md").unlink()
 
 
