@@ -29,6 +29,7 @@ jobs:
           python-version: ${{ matrix.python }}
       - run: python selftest.py
       - run: python stress_test.py
+      - run: python scripts/scenario.py --quick --seed 1
       - run: python test_hardening.py
       - run: python test_field.py
       - run: python test_adversarial.py
@@ -36,6 +37,7 @@ jobs:
       - run: python test_readme_examples.py
       - run: python test_publication.py
       - run: python test_cli.py
+      - run: python test_scenario.py
 
   packaging:
     runs-on: ubuntu-latest
@@ -66,7 +68,7 @@ jobs:
       - run: ruff check .
       # Every tracked .py, listed by name so adding a file is a deliberate choice
       # (test_publication.py Workflows requires every scripts/*.py here).
-      - run: mypy agent_mail.py install.py hooks/agent_mail_check.py check_handoff.py check_publication.py test_publication.py scripts/repro_build.py scripts/verify_release.py stress_test.py test_field.py test_handoff.py test_packaging.py test_readme_examples.py selftest.py test_cli.py test_hardening.py test_adversarial.py
+      - run: mypy agent_mail.py install.py hooks/agent_mail_check.py check_handoff.py check_publication.py test_publication.py scripts/repro_build.py scripts/verify_release.py scripts/scenario.py stress_test.py test_field.py test_handoff.py test_packaging.py test_readme_examples.py selftest.py test_cli.py test_hardening.py test_adversarial.py test_scenario.py
 
   publication-build:
     # The half of the publication check that needs code from PyPI: the pinned dev tools

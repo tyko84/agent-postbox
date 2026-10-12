@@ -1539,6 +1539,19 @@ class Workflows(unittest.TestCase):
         for job in ("packaging", "reproducible"):
             self.assertIn(installs[0], [ln.strip() for ln in ci[job].splitlines()], job)
 
+    def test_the_scenario_harness_runs_in_ci_and_before_a_release(self) -> None:
+        # scripts/scenario.py (docs/benchmarking.md): the quick profile is a step of the
+        # required selftest job, after stress_test.py, and its focused test is on both lists
+        ci = self.jobs("ci.yml")["selftest"]
+        steps = [ln.strip() for ln in ci.splitlines() if ln.strip().startswith("- run: ")]
+        self.assertIn("- run: python scripts/scenario.py --quick --seed 1", steps)
+        self.assertLess(steps.index("- run: python stress_test.py"),
+                        steps.index("- run: python scripts/scenario.py --quick --seed 1"))
+        self.assertIn("- run: python test_scenario.py", steps)
+        self.assertIn("test_scenario.py", self.jobs("release.yml")["test"])
+        for f in ("scripts/scenario.py", "test_scenario.py"):
+            self.assertIn(f, self.mypy_files())
+
     def test_required_check_names_are_unchanged(self) -> None:
         ci = self.jobs("ci.yml")
         for job in self.REQUIRED:
