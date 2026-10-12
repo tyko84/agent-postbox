@@ -9,6 +9,15 @@ behaviour).
 
 ### Added
 
+- `scripts/verify_release.py`: the consumer-side check of a published (or draft) release
+  in one command. It downloads the assets with `gh release download`, checks the asset
+  names, every `SHA256SUMS` line, `gh attestation verify` for the wheel and the sdist,
+  the exact wheel members, the sdist's layout, owners, single mtime and gzip header, and
+  the Name and Version in `METADATA` and `PKG-INFO`; `--rebuild` adds the byte-for-byte
+  comparison with `scripts/repro_build.py --verify`. One `OK`/`FAIL` line per check,
+  exit 1 on any failure. Covered by `test_packaging.py` on the repro_build artifacts and
+  on deliberately broken copies; `docs/release-process.md` points to it next to the
+  manual commands.
 - The pickup adapter (`hooks/agent_mail_check.py`) names, after the live mail, what
   `AGENT_MAIL_IDENTITY` holds and owes: its unsuperseded claims (scope, since when,
   live until / `NOT live` once lapsed) and the open ASKs addressed to it that still
@@ -20,6 +29,18 @@ behaviour).
 
 ### Changed
 
+- README states the supported interpreters as Python 3.10-3.14 (it still said 3.10-3.13
+  after 3.14 joined the CI matrix and the classifiers). `test_readme_examples.py` derives
+  the range from pyproject.toml's `Programming Language :: Python :: 3.X` classifiers
+  (tomllib on 3.11+, a regex on 3.10) and fails if README's "Python 3.X-3.Y" wording,
+  `requires-python` or the `selftest` matrix in `ci.yml` disagree with them.
+  docs/packaging.md and docs/pypi-publishing.md say that their 3.11/3.12/3.13
+  measurements did not include 3.10 or 3.14.
+- The pickup adapter computes the open ASKs addressed to the identity once and reuses
+  them for the `[awaiting your reply]` marker and the holdings block, instead of a
+  full-mailbox pass per use. Same output; at 10,000 messages the adapter runs in about
+  515 ms against 576 ms before and 490 ms in 0.4.0, and at 100,000 in about 18 s against
+  25 s before.
 - CPython 3.14 is a supported interpreter: the `selftest` matrix in `ci.yml` has a 3.14
   cell on Linux and macOS, and `pyproject.toml` carries the 3.14 classifier.
   `Requires-Python` stays `>=3.10`, and the release build stays on 3.12, the reference
@@ -35,6 +56,10 @@ behaviour).
 
 ### Fixed
 
+- `test_handoff.py` and `test_publication.py` run under `python -I` (isolated mode drops
+  the script directory from `sys.path`, so their `check_*` imports failed); they insert
+  their own directory first, as the other tests do. CI, which runs them without `-I`, is
+  unchanged.
 - `send` with `AGENT_MAIL_DIR` set to a path the OS refuses to stat (too long) printed a
   traceback; it is now `NO MAILBOX at <path>`, one line, exit 2, nothing written
   (PROTOCOL.md section 38).
