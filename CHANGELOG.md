@@ -19,6 +19,9 @@ behaviour).
   sample size, decision rule, threats to validity, cost model, safety rules). `test_team_sim.py`
   pins determinism, equal workloads for both arms, the exit-status contract and that the
   harness cannot only favour Postbox.
+- `doctor` prints `identity_bindings: UNREADABLE (...)` when PARTICIPANTS.md exists but
+  cannot be read, so the identity checks silently not running is visible (additive; no
+  exit-status change; nothing is printed for an absent or readable file).
 - `scripts/e2e_claude.py`: real-session end-to-end tests of the Claude Code adapter in
   headless `claude -p`, with random tokens and a negative control for each check; it
   refuses sessions beyond a call budget (`--max-calls`, default 12), exits 2 when `claude`
@@ -162,6 +165,21 @@ behaviour).
 
 ### Fixed
 
+- `install.py` writes `.claude/settings.json` and `.codex/hooks.json` atomically (a temp
+  file in the same directory, fsync, rename; the mode is kept), so an interrupted install
+  can no longer leave a truncated settings file with the user's other settings in it.
+- The first settings backup (`.bak`) is never overwritten: later upgrades and repairs write
+  `.bak.1`, `.bak.2`, and the install output names the backup it wrote. Before, a second
+  run replaced the backup of the user's original file.
+- `install.py` refuses, before copying anything, when a file sits where the mailbox,
+  `--dest`, `<dest>/hooks` or a payload file must go: one `ABORT` line on stderr, exit 2,
+  and `--check` prints `WOULD REFUSE` (this was a traceback, in one case after the tool had
+  been copied).
+- `send` no longer reads an oversized `--body-file` or stdin body into memory: reading
+  stops at the 16 MiB limit plus one character (a 1 GiB file went from about 2.2 GB of
+  memory to under 100 MB). The refusal and its exit status are unchanged; a body over the
+  limit that also holds a forbidden character past the stopping point now gets the size
+  message instead of the control-character one.
 - `install.py` no longer rewrites a hand-written hook command whose first word is not a
   Python interpreter. It judged the first word of any registered command to be the
   interpreter and, when it was not on PATH, "repaired" the command: on Linux that
