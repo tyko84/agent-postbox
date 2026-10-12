@@ -117,13 +117,13 @@ The summary has one line per metric with the configurations side by side:
 metric                                      hook      baseline
 pickup mechanism                            hook    inbox-poll
 ...
-deliverable messages                         466           469
-delivered                                    466           467
+deliverable messages                         468           466
+delivered                                    468           464
 missed                                         0             2
-delivered at first chance                    325           165
-latency p50                              0.1368s       0.3388s
+delivered at first chance                    468           231
+latency p50                              0.1483s       0.3092s
 latency (boundaries) p50                       0             1
-latency (boundaries) p95                       1             5
+latency (boundaries) p95                       0             5
 ...
 ```
 

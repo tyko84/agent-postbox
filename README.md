@@ -204,6 +204,10 @@ python agent-postbox/install.py /path/to/your/project --adapter claude-code
 Other hosts: copy `hooks/agent_mail_check.py` and wire it to your host's
 prompt-submit event, or keep polling. Then verify, because silence proves
 nothing (see below): run `selftest.py`.
+`install.py <project> --adapter codex` registers the same adapter as Codex's
+`UserPromptSubmit` hook (trust it once in `/hooks`); Cursor has no per-prompt
+injection and polls. [docs/hosts.md](docs/hosts.md) has the matrix and exactly
+what was verified.
 
 ### Where the mailbox is
 

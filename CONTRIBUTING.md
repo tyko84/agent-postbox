@@ -55,7 +55,8 @@ Code changes:
 * `python selftest.py`, `python stress_test.py`, `python test_hardening.py`,
   `python test_adversarial.py`, `python test_field.py`, `python test_handoff.py`,
   `python test_readme_examples.py`, `python test_publication.py`,
-  `python test_packaging.py` and `python test_cli.py` must pass
+  `python test_packaging.py`, `python test_cli.py`, `python test_scenario.py`,
+  `python test_adapters.py` and `python test_examples.py` must pass
   (`test_packaging.py` skips, loudly, if the `build` package is unavailable), and so must
   `ruff check .` and
   `mypy agent_mail.py install.py hooks/agent_mail_check.py check_handoff.py check_publication.py test_publication.py`

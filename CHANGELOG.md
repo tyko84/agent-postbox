@@ -9,6 +9,22 @@ behaviour).
 
 ### Added
 
+- `examples/two-agents/run.py`: a demo that installs into a throwaway project with the
+  real `install.py` and plays two scripted sessions through the real CLI and pickup
+  adapter (an ASK surfaced with no polling, a CLAIM, an ANSWER with `--result DONE`
+  surfaced back, a second claim refused with exit 3, `status`). It prints every command
+  with its output, checks each step and exits 1 at the first that does not behave as
+  described; `--keep` and `--pause`. No model, no account, no network. `test_examples.py`
+  runs it, and runs it against a silenced adapter and a tool that grants a second claim to
+  confirm it fails at the right step. The sdist now includes `examples/`.
+- `install.py --adapter codex`: registers `hooks/agent_mail_check.py`, unchanged, as a
+  Codex `UserPromptSubmit` command hook in the project's `.codex/hooks.json`; merges with
+  a backup, is idempotent, and refuses before copying anything when it cannot register
+  safely. `docs/hosts.md` is the host compatibility matrix (Claude Code, Codex, Cursor,
+  hosts without hooks): the Codex path is tested against the documented payload shapes
+  (`test_adapters.py`, `scripts/scenario.py --pickup codex`), not inside the real host;
+  Cursor has no per-prompt injection and polls.
+- `docs/issues-to-open.md`: five starter issues drafted for the tracker.
 - `result:` on ANSWER has a fixed meaning (PROTOCOL.md section 39): one of DONE, PARTIAL,
   FAILED, DECLINED, CANNOT_VERIFY, with an optional `reason:`, applied only to the ASK the
   ANSWER cites. It is the sender's claim, never proof; nothing in the protocol can mark it
@@ -65,6 +81,9 @@ behaviour).
 
 ### Changed
 
+- README opens with the problem, a three-step quickstart (clone, run the demo, install)
+  and one measured table from `scripts/scenario.py` with its limits stated; the command
+  walkthrough formerly headed "Quickstart" is "Using the CLI", content unchanged.
 - The section 37 row has fourteen keys (`result` added); the show document has `result`
   and `reason`. Consumers checking exact key sets must add them.
 - `PARTICIPANTS.md` and `PARTICIPANTS.template.md` carry a `uid` column (empty by default).
@@ -124,6 +143,8 @@ behaviour).
 
 ### Fixed
 
+- `install.py`: a hook settings file whose `hooks` or `UserPromptSubmit` value has the
+  wrong type is refused with one line instead of a traceback.
 - `test_handoff.py` and `test_publication.py` run under `python -I` (isolated mode drops
   the script directory from `sys.path`, so their `check_*` imports failed); they insert
   their own directory first, as the other tests do. CI, which runs them without `-I`, is
