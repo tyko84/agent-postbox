@@ -35,10 +35,12 @@ Safety rules for a settings merge, in priority order:
      this tree is occupied -- refuse rather than mint a nested owner.
   6. Do not install a mailbox into this spec checkout. The public repo is the
      tool, not an inbox -- use AGENT_MAIL_DIR or install into a project.
-  7. A registered command must not be able to block a prompt. Codex treats exit
-     code 2 from a UserPromptSubmit hook as "block the prompt", and an
-     interpreter that cannot open its script exits 2; so the Codex command ends
-     in `|| true`, and `--adapter codex` is refused (before anything is copied)
+  7. A registered command must not be able to block a prompt. Claude Code and
+     Codex both treat exit code 2 from a UserPromptSubmit hook as "block the
+     prompt", and an interpreter that cannot open its script exits 2; so both
+     commands end in `|| true`. An older claude-code registration without it
+     (exactly the command this installer used to write) is upgraded in place,
+     with a backup. `--adapter codex` is refused (before anything is copied)
      where the command could not resolve: no git repository, a destination the
      shell would re-interpret, or a `.codex/` this installer cannot merge safely.
 """
@@ -102,7 +104,22 @@ def hook_command(dest_rel: str, adapter: str = "claude-code") -> str:
         # see safety rule 7.
         return (f'{python_cmd()} "$(git rev-parse --show-toplevel)/{dest_rel}/hooks/'
                 f'{HOOK_MARKER}" || true')
-    return f'{python_cmd()} "$CLAUDE_PROJECT_DIR/{dest_rel}/hooks/{HOOK_MARKER}"'
+    # Claude Code: "exit 2 ... Blocks the prompt, so it never reaches Claude"
+    # (https://code.claude.com/docs/en/hooks). `|| true`: see safety rule 7.
+    return f'{python_cmd()} "$CLAUDE_PROJECT_DIR/{dest_rel}/hooks/{HOOK_MARKER}" || true'
+
+
+# The claude-code command this installer wrote before it ended in `|| true`:
+# `<interpreter> "$CLAUDE_PROJECT_DIR/<dest>/hooks/agent_mail_check.py"` and
+# nothing else. Only this exact shape is upgraded; a hand-written command that
+# merely mentions the adapter is the user's and is left alone.
+LEGACY_CLAUDE_COMMAND = re.compile(
+    r'\S+ "\$CLAUDE_PROJECT_DIR/[^"$`\\]+/hooks/' + re.escape(HOOK_MARKER) + '"')
+
+
+def legacy_command(command: str, adapter: str) -> bool:
+    """True for an older claude-code registration that can block a prompt."""
+    return adapter == "claude-code" and LEGACY_CLAUDE_COMMAND.fullmatch(command) is not None
 
 
 def shape_problem(settings: object) -> str | None:
@@ -190,6 +207,15 @@ def merge_settings(path: Path, dest_rel: str, check: bool, adapter: str = "claud
         hook = registered_hook(settings)
         if hook is not None:
             old = str(hook.get("command", ""))
+            if not interpreter_missing(old) and legacy_command(old, adapter):
+                if check:
+                    return ("WOULD upgrade the adapter: its command does not end in `|| true`, "
+                            "so a moved tool directory would block every prompt")
+                shutil.copy2(path, path.with_suffix(path.suffix + ".bak"))
+                hook["command"] = old + " || true"
+                path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+                return (f"upgraded the {adapter} adapter (the command now ends in `|| true`, so "
+                        f"a moved tool directory cannot block a prompt; backup at {path.name}.bak)")
             if not interpreter_missing(old):
                 return f"{adapter} adapter already registered (no change)"
             if check:
