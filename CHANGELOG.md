@@ -152,6 +152,12 @@ behaviour).
 
 ### Fixed
 
+- `install.py` no longer rewrites a hand-written hook command whose first word is not a
+  Python interpreter. It judged the first word of any registered command to be the
+  interpreter and, when it was not on PATH, "repaired" the command: on Linux that
+  replaced `cd ... && python3 ...`, and on every platform it replaced
+  `AGENT_MAIL_IDENTITY=agent-a python3 ...`, dropping the user's own setting (a backup
+  was kept). Only a missing `python`/`python3` or a path that is not a file is repaired.
 - `install.py --adapter claude-code` registers a command ending in `|| true`. With the
   hook script missing (a moved or deleted tool directory) Claude Code blocked every
   prompt, because Python exits 2 for a missing script and Claude Code reads exit 2 from

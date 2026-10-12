@@ -208,11 +208,19 @@ def registered_hook(settings: dict) -> dict | None:
     return None
 
 
+_PYTHON_NAME = re.compile(r"^python[0-9.]*$")
+
+
 def interpreter_missing(command: str) -> bool:
-    """True when the hook's interpreter (first word) can't be found here --
-    e.g. an older install wrote bare `python` on a host that only has python3."""
+    """True when the interpreter this installer would have written (a Python:
+    bare `python`/`python3`, or a path) can't be found here -- e.g. an older
+    install wrote bare `python` on a host that only has python3. Any other first
+    word (a shell builtin such as `cd`, an `X=1` assignment, `env`, `sh`) is a
+    command somebody wrote by hand: it is not ours to judge or to rewrite."""
     first = command.strip().split(" ", 1)[0].strip('"')
-    return bool(first) and shutil.which(first) is None and not Path(first).is_file()
+    if "/" in first:
+        return not Path(first).is_file()
+    return bool(_PYTHON_NAME.match(first)) and shutil.which(first) is None
 
 
 def already_registered(settings: dict) -> bool:

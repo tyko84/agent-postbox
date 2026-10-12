@@ -542,13 +542,22 @@ class ClaudeCodeInstall(unittest.TestCase):
         self.assertEqual(tree(self.project), before)
 
     def test_a_hand_written_command_is_left_alone(self) -> None:
-        mine = 'cd "$CLAUDE_PROJECT_DIR" && python3 tools/agent-postbox/hooks/agent_mail_check.py'
-        self.settings.parent.mkdir()
-        self.settings.write_text(json.dumps({"hooks": {"UserPromptSubmit": [
-            {"hooks": [{"type": "command", "command": mine}]}]}}), encoding="utf-8")
-        cp = install(self.project, "--adapter", "claude-code")
-        self.assertIn("claude-code adapter already registered (no change)", cp.stdout)
-        self.assertEqual(self.commands(), [mine])
+        # None of these starts with a Python interpreter, so none is ours to judge:
+        # a shell builtin (`cd` is a file on macOS and not on Linux, which is how
+        # this was found), an environment assignment, and `env`.
+        for mine in (
+            'cd "$CLAUDE_PROJECT_DIR" && python3 tools/agent-postbox/hooks/agent_mail_check.py',
+            'AGENT_MAIL_IDENTITY=agent-a python3 tools/agent-postbox/hooks/agent_mail_check.py',
+            'env AGENT_MAIL_IDENTITY=agent-a python3 tools/agent-postbox/hooks/agent_mail_check.py',
+        ):
+            with self.subTest(command=mine):
+                shutil.rmtree(self.project / ".claude", ignore_errors=True)
+                self.settings.parent.mkdir()
+                self.settings.write_text(json.dumps({"hooks": {"UserPromptSubmit": [
+                    {"hooks": [{"type": "command", "command": mine}]}]}}), encoding="utf-8")
+                cp = install(self.project, "--adapter", "claude-code")
+                self.assertIn("claude-code adapter already registered (no change)", cp.stdout)
+                self.assertEqual(self.commands(), [mine])
 
 
 @unittest.skipUnless(HOSTS_DOC.is_file(), "docs/hosts.md is not here")
