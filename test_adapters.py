@@ -493,6 +493,54 @@ class ClaudeCodeInstall(unittest.TestCase):
         self.assertEqual(tree(self.project), before)
         self.assertEqual(len(self.commands()), 1)
 
+    def test_refusals_copy_nothing_exit_2_and_say_why_in_one_line(self) -> None:
+        # The codex path's contract (CodexInstall above), for claude-code too: an
+        # unmergeable settings file is found before the tool is copied.
+        def settings(data: bytes) -> None:
+            self.settings.parent.mkdir()
+            self.settings.write_bytes(data)
+
+        cases: dict[str, tuple[Any, str]] = {
+            "not json": (lambda: settings(b'{"hooks": {'), "is not valid JSON"),
+            "a list": (lambda: settings(b"[]"), "is not a JSON object"),
+            "hooks is a list": (lambda: settings(b'{"hooks": []}'), "not an object"),
+            "group is a string": (lambda: settings(b'{"hooks": {"UserPromptSubmit": ["x"]}}'),
+                                  "not a matcher group"),
+            "not utf-8": (lambda: settings(b'{"model": "\xff"}'), "UnicodeDecodeError"),
+            "a directory": (lambda: self.settings.mkdir(parents=True), "cannot read"),
+            ".claude is a file": (lambda: (self.project / ".claude").write_bytes(b"x"),
+                                  "is not a directory"),
+        }
+        for name, (arrange, why) in cases.items():
+            with self.subTest(case=name):
+                shutil.rmtree(self.project)
+                (self.project / ".git").mkdir(parents=True)
+                arrange()
+                before = tree(self.project)
+                cp = install(self.project, "--adapter", "claude-code")
+                self.assertEqual(cp.returncode, 2, cp.stdout + cp.stderr)
+                self.assertEqual(cp.stdout, "")
+                self.assertNotIn("Traceback", cp.stderr)
+                lines = [ln for ln in cp.stderr.splitlines() if ln.startswith("ABORT")]
+                self.assertEqual(len(lines), 1, cp.stderr)
+                self.assertIn(why, lines[0])
+                self.assertTrue(lines[0].endswith("Nothing was changed."))
+                self.assertEqual(tree(self.project), before)
+                self.assertFalse((self.project / "tools").exists())
+                check = install(self.project, "--adapter", "claude-code", "--check")
+                self.assertEqual(check.returncode, 0, check.stderr)
+                self.assertIn("WOULD REFUSE", check.stdout)
+                self.assertIn(why, check.stdout)
+                self.assertEqual(tree(self.project), before)
+
+    def test_codex_refuses_a_codex_path_that_is_a_file(self) -> None:
+        (self.project / ".codex").write_bytes(b"x")
+        before = tree(self.project)
+        cp = install(self.project, "--adapter", "codex")
+        self.assertEqual((cp.returncode, cp.stdout), (2, ""), cp.stderr)
+        self.assertIn("is not a directory", cp.stderr)
+        self.assertEqual(tree(self.project), before)
+
     def test_a_hand_written_command_is_left_alone(self) -> None:
         mine = 'cd "$CLAUDE_PROJECT_DIR" && python3 tools/agent-postbox/hooks/agent_mail_check.py'
         self.settings.parent.mkdir()

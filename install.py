@@ -43,6 +43,8 @@ Safety rules for a settings merge, in priority order:
      with a backup. `--adapter codex` is refused (before anything is copied)
      where the command could not resolve: no git repository, a destination the
      shell would re-interpret, or a `.codex/` this installer cannot merge safely.
+     `--adapter claude-code` is refused the same way, exit 2 and before anything
+     is copied, when `.claude/settings.json` cannot be merged safely.
 """
 from __future__ import annotations
 
@@ -140,6 +142,33 @@ def shape_problem(settings: object) -> str | None:
     return None
 
 
+def not_a_config_dir(project: Path, adapter: str) -> str | None:
+    """The host's config directory exists but is not a directory: no file can go in it."""
+    folder = project / HOST_CONFIG[adapter][0]
+    if folder.exists() and not folder.is_dir():
+        return f"{folder} exists and is not a directory; move it, then re-run"
+    return None
+
+
+def claude_refusal(project: Path) -> str | None:
+    """Why `--adapter claude-code` must not be registered here, or None. Reads
+    only, and runs before anything is copied (as `codex_refusal` does)."""
+    problem = not_a_config_dir(project, "claude-code")
+    path = project.joinpath(*HOST_CONFIG["claude-code"])
+    if problem or not path.exists():
+        return problem
+    try:
+        raw = path.read_text(encoding="utf-8-sig")  # tolerate a BOM
+        settings = json.loads(raw) if raw.strip() else {}
+    except json.JSONDecodeError as e:
+        return (f"{path} is not valid JSON ({e}). Refusing to touch it -- "
+                "fix it by hand, then re-run")
+    except (OSError, UnicodeDecodeError) as e:
+        return f"cannot read {path} ({e.__class__.__name__}). Refusing to touch it"
+    problem = shape_problem(settings)
+    return f"{path} {problem}. Refusing to touch it" if problem else None
+
+
 def codex_refusal(project: Path, dest_rel: str) -> str | None:
     """Why `--adapter codex` must not be registered here, or None. Reads only."""
     if not (project / ".git").exists():
@@ -148,6 +177,9 @@ def codex_refusal(project: Path, dest_rel: str) -> str | None:
     if not re.fullmatch(r"[A-Za-z0-9._/ -]+", dest_rel):
         return (f"--adapter codex cannot quote --dest {dest_rel!r} safely in a shell command; "
                 "use letters, digits, `.`, `_`, `-`, `/` and spaces")
+    folder = not_a_config_dir(project, "codex")
+    if folder:
+        return folder
     toml = project / ".codex" / "config.toml"
     try:
         if toml.is_file() and CODEX_INLINE_HOOKS.search(toml.read_text(encoding="utf-8-sig")):
@@ -279,7 +311,8 @@ def main() -> int:
 
     dest_rel = args.dest.replace("\\", "/").strip("/")
     dest = project / dest_rel
-    refusal = codex_refusal(project, dest_rel) if args.adapter == "codex" else None
+    refusal = (codex_refusal(project, dest_rel) if args.adapter == "codex"
+               else claude_refusal(project) if args.adapter == "claude-code" else None)
     if refusal and not args.check:   # before anything is copied: nothing was changed
         print(f"ABORT: {refusal}. Nothing was changed.", file=sys.stderr)
         return 2
