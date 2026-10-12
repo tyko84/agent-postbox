@@ -94,6 +94,13 @@ guards against for Codex (`|| true`, its safety rule 7); the Claude Code
 command had no such guard when this was recorded. The adapter's own failures
 (T7a) are harmless: it exits 0. Only a script that cannot be started is not.
 
+**Re-checked after the fix (2026-10-12, Claude Code 2.1.296, haiku, 2 sessions).** The
+installed command now ends in `|| true`. With the script missing the interpreter still
+prints its error, the hook exits **0**, the prompt reaches the model (`num_turns: 1`)
+and the answer is `OK`; the broken-mailbox check passed again. One run of each, so this
+confirms the fix works in the host, not how often. A project installed before the fix
+is upgraded in place by re-running `install.py --adapter claude-code`.
+
 ## Other things the real host did
 
 * **Hooks fire in print mode.** With `--setting-sources project` the project's
