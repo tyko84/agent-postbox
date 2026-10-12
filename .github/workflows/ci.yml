@@ -64,7 +64,10 @@ jobs:
           python-version: "3.12"
       - run: python -m pip install -r requirements-dev.txt
       - run: ruff check .
-      - run: mypy agent_mail.py install.py hooks/agent_mail_check.py check_handoff.py check_publication.py test_publication.py
+      # Every tracked .py that type-checks today, listed by name so adding a file is a deliberate
+      # choice (test_publication.py Workflows requires every scripts/*.py here). Not yet clean:
+      # selftest.py test_adversarial.py test_cli.py test_hardening.py.
+      - run: mypy agent_mail.py install.py hooks/agent_mail_check.py check_handoff.py check_publication.py test_publication.py scripts/repro_build.py scripts/verify_release.py stress_test.py test_field.py test_handoff.py test_packaging.py test_readme_examples.py
 
   publication-build:
     # The half of the publication check that needs code from PyPI: the pinned dev tools

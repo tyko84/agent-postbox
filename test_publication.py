@@ -1455,8 +1455,9 @@ class Preflight(unittest.TestCase):
 class Workflows(unittest.TestCase):
     """Properties of .github/workflows that a review cannot be trusted to keep: the job
     that holds the forbidden list installs nothing, the required check cannot be skipped,
-    the names branch protection requires still exist, and every action is pinned.
-    Read as text (standard library only). Not shipped in the sdist, so skipped there."""
+    the names branch protection requires still exist, every script is type-checked, and
+    every action is pinned. Read as text (standard library only). Not shipped in the sdist,
+    so skipped there."""
     WF = Path(__file__).resolve().parent / ".github" / "workflows"
     REQUIRED = ("lint", "packaging", "publication", "selftest")
     INSTALLS = ("pip ", "pip3", "-m build", "repro_build", "-m venv", "ensurepip", "twine",
@@ -1566,6 +1567,41 @@ class Workflows(unittest.TestCase):
         # the ci workflow never touches releases at all
         for job, text in self.jobs("ci.yml").items():
             self.assertNotIn("gh release", text, job)
+
+    def mypy_files(self) -> list[str]:
+        """The files the lint job's mypy command names, parsed from the one `run:` line."""
+        lines = [ln.strip() for ln in self.jobs("ci.yml")["lint"].splitlines()
+                 if ln.strip().startswith("- run: mypy")]
+        self.assertEqual(len(lines), 1, "lint must run mypy exactly once")
+        args = lines[0].removeprefix("- run: mypy").split()
+        self.assertFalse([a for a in args if a.startswith("-")], f"mypy flags belong in mypy.ini: {args}")
+        return args
+
+    @staticmethod
+    def scripts_under(root: Path) -> list[str]:
+        """Every .py file under <root>/scripts, as the paths the mypy line would name."""
+        return sorted(p.relative_to(root).as_posix() for p in (root / "scripts").rglob("*.py"))
+
+    def test_the_lint_job_type_checks_every_script(self) -> None:
+        root = Path(__file__).resolve().parent
+        named = self.mypy_files()
+        for f in named:  # a glob would hide what is checked; a stale name fails mypy itself
+            self.assertNotIn("*", f, f)
+            self.assertTrue((root / f).is_file(), f"lint names {f}, which is not a file")
+        scripts = self.scripts_under(root)
+        self.assertIn("scripts/repro_build.py", scripts)
+        self.assertEqual([s for s in scripts if s not in named], [],
+                         "every scripts/*.py must be on the lint job's mypy line")
+        for f in ("check_publication.py", "test_publication.py"):
+            self.assertIn(f, named)
+        # control: the discovery that feeds the comparison sees a script the line does not name
+        with tempfile.TemporaryDirectory() as tmp:
+            planted = Path(tmp) / "scripts" / "new_tool.py"
+            planted.parent.mkdir()
+            planted.write_text("x = 1\n", encoding="utf-8")
+            found = self.scripts_under(Path(tmp))
+            self.assertEqual(found, ["scripts/new_tool.py"])
+            self.assertEqual([s for s in found if s not in named], ["scripts/new_tool.py"])
 
     def test_every_action_is_github_owned_and_pinned_to_a_commit(self) -> None:
         seen = 0
