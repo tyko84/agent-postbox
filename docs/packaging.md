@@ -307,8 +307,9 @@ archive instead, and `pyproject.toml` is unchanged.
   passes on a second, independent build and fails, naming the file, when one
   byte of a copy is flipped.
 * **Reference interpreter: CPython 3.12** (what CI's `packaging` job uses).
-  CPython 3.11 and 3.13 produced the same bytes when this was written, but only
-  3.12 is the reference: compare hashes made with 3.12.
+  CPython 3.11 and 3.13 produced the same bytes when this was written (3.10
+  and 3.14 were not tried), but only 3.12 is the reference: compare hashes
+  made with 3.12.
 * **Verified in CI: the same bytes on Linux and macOS.** The `reproducible`
   jobs build each commit on both and `reproducible-compare` fails if the two
   `SHA256SUMS` differ. Nothing in either artifact is taken from the operating

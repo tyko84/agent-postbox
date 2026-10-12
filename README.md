@@ -66,7 +66,7 @@ identity that holds a claim sees that block even with no mail addressed to it.
 
 agent-postbox is one stdlib-only file. **POSIX only** (Linux, macOS): the
 atomic-send and lock code relies on POSIX file semantics, CI runs on Linux and
-macOS, and Windows is untested and unsupported. Python 3.10-3.13.
+macOS, and Windows is untested and unsupported. Python 3.10-3.14.
 
 > **Not on PyPI. Do not `pip install agent-postbox`.** This project is not
 > published on PyPI, and its distribution name is `tyko84-agent-postbox`. The
@@ -494,7 +494,7 @@ executed or passed to a shell; the adapter only reads.
 
 ## Status
 
-Early (v0.x), extracted from a working multi-agent setup. Python 3.10-3.13,
+Early (v0.x), extracted from a working multi-agent setup. Python 3.10-3.14,
 standard library only, POSIX only; CI runs the test scripts on Linux and macOS.
 The protocol is opinionated and still moving, so expect sections to be added.
 Issues and field reports are welcome (see [CONTRIBUTING.md](CONTRIBUTING.md)).

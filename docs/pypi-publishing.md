@@ -47,7 +47,8 @@ setuptools 84.0.0):
 * The wheel and the sdist each install into a fresh environment on CPython
   3.11, 3.12 and 3.13 with `--no-index --no-deps` (the sdist with the pinned
   setuptools wheel as its only source); `import agent_mail` and
-  `agent-postbox --version` work in all six.
+  `agent-postbox --version` work in all six. Those were the interpreters on
+  the machine when this was checked; 3.10 and 3.14 were not tried.
 * The files a release attaches to GitHub are the files that would go to PyPI,
   byte for byte: same build, same `SHA256SUMS`.
 
