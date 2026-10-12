@@ -9,6 +9,11 @@
 * [hosts.md](hosts.md): which hosts can run the pickup adapter (Claude Code,
   Codex), which cannot (Cursor: polling only), what each mechanism guarantees,
   and exactly what was verified and what was not.
+* [e2e-real-sessions.md](e2e-real-sessions.md): the first run inside a real
+  host (Claude Code, headless `claude -p`, 2026-10-12) with real model
+  sessions: delivery, no cross-talk, next-prompt and recovery checks, two
+  behavioural observations, and what a missing hook script does (it blocks the
+  prompt). `scripts/e2e_claude.py` re-runs it; it spends usage and is not in CI.
 * [packaging.md](packaging.md): building and checking the wheel and sdist.
 * [benchmarking.md](benchmarking.md): `scripts/scenario.py`, the reproducible
   benchmark and reliability harness (hook pickup versus a polling baseline
