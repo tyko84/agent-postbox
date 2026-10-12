@@ -25,6 +25,13 @@ SHA256SUMS (format, content, determinism), `--verify` (passes on its own output,
 names the file when one byte of a copy is flipped), the pinned build backend
 (build-constraints.txt is honoured, and is deliberately not in the sdist) and a
 BUILDINFO block that names no builder.
+Over the same artifacts, scripts/verify_release.py (the consumer-side release
+check) is run with --no-download: it must pass on them and name the right FAIL
+line on copies broken one way at a time (a SHA256SUMS line, an extra wheel
+member, an sdist member with an owner or another mtime or escaping the top
+directory, a wrong Version). Its attestation check is SKIPped here
+(--skip-attestation); the published release is what `gh attestation verify`
+is for.
 Positive controls: the same inspectors must FAIL on a tampered sdist and on
 planted bad names/text, owners, timestamps and paths. Skips with a message if
 `build` (or network access for the build backend) is unavailable. POSIX only.
@@ -34,6 +41,7 @@ from __future__ import annotations
 
 import fnmatch
 import getpass
+import gzip
 import hashlib
 import importlib.util
 import io
@@ -48,7 +56,9 @@ import tarfile
 import tempfile
 import unittest
 import venv
+import warnings
 import zipfile
+from collections.abc import Callable
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -397,6 +407,7 @@ class Packaging(unittest.TestCase):
 
 
 REPRO = ROOT / "scripts" / "repro_build.py"
+VERIFY = ROOT / "scripts" / "verify_release.py"
 
 
 def _repro_skip_reason() -> str | None:
@@ -721,6 +732,252 @@ class ReproducibleBuild(unittest.TestCase):
         # control: the same search does find a name that is planted
         self.assertIsNotNone(re.search(r"(?<![A-Za-z0-9])builder(?![A-Za-z0-9])",
                                        block + "  built-by: builder\n", re.I))
+
+    # ---- scripts/verify_release.py: the consumer-side checks, over these artifacts ----
+
+    def _tag(self) -> str:
+        """The tag these artifacts would be released under (the script wants plain vX.Y.Z)."""
+        m = re.fullmatch(r"tyko84_agent_postbox-(\d+\.\d+\.\d+)-py3-none-any\.whl", self.wheel.name)
+        if m is None:
+            self.skipTest(f"{self.wheel.name}: not a plain X.Y.Z version; verify_release.py NOT tested")
+        return f"v{m.group(1)}"
+
+    def _verify(self, directory: Path, *extra: str, tag: str | None = None,
+                env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+        argv = [sys.executable, "-I", str(VERIFY), tag or self._tag(), "--no-download",
+                "--skip-attestation", "--dir", str(directory), *extra]
+        return subprocess.run(argv, cwd=self.tmp.name, env=self.env if env is None else env,
+                              text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=300)
+
+    def _broken(self, name: str, mutate: Callable[[Path], object], resum: bool = True) -> Path:
+        """A copy of the release directory with one thing changed. SHA256SUMS is rewritten for
+        the changed files unless `resum` is False, so only the intended line can fail."""
+        d = Path(self.tmp.name) / "verify" / name
+        shutil.copytree(self.out, d)
+        mutate(d)
+        if resum:
+            (d / "SHA256SUMS").write_bytes("".join(
+                f"{hashlib.sha256((d / n).read_bytes()).hexdigest()}  {n}\n"
+                for n in sorted((self.wheel.name, self.sdist.name))).encode("ascii"))
+        return d
+
+    def _rewrite_sdist(self, path: Path,
+                       tweak: Callable[[tarfile.TarInfo, bytes], tuple[tarfile.TarInfo, bytes] | None],
+                       extra: list[tuple[tarfile.TarInfo, bytes]] | None = None) -> None:
+        """Rewrite the sdist at `path` member by member through `tweak` (None drops a member),
+        then append `extra`, with a gzip header like repro_build's (mtime 0, no file name) so
+        that only the intended check can fail."""
+        members: list[tuple[tarfile.TarInfo, bytes]] = []
+        with tarfile.open(path) as src:
+            for m in src.getmembers():
+                f = src.extractfile(m) if m.isfile() else None
+                got = tweak(m, f.read() if f is not None else b"")
+                if got is not None:
+                    members.append(got)
+        buf = io.BytesIO()
+        with gzip.GzipFile(filename="", mode="wb", fileobj=buf, mtime=0) as gz, \
+                tarfile.open(fileobj=gz, mode="w", format=tarfile.PAX_FORMAT) as dst:
+            for ti, data in members + (extra or []):
+                ti.size = len(data)
+                dst.addfile(ti, io.BytesIO(data) if ti.isfile() else None)
+        path.write_bytes(buf.getvalue())
+
+    def _rewrite_wheel(self, path: Path, replace: dict[str, bytes]) -> None:
+        with zipfile.ZipFile(path) as z:
+            items = [(i, z.read(i.filename)) for i in z.infolist()]
+        with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as out:
+            for info, data in items:
+                out.writestr(info, replace.get(info.filename, data))
+
+    def test_verify_release_passes_on_the_release_directory(self) -> None:
+        tag = self._tag()
+        r = self._verify(self.out)
+        self.assertEqual(r.returncode, 0, r.stdout)
+        lines = r.stdout.splitlines()
+        self.assertEqual(lines[0], f"release: tyko84/agent-postbox {tag}  (version {tag[1:]})")
+        self.assertEqual(lines[-1], f"verified: 11 check(s) passed, 3 skipped (tyko84/agent-postbox {tag})")
+        self.assertEqual([ln.split()[1] for ln in lines if ln.startswith("OK")],
+                         ["assets", "sums-list", "sha256", "sha256", "wheel-members", "wheel-metadata",
+                          "sdist-layout", "sdist-owners", "sdist-mtime", "sdist-gzip", "sdist-metadata"])
+        self.assertEqual([ln for ln in lines if ln.startswith("SKIP")],
+                         [f"SKIP       attestation     {self.wheel.name}  --skip-attestation",
+                          f"SKIP       attestation     {self.sdist.name}  --skip-attestation",
+                          "SKIP       rebuild         not requested (--rebuild)"])
+        self.assertNotIn("FAIL", r.stdout)
+        for name, digest in self._digests().items():
+            self.assertIn(f"OK         sha256          {name}  {digest}\n", r.stdout)
+        self.assertIn(f"OK         sdist-mtime     one value, {self.epoch}\n", r.stdout)
+        self.assertNotIn(self.tmp.name, r.stdout, "no directory is printed")
+        self.assertNotIn(os.path.realpath(self.tmp.name), r.stdout)
+        self.assertEqual(sorted(p.name for p in self.out.iterdir()),
+                         sorted(["SHA256SUMS", self.wheel.name, self.sdist.name]), "it wrote nothing")
+
+    def test_verify_release_names_a_tampered_sha256sums_line(self) -> None:
+        w, t = self.wheel.name, self.sdist.name
+        digests = self._digests()
+
+        def mutate(d: Path) -> None:
+            text = (d / "SHA256SUMS").read_text()
+            (d / "SHA256SUMS").write_text(text.replace(digests[w], "0" * 64))
+        r = self._verify(self._broken("sums", mutate, resum=False))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn(f"FAIL       sha256          {w}  SHA256SUMS says {'0' * 64}, file is {digests[w]}\n",
+                      r.stdout)
+        self.assertIn(f"OK         sha256          {t}  {digests[t]}\n", r.stdout, "the other line still holds")
+        self.assertIn("NOT VERIFIED: 1 of 11 check(s) failed, 3 skipped", r.stdout)
+        self.assertNotIn("verified:", r.stdout)
+        # a SHA256SUMS that lists a third file, or a malformed line, fails the listing check
+        r = self._verify(self._broken("sums-extra", lambda d: (d / "SHA256SUMS").write_text(
+            (d / "SHA256SUMS").read_text() + "0" * 64 + "  other-9.9.9.tar.gz\n"), resum=False))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertRegex(r.stdout, r"(?m)^FAIL       sums-list       SHA256SUMS lists \[.*other-9\.9\.9")
+        r = self._verify(self._broken("sums-path", lambda d: (d / "SHA256SUMS").write_text(
+            (d / "SHA256SUMS").read_text().replace("  ", "  dist/", 1)), resum=False))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("FAIL       sums-list       line 1 is not '<sha256>  <filename>'", r.stdout)
+
+    def test_verify_release_names_an_extra_wheel_member(self) -> None:
+        w = self.wheel.name
+
+        def mutate(d: Path) -> None:
+            with zipfile.ZipFile(d / w, "a") as z:
+                z.writestr("extra.txt", b"x")
+        r = self._verify(self._broken("wheel-extra", mutate))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("FAIL       wheel-members   unexpected 'extra.txt'\n", r.stdout)
+        self.assertIn(f"OK         sha256          {w}  ", r.stdout, "SHA256SUMS was rewritten: only the member check fails")
+        self.assertIn("NOT VERIFIED: 1 of 11 check(s) failed", r.stdout)
+        # a member twice is not hidden by set arithmetic; an absolute name is unexpected
+
+        def twice(d: Path) -> None:
+            with zipfile.ZipFile(d / w, "a") as z, warnings.catch_warnings():
+                warnings.simplefilter("ignore")   # zipfile warns about the duplicate, on purpose here
+                z.writestr("agent_mail.py", b"x")
+                z.writestr("/etc/evil", b"x")
+        r = self._verify(self._broken("wheel-twice", twice))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertRegex(r.stdout, r"(?m)^FAIL       wheel-members   unexpected '/etc/evil'; a member name appears twice$")
+        self.assertIn("OK         wheel-metadata  METADATA: Name tyko84-agent-postbox, Version ", r.stdout)
+
+    def test_verify_release_names_an_sdist_member_with_an_owner_or_another_mtime(self) -> None:
+        t = self.sdist.name
+        top = t[:-len(".tar.gz")]
+
+        def owned(m: tarfile.TarInfo, data: bytes) -> tuple[tarfile.TarInfo, bytes]:
+            if m.name == f"{top}/agent_mail.py":
+                m.uid, m.gid = 1000, 1000
+            return m, data
+        r = self._verify(self._broken("sdist-uid", lambda d: self._rewrite_sdist(d / t, owned)))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("FAIL       sdist-owners    uid/gid, user or group name, or PAX record set on "
+                      f"{top}/agent_mail.py\n", r.stdout)
+        for still in ("sdist-layout", "sdist-mtime", "sdist-gzip", "sdist-metadata"):
+            self.assertRegex(r.stdout, rf"(?m)^OK         {still} ", still)
+        self.assertIn("NOT VERIFIED: 1 of 11 check(s) failed", r.stdout)
+
+        def named(m: tarfile.TarInfo, data: bytes) -> tuple[tarfile.TarInfo, bytes]:
+            if m.name == f"{top}/PKG-INFO":
+                m.uname, m.gname = "builder", "builders"
+            return m, data
+        r = self._verify(self._broken("sdist-uname", lambda d: self._rewrite_sdist(d / t, named)))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn(f"FAIL       sdist-owners    uid/gid, user or group name, or PAX record set on {top}/PKG-INFO\n",
+                      r.stdout)
+        self.assertNotIn("builder", r.stdout, "the name is never printed")
+
+        def later(m: tarfile.TarInfo, data: bytes) -> tuple[tarfile.TarInfo, bytes]:
+            if m.name == f"{top}/README.md":
+                m.mtime = self.epoch + 60
+            return m, data
+        r = self._verify(self._broken("sdist-mtime", lambda d: self._rewrite_sdist(d / t, later)))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn(f"FAIL       sdist-mtime     2 distinct values: [{self.epoch}, {self.epoch + 60}]\n", r.stdout)
+        self.assertRegex(r.stdout, r"(?m)^OK         sdist-owners ")
+        # the gzip header is checked on its own: tarfile's writer stamps the wall clock
+        def plain(d: Path) -> None:
+            with tarfile.open(d / t) as src, tarfile.open(d / "re.tar.gz", "w:gz") as dst:
+                for m in src.getmembers():
+                    dst.addfile(m, src.extractfile(m) if m.isfile() else None)
+            os.replace(d / "re.tar.gz", d / t)
+        r = self._verify(self._broken("sdist-gzip", plain))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertRegex(r.stdout, r"(?m)^FAIL       sdist-gzip      gzip header mtime is [1-9]\d*, expected 0$")
+        self.assertRegex(r.stdout, r"(?m)^OK         sdist-mtime ")
+
+    def test_verify_release_names_an_sdist_member_outside_the_top_directory(self) -> None:
+        t = self.sdist.name
+        top = t[:-len(".tar.gz")]
+        escaping = tarfile.TarInfo(f"{top}/../evil.py")
+        other = tarfile.TarInfo("other-1.0/x")
+        link = tarfile.TarInfo(f"{top}/link")
+        link.type = tarfile.SYMTYPE
+        link.linkname = "/etc/passwd"
+        r = self._verify(self._broken("sdist-escape", lambda d: self._rewrite_sdist(
+            d / t, lambda m, data: (m, data), [(escaping, b"x"), (other, b"x"), (link, b"")])))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn(f"FAIL       sdist-layout    outside {top}/: '{top}/../evil.py'; "
+                      f"outside {top}/: 'other-1.0/x'; not a regular file or directory: '{top}/link'\n",
+                      r.stdout)
+        self.assertEqual(sorted(p.name for p in (Path(self.tmp.name) / "verify" / "sdist-escape").iterdir()),
+                         sorted(["SHA256SUMS", self.wheel.name, t]), "nothing was extracted")
+        self.assertFalse((Path(self.tmp.name) / "evil.py").exists())
+
+    def test_verify_release_names_a_wrong_version(self) -> None:
+        w, t = self.wheel.name, self.sdist.name
+        tag = self._tag()
+        version = tag[1:]
+        info = f"{w.split('-py3')[0]}.dist-info/METADATA"
+        meta = next(d for n, d in wheel_members(self.wheel).items() if n == info)
+        self.assertIn(f"\nVersion: {version}\n", meta.decode())
+        r = self._verify(self._broken("wheel-version", lambda d: self._rewrite_wheel(
+            d / w, {info: meta.replace(f"Version: {version}".encode(), b"Version: 9.9.9", 1)})))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn(f"FAIL       wheel-metadata  Version is '9.9.9', expected '{version}'\n", r.stdout)
+        self.assertIn("OK         wheel-members   ", r.stdout)
+        top = t[:-len(".tar.gz")]
+
+        def renamed(m: tarfile.TarInfo, data: bytes) -> tuple[tarfile.TarInfo, bytes]:
+            if m.name == f"{top}/PKG-INFO":
+                data = data.replace(b"Name: tyko84-agent-postbox", b"Name: agent-postbox", 1)
+            return m, data
+        r = self._verify(self._broken("sdist-name", lambda d: self._rewrite_sdist(d / t, renamed)))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("FAIL       sdist-metadata  Name is 'agent-postbox', expected 'tyko84-agent-postbox'\n",
+                      r.stdout)
+        # the tag decides the expected names: another tag and nothing matches
+        r = self._verify(self.out, tag="v9.9.9")
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("FAIL       assets          missing tyko84_agent_postbox-9.9.9-py3-none-any.whl, "
+                      f"tyko84_agent_postbox-9.9.9.tar.gz; unexpected '{w}', '{t}'\n", r.stdout)
+        self.assertIn("FAIL       sums-list       SHA256SUMS lists [", r.stdout)
+        self.assertIn("FAIL       wheel-members   tyko84_agent_postbox-9.9.9-py3-none-any.whl  file is not there\n",
+                      r.stdout)
+        self.assertIn("NOT VERIFIED: 11 of 11 check(s) failed, 3 skipped", r.stdout)
+
+    def test_verify_release_usage_and_missing_gh(self) -> None:
+        tag = self._tag()
+        env = {**self.env, "PATH": ""}   # no gh (and nothing else) on the path
+        r = subprocess.run([sys.executable, "-I", str(VERIFY), tag, "--no-download", "--dir", str(self.out)],
+                           cwd=self.tmp.name, env=env, text=True, stdout=subprocess.PIPE,
+                           stderr=subprocess.STDOUT, timeout=300)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn(f"FAIL       attestation     {self.wheel.name}  gh is not installed", r.stdout)
+        self.assertIn(f"FAIL       attestation     {self.sdist.name}  gh is not installed", r.stdout)
+        self.assertIn("NOT VERIFIED: 2 of 13 check(s) failed, 1 skipped", r.stdout)
+        for argv, msg in (([tag[1:], "--no-download", "--dir", str(self.out)], "the tag must be vX.Y.Z"),
+                          ([tag, "--no-download"], "--no-download needs --dir"),
+                          ([tag, "--dir", str(self.out)], "the directory is not empty"),
+                          ([tag, "--repo", "nope", "--no-download", "--dir", str(self.out)], "--repo must be OWNER/NAME"),
+                          ([tag, "--no-download", "--dir", str(Path(self.tmp.name) / "nowhere")], "no such directory")):
+            with self.subTest(argv=argv):
+                r = subprocess.run([sys.executable, "-I", str(VERIFY), *argv], cwd=self.tmp.name, env=env,
+                                   text=True, capture_output=True, timeout=300)
+                self.assertEqual((r.returncode, r.stdout), (2, ""), r.stderr)
+                self.assertIn(msg, r.stderr)
+        # --rebuild without the tag in the checkout, or without `build`, is a FAIL line, not a crash
+        r = self._verify(self.out, "--rebuild", tag="v9.9.9")
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertRegex(r.stdout, r"(?m)^FAIL       rebuild         (repro_build\.py exited 2: repro_build: git rev-parse|the 'build' package is not installed)")
 
     # ---- positive controls: the inspectors must be able to fail ----
 

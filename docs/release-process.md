@@ -349,6 +349,15 @@ What was run for v0.4.0, on the draft before pressing Publish and again on the
 published release. Each command is run from a clean clone of the tagged commit;
 `DIR` is an empty directory outside the clone and `X.Y.Z` the version.
 
+`scripts/verify_release.py vX.Y.Z [--dir DIR] [--rebuild]` (stdlib only) is
+the automated form of the download, the checksum, provenance, contents and
+builder-identity checks below, and with `--rebuild` of the rebuild: it
+downloads the assets with `gh release download` into an empty directory (or
+takes `--dir DIR --no-download`), prints one `OK`/`FAIL` line per check and
+exits 1 if any failed. The publication scan and the install matrix that follow
+stay manual. The commands are kept here so that each check can be run, and
+read, on its own.
+
 ```sh
 gh release download vX.Y.Z -R tyko84/agent-postbox -D DIR   # a draft: needs a token that can read it
 (cd DIR && shasum -a 256 -c SHA256SUMS)                       # Linux: sha256sum -c SHA256SUMS
