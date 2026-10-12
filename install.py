@@ -46,6 +46,8 @@ Safety rules for a settings merge, in priority order:
      shell would re-interpret, or a `.codex/` this installer cannot merge safely.
      `--adapter claude-code` is refused the same way, exit 2 and before anything
      is copied, when `.claude/settings.json` cannot be merged safely.
+  8. A file where a directory must go (the mailbox path, `--dest`, a parent of
+     either, `<dest>/hooks`) is refused the same way, with any adapter or none.
 """
 from __future__ import annotations
 
@@ -150,6 +152,32 @@ def not_a_config_dir(project: Path, adapter: str) -> str | None:
     folder = project / HOST_CONFIG[adapter][0]
     if folder.exists() and not folder.is_dir():
         return f"{folder} exists and is not a directory; move it, then re-run"
+    return None
+
+
+def path_refusal(project: Path, dest_rel: str, mailbox_rel: str) -> str | None:
+    """Why the tool or the mailbox cannot be put where asked, or None. Reads only.
+    A file (or dangling link) where a directory is needed -- the mailbox path
+    itself, any parent of it or of `--dest`, `<dest>/hooks`, or a payload name that
+    is a directory -- would otherwise surface as a traceback after the tool was
+    copied."""
+    def blocked(path: Path) -> bool:
+        return (path.exists() or path.is_symlink()) and not path.is_dir()
+
+    for rel in (dest_rel, mailbox_rel):
+        here = project
+        for part in Path(rel).parts:
+            here = here / part
+            if blocked(here):
+                return f"{here} exists and is not a directory; move it, then re-run"
+    dest = project / dest_rel
+    if blocked(dest / "hooks"):
+        return f"{dest / 'hooks'} exists and is not a directory; move it, then re-run"
+    targets = [dest / n for n in PAYLOAD] + [dest / "hooks" / HOOK_MARKER,
+                                              project / mailbox_rel / "PARTICIPANTS.md"]
+    for target in targets:
+        if target.is_dir():
+            return f"{target} is a directory, and a file belongs there; move it, then re-run"
     return None
 
 
@@ -385,8 +413,9 @@ def main() -> int:
 
     dest_rel = args.dest.replace("\\", "/").strip("/")
     dest = project / dest_rel
-    refusal = (codex_refusal(project, dest_rel) if args.adapter == "codex"
-               else claude_refusal(project) if args.adapter == "claude-code" else None)
+    refusal = path_refusal(project, dest_rel, args.mailbox) or (
+        codex_refusal(project, dest_rel) if args.adapter == "codex"
+        else claude_refusal(project) if args.adapter == "claude-code" else None)
     if refusal and not args.check:   # before anything is copied: nothing was changed
         print(f"ABORT: {refusal}. Nothing was changed.", file=sys.stderr)
         return 2

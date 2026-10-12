@@ -579,6 +579,61 @@ runpy.run_path(%r, run_name="__main__")
 """
 
 
+class PathRefusals(unittest.TestCase):
+    """A file where the tool or the mailbox must go is refused before anything is copied."""
+
+    def test_a_file_in_the_way_is_refused_with_one_line_and_nothing_changed(self) -> None:
+        def file_at(rel: str) -> Any:
+            def arrange(project: Path) -> None:
+                (project / rel).parent.mkdir(parents=True, exist_ok=True)
+                (project / rel).write_bytes(b"x")
+            return arrange
+
+        def dir_at(rel: str) -> Any:
+            return lambda project: (project / rel).mkdir(parents=True)
+
+        def dangling(project: Path) -> None:
+            (project / "docs").mkdir()
+            (project / "docs" / "agent-mail").symlink_to(project / "nowhere")
+
+        cases: dict[str, tuple[Any, str]] = {
+            "the mailbox is a file": (file_at("docs/agent-mail"), "docs/agent-mail exists and is not"),
+            "a parent of the mailbox is a file": (file_at("docs"), "docs exists and is not"),
+            "the destination is a file": (file_at("tools/agent-postbox"), "agent-postbox exists and is not"),
+            "a parent of the destination is a file": (file_at("tools"), "tools exists and is not"),
+            "hooks is a file": (file_at("tools/agent-postbox/hooks"), "hooks exists and is not"),
+            "a payload name is a directory": (dir_at("tools/agent-postbox/selftest.py"),
+                                              "selftest.py is a directory"),
+            "PARTICIPANTS.md is a directory": (dir_at("docs/agent-mail/PARTICIPANTS.md"),
+                                               "PARTICIPANTS.md is a directory"),
+        }
+        if os.name == "posix":
+            cases["the mailbox is a dangling link"] = (dangling, "docs/agent-mail exists and is not")
+        for name, (arrange, why) in cases.items():
+            for extra in ([], ["--adapter", "claude-code"], ["--adapter", "codex"]):
+                with self.subTest(case=name, args=extra):
+                    with tempfile.TemporaryDirectory(prefix="test-adapters-") as tmp:
+                        project = Path(tmp).resolve() / "project"
+                        (project / ".git").mkdir(parents=True)
+                        arrange(project)
+                        before = tree(project)
+                        dirs = sorted(str(p.relative_to(project)) for p in project.rglob("*"))
+                        cp = install(project, *extra)
+                        self.assertEqual((cp.returncode, cp.stdout), (2, ""), cp.stderr)
+                        self.assertNotIn("Traceback", cp.stderr)
+                        lines = [ln for ln in cp.stderr.splitlines() if ln.startswith("ABORT")]
+                        self.assertEqual(len(lines), 1, cp.stderr)
+                        self.assertIn(why, lines[0])
+                        self.assertTrue(lines[0].endswith("Nothing was changed."))
+                        self.assertEqual(tree(project), before)
+                        self.assertEqual(sorted(str(p.relative_to(project))
+                                                for p in project.rglob("*")), dirs)
+                        check = install(project, "--check", *extra)
+                        self.assertEqual(check.returncode, 0, check.stderr)
+                        self.assertIn("WOULD REFUSE", check.stdout)
+                        self.assertIn(why, check.stdout)
+
+
 class SettingsWrite(unittest.TestCase):
     """The user's other settings live in the file the installer rewrites."""
 

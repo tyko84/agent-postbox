@@ -96,6 +96,12 @@ documented nesting, or `.codex/config.toml` already defines hooks inline
 ("If a single layer contains both `hooks.json` and inline `[hooks]`, Codex
 merges them and warns at startup").
 
+For either adapter, or none, it also refuses (exit 2, one `ABORT` line, nothing
+changed; `--check` prints `WOULD REFUSE`) when a file or a dangling link sits
+where a directory must go: the mailbox path or one of its parents, `--dest` or
+one of its parents, `<dest>/hooks`, or a name it would copy over that is a
+directory.
+
 ### What this guarantees, compared with Claude Code's `UserPromptSubmit`
 
 The same event at the same point: a command runs before every submitted prompt
