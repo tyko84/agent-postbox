@@ -18,6 +18,11 @@ claim rows are the ones `status` reports (PROTOCOL.md section 34), read
 through `agent_mail.build_status`; nothing is parsed here. Like `status`, this
 block never carries a subject or a body.
 
+Cost: this runs before every prompt. `agent_mail.owes_reply` without an index
+scans the whole mailbox once per ASK, so the open ASKs addressed to the identity
+are computed ONCE and reused for both the "[awaiting your reply]" marker and the
+owed list; `build_status` itself (with `scan_hidden`) is linear and cheap.
+
 FAILS SILENTLY, ALWAYS. A broken mailbox must never block a prompt, so every
 error path exits 0 with no output. That is exactly why the test suite has a
 POSITIVE control: "prints nothing" is both the success case for an empty
@@ -56,9 +61,10 @@ def _more(rows: list[str], total: int) -> list[str]:
     return rows + ([f"  +{total - len(rows)} more"] if total > len(rows) else [])
 
 
-def holdings(agent_mail: Any, me: str, everything: list[Any], box: Path,
-             now: dt.datetime) -> list[str]:
-    """What `me` holds and owes, from the rows `status` reports. Read-only."""
+def holdings(agent_mail: Any, me: str, everything: list[Any], owed: list[Any],
+             box: Path, now: dt.datetime) -> list[str]:
+    """What `me` holds and owes, from the rows `status` reports. Read-only.
+    `owed` is the open ASKs addressed to `me`, already computed by the caller."""
     st = agent_mail.build_status(everything, [], box, now)
     flagged = {(r["id"], r["reason"]) for r in st["claims_attention"] if r["sender"] == me}
     claims: list[str] = []
@@ -73,8 +79,6 @@ def holdings(agent_mail: Any, me: str, everything: list[Any], box: Path,
         if r["sender"] == me and r["reason"] in NOT_A_HOLD:
             scope = "(oversize)" if r.get("scope_oversize") else (r["scope"] or "-")
             claims.append(f"  {scope}  NOT live ({r['reason']})  id: {r['id']}")
-    owed = [m for m in everything
-            if m.type == "ASK" and m.to == me and agent_mail.owes_reply(m, everything)]
     out: list[str] = []
     if claims:
         out.append(f"You ('{me}') hold {len(claims)} claim(s); a lease is evidence, never "
@@ -108,9 +112,13 @@ def main() -> int:
             m for m in everything
             if m.to == me and m.sender != me and agent_mail.live(m, everything, now=now)
         ]
+        # Once, not once per use: see "Cost" above. Ids are unique after load_messages.
+        owed = [m for m in everything
+                if m.type == "ASK" and m.to == me and agent_mail.owes_reply(m, everything)]
+        owed_ids = {m.id for m in owed}
         held: list[str] = []
         try:  # a failure here must not cost the live mail above it
-            held = holdings(agent_mail, me, everything, agent_mail.mail_dir(), now)
+            held = holdings(agent_mail, me, everything, owed, agent_mail.mail_dir(), now)
         except Exception:
             held = []
         if not mine and not held:
@@ -125,7 +133,7 @@ def main() -> int:
             "",
         ]
         for m in mine:
-            needs = " [awaiting your reply]" if agent_mail.owes_reply(m, everything) else ""
+            needs = " [awaiting your reply]" if m.id in owed_ids else ""
             out += [
                 f"  {m.type} from {m.sender}{needs}",
                 f"    {m.subject}",
