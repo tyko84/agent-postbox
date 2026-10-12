@@ -725,6 +725,22 @@ def owes_reply(msg: Message, everything: list[Message], _idx: _Index | None = No
     return not any(m.re_id and m.re_id.upper() == msg.id.upper() for m in everything)
 
 
+def open_asks(everything: list[Message], to: str) -> list[Message]:
+    """The ASKs addressed to `to` that still owe a reply, in the order of `everything`.
+
+    The same rows as
+    `[m for m in everything if m.type == "ASK" and m.to == to and owes_reply(m, everything)]`
+    with the citation index built once, so a pickup that runs before every
+    prompt (section 9) stays linear on a big mailbox instead of scanning it
+    once per ASK. `to` is compared the way `Message.to` is read: case-folded.
+    This is owes_reply()'s question, not derived_status()'s: an ASK that was
+    superseded but never cited still owes a reply here.
+    """
+    idx = _Index(everything)
+    to = to.lower()
+    return [m for m in everything if m.type == "ASK" and m.to == to and owes_reply(m, everything, idx)]
+
+
 def live(msg: Message, everything: list[Message], now: dt.datetime | None = None,
          _idx: _Index | None = None) -> bool:
     """Should this still be put in front of its recipient? Deliberately
@@ -2604,8 +2620,8 @@ def build_status(everything: list[Message], rejects: list[str], box: Path,
         by_type[m.type] = by_type.get(m.type, 0) + 1
         if live(m, everything, now=now, _idx=idx):
             live_by_type[m.type] = live_by_type.get(m.type, 0) + 1
-    open_asks = [m for m in everything if m.type == "ASK" and owes_reply(m, everything, idx)]
-    dated = sorted((m.sent_at, m.id) for m in open_asks if m.sent_at is not None)
+    owed = [m for m in everything if m.type == "ASK" and owes_reply(m, everything, idx)]
+    dated = sorted((m.sent_at, m.id) for m in owed if m.sent_at is not None)
     oldest_id: str | None = None
     oldest_age: int | None = None
     if dated:
@@ -2670,7 +2686,7 @@ def build_status(everything: list[Message], rejects: list[str], box: Path,
         "now": now.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "mailbox": str(box),
         "messages": {"total": len(everything), "by_type": by_type, "live_by_type": live_by_type},
-        "asks": {"open": len(open_asks), "oldest_open_id": oldest_id,
+        "asks": {"open": len(owed), "oldest_open_id": oldest_id,
                  "oldest_open_age_seconds": oldest_age},
         "claims": claims,
         "quarantined": len(rejects),

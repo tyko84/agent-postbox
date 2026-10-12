@@ -18,10 +18,12 @@ claim rows are the ones `status` reports (PROTOCOL.md section 34), read
 through `agent_mail.build_status`; nothing is parsed here. Like `status`, this
 block never carries a subject or a body.
 
-Cost: this runs before every prompt. `agent_mail.owes_reply` without an index
-scans the whole mailbox once per ASK, so the open ASKs addressed to the identity
-are computed ONCE and reused for both the "[awaiting your reply]" marker and the
-owed list; `build_status` itself (with `scan_hidden`) is linear and cheap.
+Cost: this runs before every prompt. `agent_mail.owes_reply` (and `live`, which
+asks it for an ASK) without an index scans the whole mailbox once per ASK, so
+the open ASKs addressed to the identity come from `agent_mail.open_asks` ONCE
+and stand in for both: the live test of an ASK, the "[awaiting your reply]"
+marker and the owed list; `build_status` itself (with `scan_hidden`) is linear
+and cheap.
 
 FAILS SILENTLY, ALWAYS. A broken mailbox must never block a prompt, so every
 error path exits 0 with no output. That is exactly why the test suite has a
@@ -108,14 +110,16 @@ def main() -> int:
             return 0
         now = dt.datetime.now(dt.timezone.utc)
         everything, _rejects = agent_mail.load_messages()
+        # Once, not once per use: see "Cost" above. Ids are unique after load_messages.
+        owed = agent_mail.open_asks(everything, me)
+        owed_ids = {m.id for m in owed}
+        # live() says an ASK is live exactly while it owes a reply; the open set
+        # already answers that, so only the other types ask live() per message.
         mine = [
             m for m in everything
-            if m.to == me and m.sender != me and agent_mail.live(m, everything, now=now)
+            if m.to == me and m.sender != me
+            and (m.id in owed_ids if m.type == "ASK" else agent_mail.live(m, everything, now=now))
         ]
-        # Once, not once per use: see "Cost" above. Ids are unique after load_messages.
-        owed = [m for m in everything
-                if m.type == "ASK" and m.to == me and agent_mail.owes_reply(m, everything)]
-        owed_ids = {m.id for m in owed}
         held: list[str] = []
         try:  # a failure here must not cost the live mail above it
             held = holdings(agent_mail, me, everything, owed, agent_mail.mail_dir(), now)

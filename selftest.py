@@ -2415,6 +2415,77 @@ def main() -> int:
               and "file one with" not in r.stdout, r.stdout[-200:] + r.stderr)
     # ==== END PROTOCOL.md §37 and §38 ===============================================
 
+    print("\nopen_asks: the pickup's owed list, computed once (PROTOCOL.md §8, §9)")
+    with tempfile.TemporaryDirectory() as tmp39:
+        import json as json39
+        box39 = Path(tmp39) / "mail"
+        box39.mkdir()
+        P39 = "01ARZ3NDEKTSV4RRFFQ69G5E"
+
+        def hand39(tail: str, mtype: str, sender: str, to: str, name: str = "",
+                   mid: str | None = None, **extra: str) -> str:
+            mid = P39 + tail if mid is None else mid
+            lines = ["---", f"id: {mid}", f"type: {mtype}", f"from: {sender}", f"to: {to}",
+                     "date: 2030-01-01T09:00:00Z", f"subject: {tail}"]
+            lines += [f"{k}: {v}" for k, v in extra.items()]
+            (box39 / f"{name or tail}-m.md").write_text("\n".join(lines + ["---", "", "b", ""]),
+                                                        encoding="utf-8")
+            return mid
+
+        hand39("A1", "ASK", "alice", "bob")                                  # unanswered: owed
+        hand39("A2", "ASK", "alice", "bob")
+        hand39("A3", "ANSWER", "bob", "alice", reply_to=P39 + "A2")          # answered
+        hand39("A4", "ASK", "carol", "bob")
+        hand39("A5", "ASK", "carol", "bob", reply_to=P39 + "A4")             # re-asked: A5 owed
+        hand39("A6", "ASK", "dave", "bob")
+        hand39("A7", "ASK", "dave", "bob", supersedes=P39 + "A6")            # superseded, uncited
+        hand39("A8", "ASK", "alice", "bob")
+        hand39("A9", "ANSWER", "bob", "alice", reply_to=(P39 + "A8").lower())  # cited, other case
+        hand39("B1", "ASK", "alice", "carol")                                # someone else's
+        hand39("B2", "ASK", "bob", "bob")                                    # own, still owed
+        hand39("Q1", "ANSWER", "bob", "alice", name="q1", mid="REPLACE_ID",
+               reply_to=P39 + "A1")                                          # quarantined: no cite
+        hand39("Q2", "ASK", "alice", "bob", name="q2", mid="not-a-ulid")     # quarantined: no ask
+        code39 = (
+            "import json, sys\n"
+            f"sys.path.insert(0, {str(HERE)!r})\n"
+            "import agent_mail\n"
+            "everything, rejects = agent_mail.load_messages()\n"
+            "slow = [m.id for m in everything if m.type == 'ASK' and m.to == 'bob'\n"
+            "        and agent_mail.owes_reply(m, everything)]\n"
+            "fast = [m.id for m in agent_mail.open_asks(everything, 'bob')]\n"
+            "upper = [m.id for m in agent_mail.open_asks(everything, 'BOB')]\n"
+            "print(json.dumps({'slow': slow, 'fast': fast, 'upper': upper,\n"
+            "                  'n': len(everything), 'rejects': len(rejects)}))\n")
+        r = subprocess.run([sys.executable, "-I", "-c", code39], capture_output=True, text=True,
+                           env={**os.environ, "AGENT_MAIL_DIR": str(box39)}, timeout=120)
+        got39 = json39.loads(r.stdout) if r.returncode == 0 and r.stdout.startswith("{") else {}
+        check("the planted mailbox loaded: 11 messages, 2 quarantined",
+              got39.get("n") == 11 and got39.get("rejects") == 2, repr((r.returncode, r.stderr[-300:])))
+        check("open_asks returns the slow definition's rows in the slow definition's order",
+              bool(got39) and got39["fast"] == got39["slow"], repr(got39))
+        check("positive control: the unanswered ASK is owed",
+              P39 + "A1" in got39.get("fast", []), repr(got39))
+        check("the answered ASK is not owed, nor the one cited in another case",
+              bool(got39) and P39 + "A2" not in got39["fast"] and P39 + "A8" not in got39["fast"],
+              repr(got39))
+        check("a re-ask cites the first ASK: the re-ask is owed, the first is not",
+              bool(got39) and P39 + "A5" in got39["fast"] and P39 + "A4" not in got39["fast"],
+              repr(got39))
+        check("owes_reply's question, not derived_status's: a superseded, uncited ASK is still owed",
+              bool(got39) and P39 + "A6" in got39["fast"] and P39 + "A7" in got39["fast"],
+              repr(got39))
+        check("someone else's ASK is left out; one from the identity to itself is in",
+              bool(got39) and P39 + "B1" not in got39["fast"] and P39 + "B2" in got39["fast"],
+              repr(got39))
+        check("quarantined files count for nothing: no ask from one, no citation by one",
+              bool(got39) and "not-a-ulid" not in got39["fast"] and P39 + "A1" in got39["fast"],
+              repr(got39))
+        check("the identity is case-folded like Message.to",
+              bool(got39) and got39["upper"] == got39["fast"], repr(got39))
+        check("exactly the expected rows, oldest first",
+              got39.get("fast") == [P39 + t for t in ("A1", "A5", "A6", "A7", "B2")], repr(got39))
+
     summary = 'FAILED: ' + '; '.join(failures) if failures else 'all checks passed'
     if skipped and not failures:
         summary += f" ({len(skipped)} spec-checkout-only check(s) skipped)"
