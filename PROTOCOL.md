@@ -754,7 +754,10 @@ BOM. `--from`/`--to` must match `[a-z0-9][a-z0-9._@+-]*` (max 128, no `..`).
 Bodies may not contain NUL, ESC, BEL, DEL or C1 controls (max 16 MiB). Subject
 max 500 characters, other headers 4096. Subjects are stored NFC-normalised.
 `--scope` and `--key` are only hashed into lock names, so they are not path
-restricted.
+restricted. `send` reads at most 16 MiB plus one character from `--body-file`
+or stdin: a longer body is refused ("body is larger than 16777216 bytes")
+without being held in memory, and that is the message printed even when a
+forbidden character lies beyond the point where reading stopped.
 
 **Quarantined at read (`REJECT <file>: reason` on stderr, never delivered, never
 deleted).** Symlinks of any kind (never followed), FIFOs, devices, directories

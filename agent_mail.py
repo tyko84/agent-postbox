@@ -935,13 +935,16 @@ def resolve_body(args: argparse.Namespace) -> str | None:
     if args.body_file:
         if args.body_file == "-":
             try:
-                body = sys.stdin.read() if sys.stdin is not None else ""
+                body = sys.stdin.read(MAX_BODY_BYTES + 1) if sys.stdin is not None else ""
             except (OSError, UnicodeDecodeError) as e:
                 print(f"cannot read the body from stdin: {e}", file=sys.stderr)
                 return None
         else:
             try:
-                body = Path(args.body_file).read_text(encoding="utf-8")
+                # At most one character more than the limit is held: a longer body is
+                # refused by the size check whatever follows, so never read the rest.
+                with open(args.body_file, encoding="utf-8") as fh:
+                    body = fh.read(MAX_BODY_BYTES + 1)
             except (OSError, UnicodeDecodeError) as e:
                 print(f"cannot read --body-file {args.body_file!r}: {e}", file=sys.stderr)
                 return None
@@ -959,7 +962,7 @@ def resolve_body(args: argparse.Namespace) -> str | None:
         # ``… | agent_mail.py send …`` without inventing a temp file.
         if sys.stdin is not None and not sys.stdin.isatty():
             try:
-                body = sys.stdin.read()
+                body = sys.stdin.read(MAX_BODY_BYTES + 1)
             except (OSError, UnicodeDecodeError) as e:
                 print(f"cannot read the body from stdin: {e}", file=sys.stderr)
                 return None

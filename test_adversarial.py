@@ -1144,6 +1144,57 @@ def main() -> int:
                   "--subject", "s", "--body-file", str(root / "ok.txt"))
         check("control: a readable --body-file works", okf.returncode == 0, okf.stderr)
 
+        print("an oversized body is refused without being held in memory")
+        big = root / "big-body.txt"
+        with big.open("wb") as fh:                      # 64 MiB: four times the 16 MiB limit
+            for _ in range(64):
+                fh.write(b"a" * (1024 * 1024))
+        probe = (
+            f"import sys, tracemalloc, argparse; sys.path.insert(0, {str(HERE)!r}); import agent_mail\n"
+            "class In:\n"
+            "    asked = []\n"
+            "    def read(self, n=-1):\n"
+            "        In.asked.append(n)\n"
+            "        return 'a' * (agent_mail.MAX_BODY_BYTES + 1 if n < 0 else n)\n"
+            "    def isatty(self): return False\n"
+            f"ns = argparse.Namespace(body_file={str(big)!r}, body='')\n"
+            "tracemalloc.start()\n"
+            "got = agent_mail.resolve_body(ns)\n"
+            "peak = tracemalloc.get_traced_memory()[1]\n"
+            "ns.body_file = '-'; sys.stdin = In()\n"
+            "agent_mail.resolve_body(ns)\n"
+            "print(len(got), peak, In.asked)\n")
+        pr = subprocess.run([sys.executable, "-I", "-c", probe], capture_output=True, text=True,
+                            timeout=120)
+        parts = pr.stdout.split(None, 2)
+        # The file may be read up to the limit plus one character, never more; stdin is
+        # asked for at most that many (an unbounded read(-1) would take a 1 GB pipe whole).
+        check("--body-file of 4x the limit: at most limit+1 characters held, under 96 MiB peak",
+              pr.returncode == 0 and parts[:1] == [str(16 * 1024 * 1024 + 1)]
+              and int(parts[1]) < 96 * 1024 * 1024, pr.stdout + pr.stderr[-300:])
+        check("--body-file -: stdin is read with a bound, never to the end",
+              pr.returncode == 0 and parts[2:] == [f"[{16 * 1024 * 1024 + 1}]\n"],
+              pr.stdout + pr.stderr[-300:])
+        toobig = run(box, "send", "--type", "NOTICE", "--from", "alice", "--to", "bob",
+                      "--subject", "too big", "--body-file", str(big))
+        check("control: the oversized body is still toobig in one line, exit 2, nothing written",
+              toobig.returncode == 2 and "body is larger than 16777216 bytes" in toobig.stderr
+              and "Traceback" not in toobig.stderr and "too big" not in run(box, "list").stdout,
+              toobig.stderr)
+        big.unlink()
+        for label, text, fits in (("a multibyte body of exactly the byte limit", "é" * 8388608, True),
+                                ("a multibyte body one byte over the limit", "é" * 8388608 + "x", False),
+                                ("a multibyte body of 18 MB (fewer characters than the limit)",
+                                 "é" * 9000000, False)):
+            mb = root / "mb-body.txt"
+            mb.write_text(text, encoding="utf-8")
+            mbres = run(box, "send", "--type", "NOTICE", "--from", "alice", "--to", "bob",
+                      "--subject", "mb", "--body-file", str(mb))
+            check(f"{label} is {'accepted' if fits else 'refused (the limit is in bytes, not characters)'}",
+                  (mbres.returncode == 0) == fits and (fits or "body is larger than" in mbres.stderr),
+                  mbres.stderr[:200])
+            mb.unlink()
+
         print("the prompt hook never surfaces a quarantined message")
         hbox = root / "h"
         hbox.mkdir()
