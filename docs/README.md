@@ -6,6 +6,9 @@
 * [identity.md](identity.md): optional Unix-user identity binding (PROTOCOL.md
   section 40): what a message file's owner proves, what it does not, and the
   attacks it was checked against.
+* [hosts.md](hosts.md): which hosts can run the pickup adapter (Claude Code,
+  Codex), which cannot (Cursor: polling only), what each mechanism guarantees,
+  and exactly what was verified and what was not.
 * [packaging.md](packaging.md): building and checking the wheel and sdist.
 * [benchmarking.md](benchmarking.md): `scripts/scenario.py`, the reproducible
   benchmark and reliability harness (hook pickup versus a polling baseline

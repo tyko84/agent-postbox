@@ -5,13 +5,18 @@
     python install.py <project> --check    # report, change nothing
     python install.py <project> --dest tools/agent-postbox
     python install.py <project> --adapter claude-code
+    python install.py <project> --adapter codex
 
 Copies the tool + adapter + spec into the project and creates the mailbox
 with a PARTICIPANTS table. Pickup is poll by default
 (`agent_mail.py list --to <you> --live`). A hook is an adapter for a host,
 not the protocol: `--adapter claude-code` optionally registers
 `hooks/agent_mail_check.py` as UserPromptSubmit in the PROJECT's
-`.claude/settings.json`. Other hosts copy that script and wire their own
+`.claude/settings.json`; `--adapter codex` registers the same script, unchanged,
+as UserPromptSubmit in the PROJECT's `.codex/hooks.json` (Codex adds a hook's
+plain-text stdout to the model's context; it runs a new or changed hook only
+after the user has trusted it in `/hooks`). docs/hosts.md has the per-host
+matrix and what was verified. Other hosts copy that script and wire their own
 prompt-submit event, or keep polling.
 
 Project-level, not `~/.claude/`, deliberately: a user-level registration does
@@ -30,11 +35,18 @@ Safety rules for a settings merge, in priority order:
      this tree is occupied -- refuse rather than mint a nested owner.
   6. Do not install a mailbox into this spec checkout. The public repo is the
      tool, not an inbox -- use AGENT_MAIL_DIR or install into a project.
+  7. A registered command must not be able to block a prompt. Codex treats exit
+     code 2 from a UserPromptSubmit hook as "block the prompt", and an
+     interpreter that cannot open its script exits 2; so the Codex command ends
+     in `|| true`, and `--adapter codex` is refused (before anything is copied)
+     where the command could not resolve: no git repository, a destination the
+     shell would re-interpret, or a `.codex/` this installer cannot merge safely.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -44,7 +56,15 @@ HOOK_MARKER = "agent_mail_check.py"
 # SECURITY.md ships with every install on purpose: the pickup's threat model
 # matters most in the repo it is actually running in, not in this one.
 PAYLOAD = ("agent_mail.py", "PROTOCOL.md", "SECURITY.md", "selftest.py")
-ADAPTERS = ("claude-code",)
+# adapter -> the host's project-level hook file. Both hosts use the same shape:
+# {"hooks": {"UserPromptSubmit": [{"hooks": [{"type": "command", "command": ...}]}]}}
+HOST_CONFIG = {"claude-code": (".claude", "settings.json"), "codex": (".codex", "hooks.json")}
+ADAPTERS = tuple(HOST_CONFIG)
+# An inline `[hooks]` / `[[hooks.Event]]` / `[hooks.Event]` table in .codex/config.toml.
+CODEX_INLINE_HOOKS = re.compile(r"^\s*\[\[?\s*hooks\s*[.\]]", re.M)
+CODEX_TRUST = ("Codex skips a new or changed hook until it is trusted: start codex in the "
+               "project, run /hooks, review and trust it, then run the positive control in "
+               "docs/hosts.md")
 
 
 def is_tool_checkout(root: Path) -> bool:
@@ -73,10 +93,61 @@ def python_cmd() -> str:
     return sys.executable
 
 
-def hook_command(dest_rel: str) -> str:
+def hook_command(dest_rel: str, adapter: str = "claude-code") -> str:
     # A bare `python` does not exist on stock macOS; a hook that cannot start
     # delivers nothing, and looks exactly like an empty inbox.
+    if adapter == "codex":
+        # Codex runs a hook with the session's cwd, which may be a subdirectory,
+        # and documents resolving repo-local hooks from the git root. `|| true`:
+        # see safety rule 7.
+        return (f'{python_cmd()} "$(git rev-parse --show-toplevel)/{dest_rel}/hooks/'
+                f'{HOOK_MARKER}" || true')
     return f'{python_cmd()} "$CLAUDE_PROJECT_DIR/{dest_rel}/hooks/{HOOK_MARKER}"'
+
+
+def shape_problem(settings: object) -> str | None:
+    """Why this parsed hook file cannot be merged into, or None. Anything that
+    is not the documented nesting is left alone rather than rewritten."""
+    if not isinstance(settings, dict):
+        return "is not a JSON object"
+    hooks = settings.get("hooks", {})
+    if not isinstance(hooks, dict):
+        return "has a `hooks` value that is not an object"
+    groups = hooks.get("UserPromptSubmit")
+    if groups is not None and not isinstance(groups, list):
+        return "has a `hooks.UserPromptSubmit` value that is not a list"
+    for group in groups or []:
+        inner = (group or {}).get("hooks") or [] if isinstance(group or {}, dict) else None
+        if not isinstance(inner, list) or not all(isinstance(h, dict) for h in inner):
+            return "has a `hooks.UserPromptSubmit` entry that is not a matcher group"
+    return None
+
+
+def codex_refusal(project: Path, dest_rel: str) -> str | None:
+    """Why `--adapter codex` must not be registered here, or None. Reads only."""
+    if not (project / ".git").exists():
+        return ("--adapter codex needs a git repository: the hook command finds the tool "
+                "with `git rev-parse --show-toplevel`")
+    if not re.fullmatch(r"[A-Za-z0-9._/ -]+", dest_rel):
+        return (f"--adapter codex cannot quote --dest {dest_rel!r} safely in a shell command; "
+                "use letters, digits, `.`, `_`, `-`, `/` and spaces")
+    toml = project / ".codex" / "config.toml"
+    try:
+        if toml.is_file() and CODEX_INLINE_HOOKS.search(toml.read_text(encoding="utf-8-sig")):
+            return (f"{toml} already defines hooks inline, and Codex warns when one layer has "
+                    "both forms; add the UserPromptSubmit entry there by hand (docs/hosts.md)")
+    except (OSError, UnicodeDecodeError) as e:
+        return f"cannot read {toml} ({e.__class__.__name__})"
+    path = project.joinpath(*HOST_CONFIG["codex"])
+    if path.exists():
+        try:
+            raw = path.read_text(encoding="utf-8-sig")
+            problem = shape_problem(json.loads(raw) if raw.strip() else {})
+        except (OSError, UnicodeDecodeError, ValueError) as e:
+            problem = f"is not readable JSON ({e.__class__.__name__})"
+        if problem:
+            return f"{path} {problem}; fix it by hand, then re-run"
+    return None
 
 
 def registered_hook(settings: dict) -> dict | None:
@@ -103,7 +174,8 @@ def already_registered(settings: dict) -> bool:
     return False
 
 
-def merge_settings(path: Path, dest_rel: str, check: bool) -> str:
+def merge_settings(path: Path, dest_rel: str, check: bool, adapter: str = "claude-code") -> str:
+    trust = f". {CODEX_TRUST}" if adapter == "codex" else ""
     settings: dict = {}
     if path.exists():
         raw = path.read_text(encoding="utf-8-sig")  # tolerate a BOM
@@ -112,33 +184,37 @@ def merge_settings(path: Path, dest_rel: str, check: bool) -> str:
         except json.JSONDecodeError as e:
             return (f"ABORT: {path} is not valid JSON ({e}). Refusing to touch it -- "
                     "fix it by hand, then re-run. Nothing else was changed.")
-        if not isinstance(settings, dict):
-            return f"ABORT: {path} is not a JSON object. Refusing to touch it."
+        problem = shape_problem(settings)
+        if problem:
+            return f"ABORT: {path} {problem}. Refusing to touch it."
         hook = registered_hook(settings)
         if hook is not None:
             old = str(hook.get("command", ""))
             if not interpreter_missing(old):
-                return "claude-code adapter already registered (no change)"
+                return f"{adapter} adapter already registered (no change)"
             if check:
                 return f"WOULD repair the adapter: `{old.split(' ', 1)[0]}` is not on PATH here"
             shutil.copy2(path, path.with_suffix(path.suffix + ".bak"))
-            hook["command"] = hook_command(dest_rel)
+            hook["command"] = hook_command(dest_rel, adapter)
             path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
-            return (f"repaired the claude-code adapter (`{old.split(' ', 1)[0]}` was not on PATH; "
-                    f"now `{python_cmd()}`; backup at {path.name}.bak)")
+            return (f"repaired the {adapter} adapter (`{old.split(' ', 1)[0]}` was not on PATH; "
+                    f"now `{python_cmd()}`; backup at {path.name}.bak)" + trust)
 
     if check:
-        return "WOULD register the claude-code prompt-submit adapter"
+        return f"WOULD register the {adapter} prompt-submit adapter"
 
     if path.exists():
         shutil.copy2(path, path.with_suffix(path.suffix + ".bak"))
     hooks = settings.setdefault("hooks", {})
-    hooks.setdefault("UserPromptSubmit", []).append(
-        {"hooks": [{"type": "command", "command": hook_command(dest_rel)}]})
+    if hooks.get("UserPromptSubmit") is None:   # absent, or an explicit null
+        hooks["UserPromptSubmit"] = []
+    hooks["UserPromptSubmit"].append(
+        {"hooks": [{"type": "command", "command": hook_command(dest_rel, adapter)}]})
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
-    return "registered the claude-code prompt-submit adapter" + (
-        f" (backup at {path.name}.bak)" if path.with_suffix(path.suffix + ".bak").exists() else "")
+    return f"registered the {adapter} prompt-submit adapter" + (
+        f" (backup at {path.name}.bak)" if path.with_suffix(path.suffix + ".bak").exists() else ""
+    ) + trust
 
 
 def main() -> int:
@@ -177,6 +253,10 @@ def main() -> int:
 
     dest_rel = args.dest.replace("\\", "/").strip("/")
     dest = project / dest_rel
+    refusal = codex_refusal(project, dest_rel) if args.adapter == "codex" else None
+    if refusal and not args.check:   # before anything is copied: nothing was changed
+        print(f"ABORT: {refusal}. Nothing was changed.", file=sys.stderr)
+        return 2
     print(f"agent-postbox -> {project}")
 
     if args.check:
@@ -185,8 +265,11 @@ def main() -> int:
         print(f"  {'ok  ' if (dest / 'hooks' / HOOK_MARKER).exists() else 'MISS'}  "
               f"{dest_rel}/hooks/{HOOK_MARKER}")
         print(f"  {'ok  ' if (project / args.mailbox).is_dir() else 'MISS'}  {args.mailbox}/")
-        if args.adapter == "claude-code":
-            print(f"  {merge_settings(project / '.claude' / 'settings.json', dest_rel, True)}")
+        if refusal:
+            print(f"  WOULD REFUSE: {refusal}")
+        elif args.adapter:
+            config = project.joinpath(*HOST_CONFIG[args.adapter])
+            print(f"  {merge_settings(config, dest_rel, True, args.adapter)}")
         else:
             print("  pickup: poll (no host adapter requested)")
         return 0
@@ -208,12 +291,13 @@ def main() -> int:
             .replace("{{DEST}}", dest_rel), encoding="utf-8")
         print(f"  created {args.mailbox}/PARTICIPANTS.md")
 
-    if args.adapter == "claude-code":
-        print(f"  {merge_settings(project / '.claude' / 'settings.json', dest_rel, False)}")
+    if args.adapter:
+        config = project.joinpath(*HOST_CONFIG[args.adapter])
+        print(f"  {merge_settings(config, dest_rel, False, args.adapter)}")
     else:
         print(f"  pickup is poll: {python_cmd()} "
               f"{dest_rel}/agent_mail.py list --to <you> --live")
-        print("  (pass --adapter claude-code to register a prompt-submit hook)")
+        print("  (pass --adapter claude-code or --adapter codex to register a prompt-submit hook)")
 
     print("\nVerify pickup before trusting it -- silence proves nothing (PROTOCOL.md §8):")
     print(f"  {python_cmd()} {dest_rel}/selftest.py")

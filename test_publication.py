@@ -1552,6 +1552,19 @@ class Workflows(unittest.TestCase):
         for f in ("scripts/scenario.py", "test_scenario.py"):
             self.assertIn(f, self.mypy_files())
 
+    def test_the_host_adapter_tests_run_in_ci_and_before_a_release(self) -> None:
+        # test_adapters.py (docs/hosts.md): a step of the required selftest job, on the
+        # release gate's list, on preflight's list, named in the PR template, type-checked
+        ci = self.jobs("ci.yml")["selftest"]
+        steps = [ln.strip() for ln in ci.splitlines() if ln.strip().startswith("- run: ")]
+        self.assertIn("- run: python test_adapters.py", steps)
+        self.assertIn("test_adapters.py", self.jobs("release.yml")["test"])
+        self.assertIn("test_adapters.py", self.mypy_files())
+        root = Path(__file__).resolve().parent
+        for rel in ("scripts/preflight.sh", ".github/pull_request_template.md"):
+            if (root / rel).is_file():   # neither ships in the sdist
+                self.assertIn("test_adapters.py", (root / rel).read_text(encoding="utf-8"), rel)
+
     def test_required_check_names_are_unchanged(self) -> None:
         ci = self.jobs("ci.yml")
         for job in self.REQUIRED:
