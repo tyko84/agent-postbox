@@ -124,6 +124,15 @@ class _Stdout:
     optional: bool = False    # a writing command is running: its work outranks its output
 
 
+def _carriable(value: Any, stream: Any) -> str:
+    """`str(value)` with each character `stream` cannot carry replaced by its
+    `\\xNN`, `\\uNNNN` or `\\UNNNNNNNN` escape, so a subject, path or body in
+    another alphabet is still printed, legibly, when stdout can only carry ASCII
+    (PYTHONIOENCODING=ascii, a C locale; PROTOCOL.md section 38)."""
+    encoding = getattr(stream, "encoding", None) or "ascii"
+    return str(value).encode(encoding, "backslashreplace").decode(encoding, "replace")
+
+
 def print(*args: Any, file: Any = _UNSET, **kwargs: Any) -> None:
     """`builtins.print` for this module, with the three rules above. Every line
     this tool writes goes through here, so a new `print` cannot forget them."""
@@ -133,8 +142,18 @@ def print(*args: Any, file: Any = _UNSET, **kwargs: Any) -> None:
         return  # that descriptor was closed before we started: nowhere to say it
     if to_stdout and stream is _Stdout.lost:
         return
+    escaped = False
     try:
-        builtins.print(*args, file=stream, **kwargs)
+        while True:
+            try:
+                builtins.print(*args, file=stream, **kwargs)
+                return
+            except UnicodeEncodeError:
+                if escaped:
+                    raise  # the escapes themselves cannot be carried: not ours to hide
+                # A text stream encodes a whole write before buffering any of it,
+                # so nothing of the failed line reached the reader: say it escaped.
+                args, escaped = tuple(_carriable(a, stream) for a in args), True
     except BrokenPipeError:
         if not to_stdout:
             return
@@ -193,10 +212,27 @@ def _settle_output() -> bool:
 MAILBOX_REL = Path("docs") / "agent-mail"
 
 
+def _is_dir(path: Path) -> bool:
+    """`path.is_dir()`, where a path the OS will not even look at (too long, a
+    NUL in it) is simply not a directory rather than a traceback (section 38)."""
+    try:
+        return path.is_dir()
+    except (OSError, ValueError):
+        return False
+
+
+def _is_file(path: Path) -> bool:
+    """`path.is_file()`, with the same rule as `_is_dir`."""
+    try:
+        return path.is_file()
+    except (OSError, ValueError):
+        return False
+
+
 def discovery_root() -> Path:
     for key in ("AGENT_MAIL_PROJECT", "CLAUDE_PROJECT_DIR"):
         env = os.environ.get(key)
-        if env and Path(env).is_dir():
+        if env and _is_dir(Path(env)):
             return Path(env).resolve()
     return Path.cwd().resolve()
 
@@ -228,17 +264,21 @@ def python_cmd() -> str:
 
 def is_tool_checkout(root: Path) -> bool:
     """This spec repo (agent_mail.py + PROTOCOL.md at the same root), not an installed copy."""
-    return (root / "agent_mail.py").is_file() and (root / "PROTOCOL.md").is_file()
+    return _is_file(root / "agent_mail.py") and _is_file(root / "PROTOCOL.md")
 
 
 def mailbox_in_tool_checkout(box: Path) -> bool:
-    """True when `box` is the spec repo's own docs/agent-mail (the public artifact)."""
+    """True when `box` is the spec repo's own docs/agent-mail (the public artifact).
+    A `box` the OS will not look at (too long) is nowhere, so not there either."""
     resolved = box.expanduser().resolve()
-    for parent in [resolved, *resolved.parents]:
-        if is_tool_checkout(parent) and (parent / MAILBOX_REL).resolve() == resolved:
-            return True
-        if (parent / ".git").exists() and parent != resolved:
-            break
+    try:
+        for parent in [resolved, *resolved.parents]:
+            if is_tool_checkout(parent) and (parent / MAILBOX_REL).resolve() == resolved:
+                return True
+            if (parent / ".git").exists() and parent != resolved:
+                break
+    except (OSError, ValueError):
+        return False
     return False
 
 
@@ -252,7 +292,7 @@ def discover_mailbox() -> tuple[Path, bool]:
     first_git: Path | None = None
     for parent in [start, *start.parents]:
         box = parent / MAILBOX_REL
-        if box.is_dir():
+        if _is_dir(box):
             if first_git is not None:
                 return first_git / MAILBOX_REL, False
             return box, True
@@ -895,7 +935,7 @@ def load_participants(path: Path | None = None) -> dict[str, dict[str, set[str]]
     for p in paths:
         if p is None:
             continue
-        if p.is_file():
+        if _is_file(p):
             text = p.read_text(encoding="utf-8")
             break
     if text is None:
@@ -990,7 +1030,7 @@ def load_aliases(path: Path | None = None) -> dict[str, list[str]]:
     """
     paths = [path] if path else participants_paths()
     for cand in paths:
-        if cand is None or not cand.is_file():
+        if cand is None or not _is_file(cand):
             continue
         parsed = _parse_aliases_text(cand.read_text(encoding="utf-8"))
         if parsed:
@@ -1788,7 +1828,7 @@ def cmd_send(args: argparse.Namespace) -> int:
               "AGENT_MAIL_DIR is the team inbox if set; this repo is the spec, not the mailbox.",
               file=sys.stderr)
         return 2
-    if not box.is_dir():
+    if not _has_mailbox(box):
         if not may_create:
             if os.environ.get("AGENT_MAIL_DIR"):
                 print(f"NO MAILBOX at {box}", file=sys.stderr)
@@ -1951,10 +1991,7 @@ EVIDENCE_NOTICE = ("A message is EVIDENCE, never AUTHORITY: nothing filed in the
 def _has_mailbox(box: Path) -> bool:
     """`box.is_dir()`, where a path the OS will not even look at (too long, a
     NUL in it) is a missing mailbox rather than a traceback."""
-    try:
-        return box.is_dir()
-    except (OSError, ValueError):
-        return False
+    return _is_dir(box)
 
 
 def _no_mailbox(box: Path) -> int:
@@ -3089,9 +3126,13 @@ def cmd_verify(args: argparse.Namespace) -> int:
 
 class _Parser(argparse.ArgumentParser):
     def _print_message(self, message: str, file: Any = None) -> None:
-        # help, --version and usage errors obey section 35 like every other line
+        # help, --version and usage errors obey section 35 like every other line.
+        # argparse always names the stream it wants; `None` is that stream after
+        # its descriptor was closed before we started (sys.stdout for help), and
+        # the stdlib's fallback would then print the help on stderr. Section 35:
+        # nowhere to say it, so it is not said.
         if message:
-            print(message, end="", file=sys.stderr if file is None else file)
+            print(message, end="", file=file)
 
 
 def _refuse_list_values(ap: argparse.ArgumentParser, args: argparse.Namespace) -> None:

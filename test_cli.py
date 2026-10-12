@@ -12,9 +12,9 @@ negative check has a positive control beside it. Bounded: each child has a
 timeout, and a watchdog dumps every stack and exits non-zero if the whole run
 has not finished after WATCHDOG seconds.
 
-A check printed as KNOWN is a defect this file found in code it does not own
-(the write path); it is listed, it does not fail the run, and it turns into a
-PASS by itself when the defect is fixed.
+A check printed as KNOWN is a defect this file found in code it does not own;
+it is listed, it does not fail the run, and it turns into a PASS by itself when
+the defect is fixed. None is open at the moment.
 """
 from __future__ import annotations
 
@@ -854,9 +854,10 @@ def test_views(root: Path) -> None:
     check("...so the same bytes come out when stdout can only carry ASCII",
           r_ascii.returncode == 0 and r_ascii.stdout == r.stdout, r_ascii.stderr[-200:])
     r_text = run(odd, "list", "--now", NOW, env={"PYTHONIOENCODING": "ascii"}, isolated=False)
-    known("the text listing of that mailbox when stdout can only carry ASCII: escaped, not a "
-          "traceback", r_text.returncode == 0 and "Traceback" not in r_text.stderr,
-          r_text.stderr[-120:])
+    check("the text listing of that mailbox when stdout can only carry ASCII: escaped, not a "
+          "traceback", r_text.returncode == 0 and "Traceback" not in r_text.stderr
+          and r_text.stdout.isascii() and "caf\\xe9" in r_text.stdout,
+          repr((r_text.returncode, r_text.stderr[-120:], r_text.stdout[-200:])))
     check("a hand-written file: id as stored, type upper case, from and to lower case, date "
           "as UTC", rows["B2"]["id"] == (P + "b2").lower() and rows["B2"]["from"] == "alice"
           and rows["B2"]["to"] == "bob" and rows["B2"]["date"] == "2030-01-01T09:00:00Z"
@@ -1248,8 +1249,7 @@ def test_fuzz(root: Path) -> None:
         check(f"`{' '.join(argv)}` with stdin closed: exit 0, no traceback",
               r.returncode == 0 and r.stderr == "" and r.stdout, repr((r.returncode, r.stderr[-200:])))
         r = closed(1, *argv)
-        (known if argv == ["--help"] else check)(
-            f"`{' '.join(argv)}` with stdout closed: exit 0, nothing on stderr",
+        check(f"`{' '.join(argv)}` with stdout closed: exit 0, nothing on stderr",
             r.returncode == 0 and not r.stderr, repr((r.returncode, r.stderr[:80])))
     r = closed(2, "list", "--limit", "x")
     check("a refusal with stderr closed keeps its exit status and writes nothing to stdout",
@@ -1267,23 +1267,25 @@ def test_fuzz(root: Path) -> None:
     check("verify --repo with a path the OS refuses: no traceback",
           r.returncode in (0, 1, 2) and "Traceback" not in r.stderr, repr((r.returncode, r.stderr[-200:])))
 
-    print("\ndefects found in code this file's owner may not edit (see the KNOWN list)")
+    print("\ninputs that are not arguments: the write path (section 38)")
     r = run(None, *send, env={"AGENT_MAIL_DIR": "d" * 5000}, cwd=root)
-    known("send with a very long AGENT_MAIL_DIR: NO MAILBOX, not a traceback",
-          r.returncode == 2 and "Traceback" not in r.stderr, r.stderr[-120:])
+    check("send with a very long AGENT_MAIL_DIR: NO MAILBOX, not a traceback",
+          r.returncode == 2 and "Traceback" not in r.stderr and r.stdout == ""
+          and r.stderr.startswith("NO MAILBOX at ") and r.stderr.count("\n") == 1, r.stderr[-120:])
     r = run(None, "list", env={"AGENT_MAIL_PROJECT": "d" * 5000}, cwd=root)
-    known("a very long AGENT_MAIL_PROJECT with no AGENT_MAIL_DIR: NO MAILBOX, not a traceback",
-          r.returncode == 2 and "Traceback" not in r.stderr, r.stderr[-120:])
+    check("a very long AGENT_MAIL_PROJECT with no AGENT_MAIL_DIR: NO MAILBOX, not a traceback",
+          r.returncode == 2 and "Traceback" not in r.stderr and r.stdout == ""
+          and r.stderr.startswith("NO MAILBOX at "), r.stderr[-120:])
     r = closed(0, *send[:-2])
-    known("send with stdin closed and no body: a refusal, not a traceback",
+    check("send with stdin closed and no body: a refusal, not a traceback",
           r.returncode == 2 and "Traceback" not in r.stderr, r.stderr[-160:])
     r = closed(0, *send[:-2], "--body-file", "-")
-    known("send --body-file - with stdin closed: a refusal, not a traceback",
+    check("send --body-file - with stdin closed: a refusal, not a traceback",
           r.returncode == 2 and "Traceback" not in r.stderr, r.stderr[-160:])
     p = subprocess.run([sys.executable, "-I", TOOL, *send[:-2], "--body-file", "-"], input=b"x\xff",
                        capture_output=True, env={**BASE_ENV, "AGENT_MAIL_DIR": str(box)},
                        timeout=STEP_TIMEOUT)
-    known("send --body-file - given bytes that are not UTF-8: a refusal, not a traceback",
+    check("send --body-file - given bytes that are not UTF-8: a refusal, not a traceback",
           p.returncode == 2 and b"Traceback" not in p.stderr, repr(p.stderr[-160:]))
 
 

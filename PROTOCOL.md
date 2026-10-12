@@ -1725,13 +1725,21 @@ instead of a traceback or a wrong answer:
 
 Every value that was accepted and meaningful before is accepted unchanged.
 
-**Not yet covered.** Inputs that are not arguments can still end in a
-traceback. For `send`: a closed stdin, a body on stdin that is not UTF-8, and
-an `AGENT_MAIL_DIR` the OS refuses to look at. For any command: an
-`AGENT_MAIL_PROJECT` the OS refuses to look at, and text output of a subject
-or path that is not ASCII when stdout can only carry ASCII (`--json` output
-is ASCII and unaffected). Nothing is written in any of them. `test_cli.py`
-lists them as KNOWN until they are refusals too.
+**Beyond the arguments.** An input that is not an argument ends the same way:
+with the output, or with a refusal, and never with a traceback. The refusals
+write no mail.
+
+| Input | Was | Is |
+|---|---|---|
+| `send` with stdin closed and no body, or `--body-file -` with stdin closed | traceback, exit 1 | one line, exit 2 |
+| `send --body-file -` given bytes that are not UTF-8 | traceback, exit 1 | one line, exit 2 |
+| `send` with `AGENT_MAIL_DIR` set to a path the OS refuses (too long) | traceback, exit 1 | `NO MAILBOX`, one line, exit 2 |
+| any command with `AGENT_MAIL_PROJECT` set to a path the OS refuses | traceback, exit 1 | ignored, as a value that names no directory always was: the search starts at the working directory |
+| text output (`list`, `inbox`, `show`, `status`) of a subject, path or body in another alphabet when stdout can only carry ASCII (`PYTHONIOENCODING=ascii`, a C locale) | traceback after a partial listing, exit 1 | the line is printed with each character stdout cannot carry as its `\x`, `\u` or `\U` escape (`caf\xe9`), exit 0 |
+| `--help` with stdout closed | the help on stderr, exit 0 | nothing said, exit 0, as §35 has every command do when stdout is gone |
+
+`--json` output is ASCII whatever stdout can carry (§37) and is unchanged.
+`test_cli.py` pins every row.
 
 **`inbox` knows who you are.** Without `--to`, `inbox` shows the inbox of
 `AGENT_MAIL_IDENTITY`, the identity the pickup adapter already uses (§9).
