@@ -1542,10 +1542,29 @@ class Workflows(unittest.TestCase):
         for job in self.REQUIRED:
             self.assertNotIn("\n    name:", "\n" + ci[job], f"{job}: a name: renames the required check")
         self.assertIn("        os: [ubuntu-latest, macos-latest]\n", ci["selftest"])
-        self.assertIn('        python: ["3.10", "3.11", "3.12", "3.13"]\n', ci["selftest"])
+        self.assertIn('        python: ["3.10", "3.11", "3.12", "3.13", "3.14"]\n', ci["selftest"])
         self.assertIn("    runs-on: ${{ matrix.os }}\n", ci["selftest"])
         for job in ("lint", "packaging", "publication"):
             self.assertNotIn("matrix", ci[job], job)
+
+    def test_the_release_is_created_as_a_draft_that_a_person_publishes(self) -> None:
+        publish = self.jobs("release.yml")["publish"]
+        creates = [ln.strip() for ln in publish.splitlines() if "gh release create" in ln]
+        self.assertEqual(len(creates), 1, "publish must have exactly one `gh release create`")
+        create = creates[0]
+        self.assertTrue(create.startswith('gh release create "$tag" '), create)
+        for flag in ("--draft", "--verify-tag"):  # never public on creation, never a new tag
+            self.assertIn(f" {flag} ", create + " ", flag)
+        # nothing in the job publishes, marks latest or edits a release: a person does that
+        for word in ("--latest", "--draft=false", "draft=false", "make_latest", "gh release edit",
+                     "--clobber", "-X ", "--method", "-F ", "--field", "--input"):
+            self.assertNotIn(word, publish, word)
+        self.assertIn("gh release upload", publish)  # the add-to-existing branch, no --clobber
+        # control: the line the assertions read is the real one, not a comment
+        self.assertIn("--notes-file", publish)
+        # the ci workflow never touches releases at all
+        for job, text in self.jobs("ci.yml").items():
+            self.assertNotIn("gh release", text, job)
 
     def test_every_action_is_github_owned_and_pinned_to_a_commit(self) -> None:
         seen = 0

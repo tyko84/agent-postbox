@@ -18,6 +18,21 @@ behaviour).
 - `CONTRIBUTING.md`: a field report walkthrough (what to collect from `doctor`,
   `status --json` and `--version`, and what never to paste).
 
+### Changed
+
+- CPython 3.14 is a supported interpreter: the `selftest` matrix in `ci.yml` has a 3.14
+  cell on Linux and macOS, and `pyproject.toml` carries the 3.14 classifier.
+  `Requires-Python` stays `>=3.10`, and the release build stays on 3.12, the reference
+  interpreter for the published hashes. Branch protection must require the two new
+  `selftest (..., 3.14)` checks (docs/release-process.md, "Required checks").
+- `docs/release-process.md`: how the published release is verified (the commands run for
+  v0.4.0), what GitHub's immutable releases would change for this repository (not
+  enabled; the owner decides), and how to rehearse the release workflow in a scratch
+  repository.
+- `test_publication.py` (`Workflows`) also checks that the release workflow's `publish`
+  job creates the release with `--draft` and `--verify-tag` and never publishes, marks
+  latest or edits a release itself: a person always publishes.
+
 ### Fixed
 
 - `send` with `AGENT_MAIL_DIR` set to a path the OS refuses to stat (too long) printed a

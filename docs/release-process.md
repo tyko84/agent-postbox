@@ -39,7 +39,7 @@ On a branch off `main`:
    `## [Unreleased]` above it, and add the `[X.Y.Z]` link at the bottom.
    Entries describe what the release contains; nothing that is not merged
    belongs in a dated version.
-3. Run the whole suite locally on one supported interpreter (3.10 to 3.13):
+3. Run the whole suite locally on one supported interpreter (3.10 to 3.14):
    `selftest.py`, `stress_test.py`, `test_hardening.py`, `test_adversarial.py`,
    `test_handoff.py`, `test_readme_examples.py`, `test_publication.py`,
    `test_packaging.py`, `test_field.py`, `ruff check .` and the `mypy` command from `ci.yml`.
@@ -53,23 +53,25 @@ On a branch off `main`:
 
 Branch protection on `main` requires a pull request (no approving review is
 required, and the history must be linear), applies to administrators as well,
-and requires these eleven status checks, each bound to GitHub Actions as the
+and requires these thirteen status checks, each bound to GitHub Actions as the
 reporting app:
 
 * `lint`
 * `packaging`
 * `publication`
 * `selftest (ubuntu-latest, 3.10)`, `selftest (ubuntu-latest, 3.11)`,
-  `selftest (ubuntu-latest, 3.12)`, `selftest (ubuntu-latest, 3.13)`
+  `selftest (ubuntu-latest, 3.12)`, `selftest (ubuntu-latest, 3.13)`,
+  `selftest (ubuntu-latest, 3.14)`
 * `selftest (macos-latest, 3.10)`, `selftest (macos-latest, 3.11)`,
-  `selftest (macos-latest, 3.12)`, `selftest (macos-latest, 3.13)`
+  `selftest (macos-latest, 3.12)`, `selftest (macos-latest, 3.13)`,
+  `selftest (macos-latest, 3.14)`
 
 A check is named after the job id in `ci.yml` plus, for `selftest`, the matrix
 values in order. Renaming a job, giving it a `name:`, or changing the `os` or
 `python` lists therefore changes the names and leaves the old ones waiting
 forever: change the required list in the same pull request. This is also why
 `runs-on` stays `ubuntu-latest` and `macos-latest` and is not pinned to an image
-version such as `ubuntu-24.04`: for `selftest` the label is part of the eight
+version such as `ubuntu-24.04`: for `selftest` the label is part of the ten
 required names. The price is that a new runner image arrives without a commit;
 the `reproducible` job and the BUILDINFO block show what it changed.
 `test_publication.py` (class `Workflows`) fails if the ids, the matrix or the
@@ -91,7 +93,7 @@ workflow (its findings arrive as code scanning alerts).
 
 What runs where: only `lint` and `publication-build` install the dev tools
 (`requirements-dev.txt`), and `packaging` and `reproducible` install the
-hash-pinned build tools (`requirements-build.txt`), all on Python 3.12. The eight `selftest`
+hash-pinned build tools (`requirements-build.txt`), all on Python 3.12. The ten `selftest`
 cells install nothing, so `test_packaging.py` is not in their list and the
 real-build tests of `test_publication.py` skip there. The test that installs the
 built wheel into a fresh environment and runs the installed `agent-postbox`
@@ -108,7 +110,7 @@ gh api repos/tyko84/agent-postbox/branches/main/protection/enforce_admins --jq '
 gh api repos/tyko84/agent-postbox/branches/main/protection/required_pull_request_reviews --jq '.url'
 ```
 
-The first must print the eleven names above, each with `app=15368` (GitHub
+The first must print the thirteen names above, each with `app=15368` (GitHub
 Actions; a check bound to an app cannot be satisfied by a status that some other
 integration posts under the same name); the second must print `true` (required
 checks then bind administrators too); the third must print a URL and not fail
@@ -301,6 +303,29 @@ Before merging a change to it:
   start, that the artifact passes between jobs, the provenance step, and
   `gh release create` with the job's token.
 
+### Rehearsing in a scratch repository
+
+What the dry run cannot show, a scratch repository can, and this is what was
+done before v0.4.0 (the first tag under the restructured workflow):
+
+1. Create an empty repository under the same account (not a fork: a fork
+   receives no secret, and `publish` must run) and copy the tree in from a
+   clean clone of the commit to be rehearsed.
+2. Replace the repository guard in **both** workflow files with the scratch
+   name: `github.repository == 'tyko84/agent-postbox'` on the four jobs of
+   `release.yml`, and `[ "$GITHUB_REPOSITORY" = tyko84/agent-postbox ]` in the
+   two scan steps of `ci.yml`. Change nothing else.
+3. Give the scratch repository the same Actions policy as this one, and the
+   repository secret `POSTBOX_FORBIDDEN` with the same list, set by hand.
+4. Push `main`, then an annotated tag of a version that does not exist here.
+   Verify the draft as in "Verifying the published release" below. The hashes
+   differ from production's by design: `SOURCE_DATE_EPOCH` is the committer
+   time of the tagged commit, and the scratch commit is another commit. The
+   provenance step writes an attestation naming the scratch repository to the
+   public transparency log; that cannot be recalled, like any other.
+5. Afterwards: delete the secret, make the repository private, and archive it.
+   Do not publish the draft.
+
 ## 6. Review and publish the draft
 
 Open the draft on the releases page and check, before pressing Publish:
@@ -317,6 +342,159 @@ Open the draft on the releases page and check, before pressing Publish:
   merge commit you tagged.
 
 Then publish it. Publishing is the only manual step that makes anything public.
+
+### Verifying the published release
+
+What was run for v0.4.0, on the draft before pressing Publish and again on the
+published release. Each command is run from a clean clone of the tagged commit;
+`DIR` is an empty directory outside the clone and `X.Y.Z` the version.
+
+```sh
+gh release download vX.Y.Z -R tyko84/agent-postbox -D DIR   # a draft: needs a token that can read it
+(cd DIR && shasum -a 256 -c SHA256SUMS)                       # Linux: sha256sum -c SHA256SUMS
+```
+
+Rebuild the tag and compare (`build` is needed, pinned by hash, in a venv):
+
+```sh
+python3.12 -m venv /tmp/pb-verify && /tmp/pb-verify/bin/python -m pip install --require-hashes -r requirements-build.txt
+/tmp/pb-verify/bin/python scripts/repro_build.py --ref vX.Y.Z --verify DIR
+```
+
+Provenance, for the wheel and for the sdist:
+
+```sh
+gh attestation verify DIR/tyko84_agent_postbox-X.Y.Z-py3-none-any.whl -R tyko84/agent-postbox
+gh attestation verify DIR/tyko84_agent_postbox-X.Y.Z.tar.gz -R tyko84/agent-postbox
+```
+
+Contents and builder identity. The wheel holds `agent_mail.py` and the
+`dist-info` directory, nothing else. Every sdist member is ownerless (uid and
+gid 0, no user or group name), every mtime is `SOURCE_DATE_EPOCH` (one value,
+the one in the BUILDINFO block of the notes), and the gzip header's mtime is 0:
+
+```sh
+unzip -l DIR/tyko84_agent_postbox-X.Y.Z-py3-none-any.whl
+python3 - DIR/tyko84_agent_postbox-X.Y.Z.tar.gz <<'EOF'
+import struct, sys, tarfile
+path = sys.argv[1]
+with open(path, "rb") as f:
+    print("gzip mtime:", struct.unpack("<I", f.read(10)[4:8])[0])             # 0
+with tarfile.open(path) as t:
+    members = t.getmembers()
+    print("owners:", {(m.uid, m.gid, m.uname, m.gname) for m in members})     # {(0, 0, '', '')}
+    print("mtimes:", {m.mtime for m in members})                               # {SOURCE_DATE_EPOCH}
+EOF
+```
+
+The publication scan, over the clone, the downloaded files and the history of
+every ref, with the forbidden list from the owner's copy (it goes into the
+environment and is never printed or passed as an argument):
+
+```sh
+POSTBOX_FORBIDDEN="$(cat ~/.config/agent-postbox/forbidden)" \
+  python3 -I -S check_publication.py --require-patterns --root TREE --dist DIR --git-log=--all
+```
+
+Install and run, on every supported interpreter, from the file alone:
+
+```sh
+for py in python3.10 python3.11 python3.12 python3.13 python3.14; do
+  "$py" -m venv "/tmp/pb-$py" || continue
+  "/tmp/pb-$py/bin/python" -m pip install --no-index --no-deps DIR/tyko84_agent_postbox-X.Y.Z-py3-none-any.whl
+  (cd "$(mktemp -d)" && mkdir mail && export AGENT_MAIL_DIR="$PWD/mail" \
+     && "/tmp/pb-$py/bin/agent-postbox" --version \
+     && printf 'rehearsal\n' > body.txt \
+     && "/tmp/pb-$py/bin/agent-postbox" send --type NOTICE --from a --to b --subject "install check" --body-file body.txt \
+     && "/tmp/pb-$py/bin/agent-postbox" list --json \
+     && "/tmp/pb-$py/bin/agent-postbox" list | head -1)
+done
+```
+
+`list | head -1` on a large mailbox ends with exit 141: `head` closes the pipe
+and the command stops on SIGPIPE without a traceback, which is the behaviour
+`test_cli.py` requires. The sdist is installed the same way, with a links
+directory that holds only the setuptools wheel `build-constraints.txt` records
+(check its SHA-256 against the `# sha256:` line first) so that the isolated
+build can install nothing else:
+
+```sh
+python3.12 -m pip download --no-deps --only-binary :all: -d /tmp/pb-links "$(grep -v '^#' build-constraints.txt)"
+(cd /tmp/pb-links && shasum -a 256 setuptools-*.whl) && grep '^# sha256:' build-constraints.txt
+python3.12 -m venv /tmp/pb-sdist && /tmp/pb-sdist/bin/python -m pip install --no-index --find-links /tmp/pb-links DIR/tyko84_agent_postbox-X.Y.Z.tar.gz
+/tmp/pb-sdist/bin/agent-postbox --version
+```
+
+Then publish, and mark the release as the latest:
+
+```sh
+gh release edit vX.Y.Z -R tyko84/agent-postbox --draft=false --latest
+```
+
+Finally download the three files again **without a token**, as a user would,
+and compare them byte for byte with the files that were verified:
+
+```sh
+mkdir DIR2 && for f in tyko84_agent_postbox-X.Y.Z-py3-none-any.whl tyko84_agent_postbox-X.Y.Z.tar.gz SHA256SUMS; do
+  curl -sSL -o "DIR2/$f" "https://github.com/tyko84/agent-postbox/releases/download/vX.Y.Z/$f" && cmp "DIR/$f" "DIR2/$f"
+done
+```
+
+### Immutable releases
+
+**Not yet enabled; the owner decides.** GitHub can make a repository's
+releases immutable. The feature is currently disabled for this repository:
+
+```sh
+gh api repos/tyko84/agent-postbox/immutable-releases      # read `enabled` in the body
+```
+
+What enabling does, per the GitHub documentation
+([concept](https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases),
+[enabling](https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/establish-provenance-and-integrity/prevent-release-changes),
+[verifying](https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/secure-your-dependencies/verify-release-integrity),
+[REST endpoints](https://docs.github.com/en/rest/repos/repos#check-if-immutable-releases-are-enabled-for-a-repository)):
+
+* once a release is published, its tag is locked to its commit and cannot be
+  moved or deleted while the release exists;
+* its assets cannot be added, replaced or deleted after publication;
+* the title and the notes stay editable, as does the pre-release and latest
+  marking;
+* it applies to future releases only: v0.2.0 to v0.4.0 stay as they are;
+* a tag name that an immutable release used can never be used again, even if
+  the release is deleted, and even if the repository is deleted and created
+  again under the same name;
+* a release attestation is generated at publication, naming the tag, the
+  commit and the assets; `gh release verify vX.Y.Z -R tyko84/agent-postbox`
+  checks it, and `gh release verify-asset vX.Y.Z FILE` checks a local file
+  against it. The build provenance of section 7 is a separate attestation and
+  is unchanged.
+
+How it fits this repository's flow. Immutability attaches at publication, so
+the draft that the workflow creates is still verified and completed as above:
+GitHub's own recommendation is exactly this draft, attach, publish order. The
+one path that stops working is the `publish` job's second branch, "one release
+exists for the tag": it uploads into an existing release, and once that release
+is published the upload is refused. That branch exists for a re-run after a
+partial upload; with immutability on, a published release with a missing asset
+can only be followed by the next patch version, which is this project's rule
+anyway. The tag ruleset ("release tags are permanent") already forbids moving
+or deleting `v*`; immutability adds the asset lock and the burned name.
+
+Enable, check, disable (admin on the repository; each is one API call and is
+not done by any workflow):
+
+```sh
+gh api -X PUT repos/tyko84/agent-postbox/immutable-releases      # enable (204)
+gh api repos/tyko84/agent-postbox/immutable-releases             # check: "enabled": true
+gh api -X DELETE repos/tyko84/agent-postbox/immutable-releases   # disable (204); releases already published stay immutable
+```
+
+Recovery rules once a release is immutable: a defect is fixed by the next patch
+version, never by replacing an asset; deleting the release is allowed, but the
+tag stays and its name is burned for good, so delete only to hide, never to
+redo. Nothing here changes section 8: what could not be undone before still
+cannot be.
 
 ## 7. Verifying a download
 
