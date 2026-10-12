@@ -58,6 +58,17 @@ two from run to run, because races between claims are settled at run time;
 and nothing here says what a model does with mail once it has it. How to run
 it and how to read it: [docs/benchmarking.md](docs/benchmarking.md).
 
+## Which hosts are supported
+
+| Host | Automatic pickup | Status |
+|---|---|---|
+| Claude Code | Yes (`--adapter claude-code`) | Tested in the real host (headless, one model): [docs/e2e-real-sessions.md](docs/e2e-real-sessions.md) |
+| Codex CLI | Yes (`--adapter codex`) | **Experimental**: built from the documented hook format, never run inside real Codex |
+| Cursor | No: the host cannot add context per prompt | Polling only (`list --live`), untested |
+| Anything else | No | Polling only; the protocol is just files |
+
+Detail and the checklist for confirming a host: [docs/hosts.md](docs/hosts.md).
+
 ## The problem it solves
 
 The format was never the hard part. **Pickup is.**
@@ -70,7 +81,8 @@ invisible, because an inbox nobody read looks identical to an empty one.
 Existing file-based agent-messaging systems are, as far as I found, pull-based:
 the agent has to go and fetch. agent-postbox ships the other half. Pickup is
 either a **prompt-injection adapter** (mail printed into context before the
-model sees the prompt, so there is no decision to look) or a **session-start
+model sees the prompt, so there is no decision to look; "injection" names the
+mechanism, not an attack) or a **session-start
 poll** (`list --live`). A hook is an adapter for a host, not the protocol.
 This repo ships one adapter (`hooks/agent_mail_check.py`) that any host can
 wire to its own prompt-submit event; Claude Code users can register it as
