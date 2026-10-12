@@ -622,7 +622,7 @@ def test_views(root: Path) -> None:
         return [m["id"][-2:] for m in d.get("messages", [])]
 
     r = run(box, "list", "--to", "bob", "--limit", "2", "--json", "--now", NOW)
-    want = {
+    want: dict = {
         "filters": {"from": None, "live": False, "scope": None, "since": None, "status": None,
                     "to": "bob", "type": None},
         "limit": 2, "mailbox": str(box), "matched": 3, "now": NOW, "quarantined": 0,
@@ -711,9 +711,9 @@ def test_views(root: Path) -> None:
               "matched == returned + truncated",
               d.get("messages") == everything["messages"][-n:] and d["limit"] == n
               and (d["matched"], d["returned"], d["truncated"]) == (5, n, 5 - n), repr(d)[:200])
-    for n in ("5", "6", "999999999"):
-        check(f"--limit {n} leaves nothing out: exactly the unlimited bytes, no extra line",
-              run(box, "list", "--limit", n, "--now", NOW).stdout == full.stdout)
+    for lim in ("5", "6", "999999999"):
+        check(f"--limit {lim} leaves nothing out: exactly the unlimited bytes, no extra line",
+              run(box, "list", "--limit", lim, "--now", NOW).stdout == full.stdout)
     r = run(box, "list", "--limit", "0", "--now", NOW)
     d = listing("--limit", "0")
     check("(d) --limit 0: no rows, only the counts",
@@ -1007,7 +1007,7 @@ def test_reader_gone(root: Path) -> None:
               got == (141, ""), repr(got))
         rc, err, part = head(3, *argv)
         check("    its reader gone after three lines: exit 141, empty stderr, and what was "
-              "read is a prefix", (rc, err) == (141, "") and part and full.stdout.startswith(part),
+              "read is a prefix", (rc, err) == (141, "") and bool(part) and full.stdout.startswith(part),
               repr((rc, err, part[:80])))
     d = doc(run(box, "list", "--json", "--now", NOW))
     check("control: the JSON read to the end parses and holds all 400 rows",
@@ -1189,12 +1189,12 @@ def test_fuzz(root: Path) -> None:
     def planted() -> tuple[list, list]:
         raise RuntimeError("planted defect")
 
-    agent_mail.load_messages = planted   # type: ignore[assignment]
+    agent_mail.load_messages = planted
     try:
         os.environ["AGENT_MAIL_DIR"] = str(root / "fuzz" / "extra")
         call(root / "fuzz" / "extra", ["list"], "planted")
     finally:
-        agent_mail.load_messages = real   # type: ignore[assignment]
+        agent_mail.load_messages = real
         os.environ.clear()
         os.environ.update(saved_env)
     check("control: with a defect planted in the tool, the instrument reports it",
@@ -1203,17 +1203,19 @@ def test_fuzz(root: Path) -> None:
     print("\nhostile bytes and descriptors, as real processes")
     box = fresh("bytes")
     mbox = root / "fuzz"
-    for label, argv in (("show <an undecodable byte>", ["show", b"\xff\xfe"]),
-                        ("list --to <an undecodable byte>", ["list", "--to", b"a\xffb"]),
-                        ("list --json --from <an undecodable byte>", ["list", "--json", "--from", b"\xff"]),
-                        ("list --type <an undecodable byte>", ["list", "--type", b"\xff"]),
-                        ("send --subject <an undecodable byte>",
-                         ["send", "--type", "NOTICE", "--from", "alice", "--to", "bob",
-                          "--subject", b"a\xffb", "--body", "b"]),
-                        ("send --from <an undecodable byte>",
-                         ["send", "--type", "NOTICE", "--from", b"\xff", "--to", "bob",
-                          "--subject", "s", "--body", "b"])):
-        r = run(box, *argv)
+    undecodable: tuple[tuple[str, list[str | bytes]], ...] = (
+        ("show <an undecodable byte>", ["show", b"\xff\xfe"]),
+        ("list --to <an undecodable byte>", ["list", "--to", b"a\xffb"]),
+        ("list --json --from <an undecodable byte>", ["list", "--json", "--from", b"\xff"]),
+        ("list --type <an undecodable byte>", ["list", "--type", b"\xff"]),
+        ("send --subject <an undecodable byte>",
+         ["send", "--type", "NOTICE", "--from", "alice", "--to", "bob",
+          "--subject", b"a\xffb", "--body", "b"]),
+        ("send --from <an undecodable byte>",
+         ["send", "--type", "NOTICE", "--from", b"\xff", "--to", "bob",
+          "--subject", "s", "--body", "b"]))
+    for label, bargv in undecodable:
+        r = run(box, *bargv)
         check(f"{label}: no traceback, exit 0, 1 or 2",
               r.returncode in (0, 1, 2) and "Traceback" not in r.stderr,
               repr((r.returncode, r.stderr[-200:])))
@@ -1247,7 +1249,7 @@ def test_fuzz(root: Path) -> None:
                  ["status"], ["--help"]):
         r = closed(0, *argv)
         check(f"`{' '.join(argv)}` with stdin closed: exit 0, no traceback",
-              r.returncode == 0 and r.stderr == "" and r.stdout, repr((r.returncode, r.stderr[-200:])))
+              r.returncode == 0 and r.stderr == "" and bool(r.stdout), repr((r.returncode, r.stderr[-200:])))
         r = closed(1, *argv)
         check(f"`{' '.join(argv)}` with stdout closed: exit 0, nothing on stderr",
             r.returncode == 0 and not r.stderr, repr((r.returncode, r.stderr[:80])))

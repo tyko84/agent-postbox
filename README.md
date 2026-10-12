@@ -443,7 +443,9 @@ lookup.
 every NOTICE. The symptom was no output, which is also what a healthy pickup
 does with an empty inbox. The first test looked like a pass. `owes_reply()` and
 `live()` are now separate functions on purpose, and `selftest.py` asserts on
-content that *must* appear, never on absence.
+content that *must* appear, never on absence. `open_asks()` is the batch form of
+the first — the ASKs addressed to one identity that still owe a reply, in one
+pass — and it answers `owes_reply()`'s question, not `derived_status()`'s.
 
 Status is derived, never stored — an ASK is open until something cites its id,
 a CLAIM is held until its expiry passes. And `CLAIM` *requires* an expiry: an

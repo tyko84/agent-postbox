@@ -215,6 +215,11 @@ Two different questions were conflated, and they must stay separate:
 * `owes_reply()` — does this need an answer? (only an unanswered ASK)
 * `live()` — should this be put in front of its recipient? (much broader)
 
+`open_asks()` is the batch form of the first (the ASKs addressed to one identity
+that still owe a reply, in one pass), and it answers `owes_reply()`'s question,
+not `derived_status()`'s: an ASK that was superseded but never cited still owes
+a reply.
+
 **So: a pickup that has only ever been observed printing nothing has not been
 tested.** Prove it with a positive control — send a message that *must* arrive,
 including a NOTICE, and confirm you see it. `python selftest.py` does exactly

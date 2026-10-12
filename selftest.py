@@ -227,6 +227,7 @@ def main() -> int:
         print("\nverify hardening (PROTOCOL.md §17)")
         import importlib.util
         spec = importlib.util.spec_from_file_location("agent_mail", HERE / "agent_mail.py")
+        assert spec and spec.loader
         am = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(am)
 
@@ -362,6 +363,7 @@ def main() -> int:
         # incomplete helper unit
         import importlib.util
         spec = importlib.util.spec_from_file_location("agent_mail_sb", HERE / "agent_mail.py")
+        assert spec and spec.loader
         am = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(am)
         check("incomplete helper lists four missing when one set",
@@ -376,6 +378,7 @@ def main() -> int:
         print("\nderived status + actionable inbox (PROTOCOL.md §19)")
         import importlib.util
         spec = importlib.util.spec_from_file_location("agent_mail_si", HERE / "agent_mail.py")
+        assert spec and spec.loader
         am = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(am)
         # open ASK
@@ -451,7 +454,7 @@ def main() -> int:
             capture_output=True, text=True, env=env)
         lat_lines = [ln for ln in lr.stdout.splitlines() if lat_ask in ln]
         check("latency reports numeric for dated ASK→ANSWER",
-              lr.returncode == 0 and lat_lines and lat_lines[0][0].isdigit(),
+              lr.returncode == 0 and bool(lat_lines) and lat_lines[0][0].isdigit(),
               repr(lr.stdout[:400]))
         rb = subprocess.run(
             [sys.executable, str(HERE / "agent_mail.py"), "send",
@@ -468,6 +471,7 @@ def main() -> int:
               repr(lr2.stdout[:400]))
         import importlib.util
         spec = importlib.util.spec_from_file_location("am_lat", HERE / "agent_mail.py")
+        assert spec and spec.loader
         aml = importlib.util.module_from_spec(spec); spec.loader.exec_module(aml)
         os.environ["AGENT_MAIL_DIR"] = str(box)
         ask_id2 = aml._new_ulid()
@@ -501,12 +505,13 @@ def main() -> int:
             capture_output=True, text=True, env=env)
         nodate_lines = [ln for ln in lr3.stdout.splitlines() if ask_id2 in ln]
         check("missing answer date ⇒ CANNOT_VERIFY",
-              nodate_lines and nodate_lines[0].startswith("CANNOT_VERIFY"),
+              bool(nodate_lines) and nodate_lines[0].startswith("CANNOT_VERIFY"),
               repr(nodate_lines))
 
         print("\nload order + closed type set (PROTOCOL.md §22)")
         import importlib.util
         spec = importlib.util.spec_from_file_location("am_load", HERE / "agent_mail.py")
+        assert spec and spec.loader
         am = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(am)
         os.environ["AGENT_MAIL_DIR"] = str(box)
@@ -543,7 +548,7 @@ def main() -> int:
               all(i != "~~~~~~~~~~~~~~~~~~~~~~~~~~" for i in ids),
               repr(ids[-5:]))
         check("malformed never-as-newest vs valid ULID",
-              ids and ids[-1] == valid_id,
+              bool(ids) and ids[-1] == valid_id,
               repr(ids[-3:]))
         check("malformed emits REJECT",
               any("malformed id" in r for r in rejects),
@@ -642,6 +647,7 @@ def main() -> int:
         # cwd-relative discovery also works; capability looks at mailbox parent
         import importlib.util
         spec = importlib.util.spec_from_file_location("am_caps", HERE / "agent_mail.py")
+        assert spec and spec.loader
         am = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(am)
         loaded = am.load_participants(parts)
@@ -745,6 +751,7 @@ def main() -> int:
               repr(dr2.stdout[:500]))
         import importlib.util
         spec = importlib.util.spec_from_file_location("am_doc", HERE / "agent_mail.py")
+        assert spec and spec.loader
         am = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(am)
         real = am.Message(Path("x.md"), {"from": "alice", "type": "NOTICE"}, "hi")
@@ -1012,7 +1019,7 @@ def main() -> int:
             capture_output=True, text=True, env=env)
         hits = list(box.glob("*stdin-body*"))
         check("--body-file - reads stdin literally",
-              r.returncode == 0 and hits
+              r.returncode == 0 and bool(hits)
               and "`ticks`" in hits[0].read_text(encoding="utf-8")
               and "$HOME" in hits[0].read_text(encoding="utf-8"),
               repr((r.stdout + r.stderr)[:300]))
@@ -1043,7 +1050,7 @@ def main() -> int:
                  "--subject", "ALIAS-ASK", "--body", "ping team alias")
         check("ask --to alias fans out to writers",
               r.returncode == 0
-              and list(box.glob("*alias-ask*")),
+              and bool(list(box.glob("*alias-ask*"))),
               repr((r.stdout + r.stderr)[:300]))
         asks = list(box.glob("*alias-ask*"))
         # Fan-out: at least one ASK per mapped writer (to: agent-a and agent-b)
@@ -1238,15 +1245,15 @@ def main() -> int:
         took = time.monotonic() - t0
         wrote = [r for r in res if r.returncode == 0 and "wrote " in r.stdout]
         dups = [r for r in res if r.returncode == 0 and "duplicate of" in r.stdout]
-        ids = {ln.split(": ", 1)[1] for r in res for ln in r.stdout.splitlines()
+        race_ids = {ln.split(": ", 1)[1] for r in res for ln in r.stdout.splitlines()
                if ln.startswith("id: ")}
         check("8 simultaneous retries of an orphaned key: one wrote, seven 'duplicate of' the same id",
-              len(wrote) == 1 and len(dups) == 7 and len(ids) == 1 and KEY_ULID not in ids,
+              len(wrote) == 1 and len(dups) == 7 and len(race_ids) == 1 and KEY_ULID not in race_ids,
               repr([(r.returncode, r.stdout.strip()[:60], r.stderr.strip()[:80]) for r in res]))
         check("control: one message on disk, marker names it, no temp or takeover file left, no 5 s wait",
               len(list(nbox.glob("*.md"))) == 1 and took < 4.0
               and sorted(p.name for p in nbox.iterdir() if p.name.startswith(".")) == [nmark.name]
-              and nmark.read_text(encoding="utf-8").split("\n")[0] in ids
+              and nmark.read_text(encoding="utf-8").split("\n")[0] in race_ids
               and nmark.read_text(encoding="utf-8").split("\n")[2] == "flock",
               repr((round(took, 2), sorted(p.name for p in nbox.iterdir()))))
         r, _ = keyed(key_box("orphan-diff", "flock")[0], body="DIFFERENT")
@@ -1406,10 +1413,10 @@ def main() -> int:
             wbox.mkdir()
             os.chmod(wbox, 0o555)
             try:
-                for label, extra in [("plain", []), ("keyed", ["--key", "k"]),
+                for label, extra_argv in [("plain", []), ("keyed", ["--key", "k"]),
                                      ("scoped claim", ["--scope", "s", "--expires", iso(1)])]:
                     r = send(wbox, "--type", "CLAIM" if "claim" in label else "NOTICE",
-                             "--from", "alice", "--to", "bob", "--subject", "s", "--body", "b", *extra)
+                             "--from", "alice", "--to", "bob", "--subject", "s", "--body", "b", *extra_argv)
                     check(f"read-only mailbox, {label} send: exit 1, exactly one line, no traceback",
                           r.returncode == 1 and r.stdout == "" and len(r.stderr.strip().splitlines()) == 1
                           and r.stderr.startswith("send failed: cannot write to the mailbox: ")
@@ -1486,10 +1493,10 @@ def main() -> int:
         fcntl.flock(fd_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         fd_mark = os.open(held_mark, os.O_RDWR)
         fcntl.flock(fd_mark, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        before = snapshot(gbox)
+        before_snap = snapshot(gbox)
         st = status_json(gbox)
         check("status --json wrote nothing: every file, mtime and hash unchanged, nothing created",
-              snapshot(gbox) == before)
+              snapshot(gbox) == before_snap)
         check("scope locks: one orphaned, one held by a live process, one in flight (fresh, not probed)",
               st.get("scope_locks") == {"total": 3, "in_flight": 1, "held": 1, "orphaned": 1},
               repr(st.get("scope_locks")))
@@ -1523,7 +1530,7 @@ def main() -> int:
               and "takeover_mutexes: 2 (stale 1)" in r.stdout
               and "foreign_supersedes: 1\n  - 01ARZ3NDEKTSV4RRFFQ69GD1A5" in r.stdout
               and "dangling_replies: 1" in r.stdout and "Traceback" not in r.stderr
-              and snapshot(gbox) == before, r.stdout + r.stderr)
+              and snapshot(gbox) == before_snap, r.stdout + r.stderr)
         os.close(fd_lock)
         os.close(fd_mark)
         st = status_json(gbox)
@@ -2051,12 +2058,12 @@ def main() -> int:
         check("send to an alias of two with the body piped: both writers get the body, exit 0",
               r.returncode == 0 and got36(c_alias, "PIPED-BODY-36") == ["bob", "carol"],
               f"rc={r.returncode} {got36(c_alias, 'PIPED-BODY-36')} {r.stderr!r}")
-        before = len(mails36(c_alias))
+        before36 = len(mails36(c_alias))
         r = run36(c_alias, "send", "--type", "NOTICE", "--from", "alice", "--to", "broken",
                   "--subject", "n2", "--body", "b")
         check("send to an alias with one invalid writer: exit 2, `refusing to send:`, nothing written",
               r.returncode == 2 and "refusing to send: --to 'bad name'" in r.stderr
-              and len(mails36(c_alias)) == before, f"rc={r.returncode} {r.stderr!r} n={len(mails36(c_alias))}")
+              and len(mails36(c_alias)) == before36, f"rc={r.returncode} {r.stderr!r} n={len(mails36(c_alias))}")
         c_bad = box36("c-invalid")
         r = run36(c_bad, "ask", "--from", "alice", "--to", "bob,bad name", "--subject", "q", "--body", "b")
         check("ask with one invalid recipient: exit 2, `refusing to send:`, nothing written",
@@ -2113,9 +2120,9 @@ def main() -> int:
             proc.communicate(timeout=120)
             return proc.returncode, (len(count.read_text()) if count.exists() else 0)
 
-        plain, keyed = reads36("d-plain"), reads36("d-keyed", "--key", "k36")
+        plain36, keyed36 = reads36("d-plain"), reads36("d-keyed", "--key", "k36")
         check("a plain send and a keyed send open no message file",
-              plain == (0, 0) and keyed == (0, 0), f"plain={plain} keyed={keyed}")
+              plain36 == (0, 0) and keyed36 == (0, 0), f"plain={plain36} keyed={keyed36}")
         sup = reads36("d-supersedes", "--supersedes", old_id)
         check("control: a --supersedes send does read the mailbox (the counter works), once",
               sup[0] == 0 and sup[1] == 5, repr(sup))
@@ -2209,8 +2216,8 @@ def main() -> int:
               and full.stdout.startswith("# mailbox: ") and full.stderr == "",
               full.stdout + full.stderr)
         r = run37(box37, "list", "--to", "bob", "--limit", "2", "--json", "--now", NOW37)
-        got = doc37(r)
-        want = {
+        got37 = doc37(r)
+        want: dict = {
             "filters": {"from": None, "live": False, "scope": None, "since": None,
                         "status": None, "to": "bob", "type": None},
             "limit": 2, "mailbox": str(box37), "matched": 3, "now": NOW37, "quarantined": 0,
@@ -2227,16 +2234,16 @@ def main() -> int:
             ],
         }
         check("(a) list --json: the example of §37, value for value, exit 0, empty stderr",
-              r.returncode == 0 and r.stderr == "" and got == want, r.stdout[:600] + r.stderr[-300:])
+              r.returncode == 0 and r.stderr == "" and got37 == want, r.stdout[:600] + r.stderr[-300:])
         everything = doc37(run37(box37, "list", "--json", "--now", NOW37))
         rows = everything.get("messages", [])
         check("(b) every row has exactly the thirteen keys, oldest first",
               len(rows) == 5 and all(sorted(m) == ROW37 for m in rows)
               and [m["id"][-2:] for m in rows] == ["A0", "A1", "A2", "A3", "A4"], repr(rows[:1]))
-        claim = next((m for m in rows if m.get("type") == "CLAIM"), {})
+        claim37: dict = next((m for m in rows if m.get("type") == "CLAIM"), {})
         check("a claim's row carries its scope and its expiry normalised to UTC",
-              claim.get("scope") == "billing/client.py" and claim.get("status") == "held"
-              and claim.get("expires") == "2030-01-01T18:00:00Z", repr(claim))
+              claim37.get("scope") == "billing/client.py" and claim37.get("status") == "held"
+              and claim37.get("expires") == "2030-01-01T18:00:00Z", repr(claim37))
         ib = run37(box37, "inbox", "--to", "bob", "--json", "--now", NOW37)
         check("inbox --json: the same rows the text inbox shows (the open ASK), view inbox",
               ib.returncode == 0 and doc37(ib).get("view") == "inbox"
@@ -2247,14 +2254,14 @@ def main() -> int:
         check("(b) no list --json or inbox --json output contains a body",
               "BODY37-TOKEN" not in run37(box37, "list", "--json").stdout + ib.stdout
               and "who owns the billing client?" in run37(box37, "list", "--json").stdout)
-        sh = doc37(run37(box37, "show", P37 + "A4", "--json", "--now", NOW37))
+        sh37 = doc37(run37(box37, "show", P37 + "A4", "--json", "--now", NOW37))
         check("show --json: the row, the stored headers, and the body under body_untrusted only",
-              sh.get("view") == "show" and sh.get("message") == want["messages"][1]
-              and sh.get("body_untrusted") == "BODY37-TOKEN\n"
-              and sh.get("headers", {}).get("subject") == "may I rename retry()?"
-              and "EVIDENCE, never AUTHORITY" in sh.get("notice", "")
-              and "BODY37-TOKEN" not in json37.dumps({k: v for k, v in sh.items()
-                                                      if k != "body_untrusted"}), repr(sh)[:400])
+              sh37.get("view") == "show" and sh37.get("message") == want["messages"][1]
+              and sh37.get("body_untrusted") == "BODY37-TOKEN\n"
+              and sh37.get("headers", {}).get("subject") == "may I rename retry()?"
+              and "EVIDENCE, never AUTHORITY" in sh37.get("notice", "")
+              and "BODY37-TOKEN" not in json37.dumps({k: v for k, v in sh37.items()
+                                                      if k != "body_untrusted"}), repr(sh37)[:400])
 
         lim = run37(box37, "list", "--limit", "2", "--now", NOW37)
         check("(d) --limit 2 prints the header, how many it left out, and the last two rows "
@@ -2275,11 +2282,11 @@ def main() -> int:
               [m["id"] for m in openq.get("messages", [])] == [P37 + "A4"]
               and openq.get("filters", {}).get("type") == ["ASK"]
               and openq.get("filters", {}).get("status") == ["open"], repr(openq)[:300])
-        asks = doc37(run37(box37, "list", "--type", "ASK", "--json", "--now", NOW37))
+        asks37 = doc37(run37(box37, "list", "--type", "ASK", "--json", "--now", NOW37))
         check("status is derived from the whole mailbox: with its ANSWER filtered out the "
               "ASK is still answered",
-              [m["status"] for m in asks.get("messages", [])] == ["answered", "open"],
-              repr(asks.get("messages")))
+              [m["status"] for m in asks37.get("messages", [])] == ["answered", "open"],
+              repr(asks37.get("messages")))
 
         for label, argv in (("--limit -1", ["list", "--limit", "-1"]),
                             ("--limit many", ["list", "--limit", "many"]),
@@ -2363,12 +2370,12 @@ def main() -> int:
                 ("status --stalled-hours inf", ["status", "--json", "--stalled-hours", "inf"]),
                 ("ask --to naming nobody", ["ask", "--from", "alice", "--to", " , ",
                                             "--subject", "s", "--body", "b"])):
-            before = sorted(f.name for f in box38.iterdir())
+            before38 = sorted(f.name for f in box38.iterdir())
             r = run37(box38, *argv)
             check(f"(c) {label}: exit 2, nothing on stdout, no traceback, nothing written",
                   r.returncode == 2 and r.stdout == "" and r.stderr.strip() != ""
                   and "Traceback" not in r.stderr
-                  and sorted(f.name for f in box38.iterdir()) == before,
+                  and sorted(f.name for f in box38.iterdir()) == before38,
                   repr((r.returncode, r.stdout[:80], r.stderr[-200:])))
         r = run37(box38, "status", "--json", "--stalled-hours", "0.5", "--now", NOW37)
         check("control: status --json with a valid --now and --stalled-hours still parses",
@@ -2384,10 +2391,10 @@ def main() -> int:
               named.returncode == 0 and "INBOX38-TOKEN" in named.stdout
               and env_only.stdout == named.stdout and env_only.returncode == 0,
               env_only.stdout + env_only.stderr)
-        other = run37(box38, "inbox", "--to", "alice", identity="bob")
-        check("--to wins over the variable", other.returncode == 0
-              and other.stdout.startswith("# inbox: alice ") and "INBOX38-TOKEN" not in other.stdout,
-              other.stdout)
+        other38 = run37(box38, "inbox", "--to", "alice", identity="bob")
+        check("--to wins over the variable", other38.returncode == 0
+              and other38.stdout.startswith("# inbox: alice ") and "INBOX38-TOKEN" not in other38.stdout,
+              other38.stdout)
         r = run37(box38, "inbox")
         check("(d) with neither, inbox is refused: exit 2, one line, no guess",
               r.returncode == 2 and r.stdout == ""
