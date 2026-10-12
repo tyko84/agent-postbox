@@ -1582,6 +1582,29 @@ class Workflows(unittest.TestCase):
             self.assertIn(f, self.mypy_files())
             self.assertIn(f" {f}", template)
 
+    def test_the_real_session_script_is_tested_offline_and_never_run_in_ci(self) -> None:
+        # scripts/e2e_claude.py starts real model sessions (docs/e2e-real-sessions.md): it
+        # spends the signed-in account's usage, so no workflow runs it. Its offline test
+        # is a step of the required selftest job and on every other test list.
+        ci = self.jobs("ci.yml")["selftest"]
+        steps = [ln.strip() for ln in ci.splitlines() if ln.strip().startswith("- run: ")]
+        self.assertIn("- run: python test_e2e_script.py", steps)
+        self.assertIn("test_e2e_script.py", self.jobs("release.yml")["test"])
+        for wf in sorted(p.name for p in self.WF.glob("*.yml")):
+            for job, text in self.jobs(wf).items():
+                runs = [ln for ln in text.splitlines()
+                        if "e2e_claude.py" in ln and "mypy" not in ln]
+                self.assertEqual(runs, [], f"{wf}:{job} must not run the real-session script")
+        root = Path(__file__).resolve().parent
+        preflight = root / "scripts" / "preflight.sh"
+        if preflight.is_file():  # not shipped in an sdist
+            self.assertIn(" test_e2e_script.py", preflight.read_text(encoding="utf-8"))
+        template = (root / ".github" / "pull_request_template.md").read_text(encoding="utf-8")
+        self.assertIn("`python test_e2e_script.py`", template)
+        for f in ("scripts/e2e_claude.py", "test_e2e_script.py"):
+            self.assertIn(f, self.mypy_files())
+            self.assertIn(f" {f}", template)
+
     def test_required_check_names_are_unchanged(self) -> None:
         ci = self.jobs("ci.yml")
         for job in self.REQUIRED:
