@@ -56,7 +56,7 @@ Code changes:
   `python test_adversarial.py`, `python test_field.py`, `python test_handoff.py`,
   `python test_readme_examples.py`, `python test_publication.py`,
   `python test_packaging.py`, `python test_cli.py`, `python test_scenario.py`,
-  `python test_adapters.py`, `python test_examples.py` and `python test_e2e_script.py`
+  `python test_team_sim.py`, `python test_adapters.py`, `python test_examples.py` and `python test_e2e_script.py`
   must pass
   (`test_packaging.py` skips, loudly, if the `build` package is unavailable), and so must
   `ruff check .` and

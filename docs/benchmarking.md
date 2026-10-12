@@ -229,6 +229,10 @@ plants a miss with `--self-test-miss` (exit 1 and a `FAIL missed` line),
 checks the JSON fields, a usage error (exit 2) and an exception inside the
 harness (exit 1, never 0).
 
+Task-level outcomes (completion, conflicting edits, missed facts, recovery) are
+not measured here; [coordination-experiment.md](coordination-experiment.md)
+designs that experiment and `scripts/team_sim.py` simulates its mechanism.
+
 ## Known limitations
 
 * The agents are scripted. Whether a model acts on mail that is in its

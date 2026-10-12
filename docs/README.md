@@ -18,6 +18,12 @@
 * [benchmarking.md](benchmarking.md): `scripts/scenario.py`, the reproducible
   benchmark and reliability harness (hook pickup versus a polling baseline
   under injected faults): what is simulated, how to run it, how to read it.
+* [coordination-experiment.md](coordination-experiment.md): the design of a
+  repeatable experiment on whether Postbox improves team outcomes (task
+  completion, conflicting edits, missed facts, recovery, false success) against
+  two control arms, with its statistics, cost and limits, and the results of
+  `scripts/team_sim.py`, the offline simulation of the mechanism (simulated
+  agents; says nothing about real models).
 * [../examples/two-agents/](../examples/two-agents/README.md): a runnable
   demo, two scripted sessions exchanging mail through the real tool
   (`python examples/two-agents/run.py`; tested by `test_examples.py`).
