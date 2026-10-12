@@ -201,15 +201,14 @@ excused: an orphaned key marker, an orphaned or held lock, a stale takeover
 mutex, a contested scope, a dangling reply or a stale temp file in the
 shifted final `status` fails the run.
 
-One thing the harness deliberately does not inject, because it was found and
-then designed out of the fault: a claimant killed *after* reserving its key
-and before publishing leaves a key marker that a retry refused at the scope
-stage (exit 3, another agent holds the scope now) never reaches, so the
-marker stays orphaned until a retry with the same content gets past the
-scope check. It is inert and `status`/`doctor` report it after 60 s
-(PROTOCOL.md sections 31, 33), but it is a leftover that only a later retry
-clears. The fault here kills the claimant while it holds the lock and before
-the key stage, which is the case section 30 describes.
+One thing the harness deliberately does not inject: a claimant killed *after*
+reserving its key and before publishing. That orphaned key marker used to
+survive a retry refused at the scope stage (exit 3, another agent holds the
+scope now) because the retry never reached the key stage; since that retry
+now clears its own key's orphaned marker (PROTOCOL.md section 31, "Refused at
+the scope stage") the case is covered by `test_field.py`, and the fault here
+stays at the case section 30 describes: the claimant is killed while it holds
+the lock and before the key stage.
 
 ## Running it
 

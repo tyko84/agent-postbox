@@ -9,6 +9,15 @@ behaviour).
 
 ### Added
 
+- `scripts/e2e_claude.py`: real-session end-to-end tests of the Claude Code adapter in
+  headless `claude -p`, with random tokens and a negative control for each check; it
+  refuses sessions beyond a call budget (`--max-calls`, default 12), exits 2 when `claude`
+  is missing or signed out, and is not run in CI (`test_e2e_script.py` covers the offline
+  parts). `docs/e2e-real-sessions.md` records the first run (Claude Code 2.1.296, haiku,
+  2026-10-12): hooks fire in headless mode; the prompt boundary, no cross-talk, the next
+  prompt, resume, recovery after SIGKILL and a broken mailbox not blocking all passed;
+  an ASK was answered correctly 3 of 3 and an instruction in a message subject was obeyed
+  0 of 3 (small samples, one model).
 - `examples/two-agents/run.py`: a demo that installs into a throwaway project with the
   real `install.py` and plays two scripted sessions through the real CLI and pickup
   adapter (an ASK surfaced with no polling, a CLAIM, an ANSWER with `--result DONE`
@@ -143,6 +152,22 @@ behaviour).
 
 ### Fixed
 
+- `install.py --adapter claude-code` registers a command ending in `|| true`. With the
+  hook script missing (a moved or deleted tool directory) Claude Code blocked every
+  prompt, because Python exits 2 for a missing script and Claude Code reads exit 2 from
+  `UserPromptSubmit` as a block (observed in the real host). An existing registration of
+  the old command is upgraded in place with a backup; re-running adds no second hook.
+- `install.py --adapter claude-code` refuses an unmergeable `.claude/settings.json`
+  (invalid or non-UTF-8 JSON, wrong nesting, a directory, or a `.claude` that is a file)
+  before copying anything: one ABORT line on stderr, exit 2 (was: exit 0 after the tool
+  had been copied, or a traceback). `--adapter codex` refuses a `.codex` that is a file
+  the same way.
+- A keyed `send` refused at the scope stage (exit 3) removes its own key's orphaned marker
+  left by a killed earlier attempt, so `status` no longer reports `ORPHAN_IDEM_MARKER`
+  forever (PROTOCOL.md section 31). A live holder's marker, a resolved one, an old-format
+  one and one for other content are never touched.
+- A `PARTICIPANTS.md` that is not UTF-8 makes `send`, `list`, `inbox`, `ask` and
+  `capability` refuse with one line naming the file, exit 2, instead of a traceback.
 - `install.py`: a hook settings file whose `hooks` or `UserPromptSubmit` value has the
   wrong type is refused with one line instead of a traceback.
 - `test_handoff.py` and `test_publication.py` run under `python -I` (isolated mode drops
