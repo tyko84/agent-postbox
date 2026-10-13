@@ -44,6 +44,8 @@ behaviour).
 - `docs/onboarding-first-exchange.md` (the tested path from clone to a first exchange, with
   timings) and `docs/troubleshooting.md` (a symptom table and a tested cleanup procedure,
   since there is no uninstall command).
+- `docs/adoption/`: why Postbox exists (with what has and has not been shown), launch drafts for
+  Reddit and Show HN (not posted), where to share it, and a feedback and triage process.
 
 ### Changed
 
