@@ -1,0 +1,95 @@
+{
+  "a_ok": true,
+  "a_shared": true,
+  "acknowledged": null,
+  "arm": "C2",
+  "code": "W-27EB",
+  "completed": true,
+  "coordination_failure": false,
+  "cost_usd": 0.00734,
+  "delivered": 3,
+  "generated": 3,
+  "missed": false,
+  "prompt_chars": {
+    "agent-a": 604,
+    "agent-b": 520
+  },
+  "seconds": 33.1,
+  "seed": 201,
+  "sessions": [
+    {
+      "agent": "agent-b",
+      "cost_usd": 0.0025966099999999996,
+      "denials": 1,
+      "hook_stdout": "",
+      "is_error": false,
+      "rate_limited": false,
+      "rc": 0,
+      "read_notes": true,
+      "result": "**Ticket B is blocked: `WINDOW_CODE` is still `None` in `app/config.py`.** I don't have the deployment window code. It isn't in this repo, and I didn't guess one.\n\nWhat I did:\n- Read `NOTES.md` (it was empty apart from the header), `app/config.py`, and the repo layout. The code isn't in any file here.\n- Appended a request to `NOTES.md` asking agent-a to post the code there.\n- Didn't change `app/co",
+      "seconds": 10.8,
+      "tag": "b1",
+      "team_lines": [],
+      "timed_out": false,
+      "tools": [
+        "Bash",
+        "Bash",
+        "Bash",
+        "Read",
+        "Edit"
+      ],
+      "turns": 6
+    },
+    {
+      "agent": "agent-a",
+      "cost_usd": 0.00304488,
+      "denials": 1,
+      "hook_stdout": "",
+      "is_error": false,
+      "rate_limited": false,
+      "rc": 0,
+      "read_notes": true,
+      "result": "Ticket A is done, and the window code is posted to NOTES.md for agent-b. I could not run the check, because Bash was denied in this session.\n\n- **`is_weekend(day)`** in `app/util.py` now returns `day in (\"saturday\", \"sunday\")`. Input is a lowercase weekday name, as specified. I have not run it, so the behaviour is unverified.\n- **Window code:** I appended `W-27EB` to NOTES.md, with a note that it ",
+      "seconds": 12.9,
+      "tag": "a",
+      "team_lines": [],
+      "timed_out": false,
+      "tools": [
+        "Bash",
+        "Bash",
+        "Bash",
+        "Write",
+        "Bash",
+        "Read",
+        "Edit"
+      ],
+      "turns": 8
+    },
+    {
+      "agent": "agent-b",
+      "cost_usd": 0.00169809,
+      "denials": 1,
+      "hook_stdout": "",
+      "is_error": false,
+      "rate_limited": false,
+      "rc": 0,
+      "read_notes": true,
+      "result": "Ticket B is done. `app/config.py` now has `WINDOW_CODE = \"W-27EB\"`.\n\nAgent-a posted that code in NOTES.md (line 3), so I used it instead of guessing. I could not verify it against any source beyond agent-a's note. I also appended a status line to NOTES.md saying I set it.\n\nI did not run `git` or any other shell commands. The shell was denied partway through, so I finished the notes update with the",
+      "seconds": 9.4,
+      "tag": "b2",
+      "team_lines": [],
+      "timed_out": false,
+      "tools": [
+        "Bash",
+        "Edit",
+        "Bash",
+        "Read",
+        "Edit",
+        "Read"
+      ],
+      "turns": 7
+    }
+  ],
+  "window": "ok",
+  "window_value": "W-27EB"
+}

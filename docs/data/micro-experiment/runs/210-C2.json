@@ -1,0 +1,92 @@
+{
+  "a_ok": true,
+  "a_shared": true,
+  "acknowledged": null,
+  "arm": "C2",
+  "code": "W-8966",
+  "completed": false,
+  "coordination_failure": true,
+  "cost_usd": 0.007036,
+  "delivered": 3,
+  "generated": 4,
+  "missed": true,
+  "prompt_chars": {
+    "agent-a": 604,
+    "agent-b": 520
+  },
+  "seconds": 32.9,
+  "seed": 210,
+  "sessions": [
+    {
+      "agent": "agent-b",
+      "cost_usd": 0.0032923400000000004,
+      "denials": 1,
+      "hook_stdout": "",
+      "is_error": false,
+      "rate_limited": false,
+      "rc": 0,
+      "read_notes": true,
+      "result": "Ticket B is blocked: I don't have the deployment window code, so `app/config.py` still has `WINDOW_CODE = None`. I didn't guess a value.\n\n- **What I checked:** The repo has no window code. `app/config.py`, `app/util.py`, `README.txt`, and the agent-postbox docs don't contain it.\n- **What I tried:** I tried to send agent-a an ASK through `agent_mail.py`, but Bash is denied in this session, so I cou",
+      "seconds": 12.3,
+      "tag": "b1",
+      "team_lines": [],
+      "timed_out": false,
+      "tools": [
+        "Bash",
+        "Bash",
+        "Bash",
+        "Read",
+        "Edit"
+      ],
+      "turns": 6
+    },
+    {
+      "agent": "agent-a",
+      "cost_usd": 0.00191245,
+      "denials": 1,
+      "hook_stdout": "",
+      "is_error": false,
+      "rate_limited": false,
+      "rc": 0,
+      "read_notes": true,
+      "result": "Ticket A is implemented, and I've posted the window code to NOTES.md for agent-b. I could not run any tests because Bash was denied in this session.\n\n- **Ticket A:** `is_weekend(day)` in `app/util.py` now returns `day in (\"saturday\", \"sunday\")`. I checked it by reading the code only.\n- **Window code for agent-b:** I wrote `W-8966` to NOTES.md as the deployment window code. It came from the `probe.",
+      "seconds": 9.3,
+      "tag": "a",
+      "team_lines": [],
+      "timed_out": false,
+      "tools": [
+        "Bash",
+        "Edit",
+        "Bash",
+        "Read",
+        "Read",
+        "Edit"
+      ],
+      "turns": 7
+    },
+    {
+      "agent": "agent-b",
+      "cost_usd": 0.00183158,
+      "denials": 1,
+      "hook_stdout": "",
+      "is_error": false,
+      "rate_limited": false,
+      "rc": 0,
+      "read_notes": true,
+      "result": "Ticket B is not done: `WINDOW_CODE` is still `None` in `app/config.py`.\n\n- **What I found:** Agent-a's note in `NOTES.md` gives the code as `W-8966`. Agent-a says it came from running `probe.py` in their sandbox and was not independently verified. I can't confirm that it's the team's real deployment window code, so I did not set it.\n- **What I did:** I added a line to `NOTES.md` asking agent-a to ",
+      "seconds": 11.3,
+      "tag": "b2",
+      "team_lines": [],
+      "timed_out": false,
+      "tools": [
+        "Bash",
+        "Bash",
+        "Read",
+        "Edit"
+      ],
+      "turns": 5
+    }
+  ],
+  "window": "none",
+  "window_value": "None"
+}

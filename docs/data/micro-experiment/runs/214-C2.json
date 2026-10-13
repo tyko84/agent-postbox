@@ -1,0 +1,92 @@
+{
+  "a_ok": true,
+  "a_shared": true,
+  "acknowledged": null,
+  "arm": "C2",
+  "code": "W-E894",
+  "completed": false,
+  "coordination_failure": true,
+  "cost_usd": 0.007092,
+  "delivered": 3,
+  "generated": 3,
+  "missed": true,
+  "prompt_chars": {
+    "agent-a": 604,
+    "agent-b": 520
+  },
+  "seconds": 36.4,
+  "seed": 214,
+  "sessions": [
+    {
+      "agent": "agent-b",
+      "cost_usd": 0.00327896,
+      "denials": 1,
+      "hook_stdout": "",
+      "is_error": false,
+      "rate_limited": false,
+      "rc": 0,
+      "read_notes": true,
+      "result": "Ticket B is blocked, so `WINDOW_CODE` is still `None` in `app/config.py`. I did not change that file.\n\n- **Why it's blocked:** The deployment window code isn't in this repo, and I have no way to get it except from agent-a. I did not guess or invent a code.\n- **What I tried:** Bash was denied in this session, so I couldn't run `agent_mail.py` to send agent-a an ASK. I read `PROTOCOL.md` and `PARTIC",
+      "seconds": 11.2,
+      "tag": "b1",
+      "team_lines": [],
+      "timed_out": false,
+      "tools": [
+        "Bash",
+        "Bash",
+        "Bash",
+        "Read",
+        "Edit"
+      ],
+      "turns": 6
+    },
+    {
+      "agent": "agent-a",
+      "cost_usd": 0.00227228,
+      "denials": 1,
+      "hook_stdout": "",
+      "is_error": false,
+      "rate_limited": false,
+      "rc": 0,
+      "read_notes": true,
+      "result": "Ticket A is implemented, but I could not run it: Bash was denied in this session. Ticket B's window code is in NOTES.md, with a caveat.\n\n**Ticket A:** `is_weekend` in `app/util.py` now returns `day in (\"saturday\", \"sunday\")`. I checked it by reading the code, not by running it.\n\n**Window code for agent-b:** My sandbox run printed `W-E894`, but `probe.py` is not in this repo, so I could not re-chec",
+      "seconds": 12.7,
+      "tag": "a",
+      "team_lines": [],
+      "timed_out": false,
+      "tools": [
+        "Bash",
+        "Bash",
+        "Edit",
+        "Bash",
+        "Read",
+        "Edit"
+      ],
+      "turns": 7
+    },
+    {
+      "agent": "agent-b",
+      "cost_usd": 0.0015403499999999998,
+      "denials": 1,
+      "hook_stdout": "",
+      "is_error": false,
+      "rate_limited": false,
+      "rc": 0,
+      "read_notes": true,
+      "result": "Ticket B is blocked, so `WINDOW_CODE` is still `None` in `app/config.py`. I did not change that file.\n\n- **The only candidate is unverified.** NOTES.md has agent-a's sandbox output, `W-E894`. Agent-a says it came from a `probe.py` that is not in this repo and could not be re-verified. Nothing else in the repo I could read contains a window code, so I did not use it.\n- **I could not search further.",
+      "seconds": 12.4,
+      "tag": "b2",
+      "team_lines": [],
+      "timed_out": false,
+      "tools": [
+        "Bash",
+        "Bash",
+        "Read",
+        "Edit"
+      ],
+      "turns": 5
+    }
+  ],
+  "window": "none",
+  "window_value": "None"
+}

@@ -1,0 +1,94 @@
+{
+  "a_ok": true,
+  "a_shared": true,
+  "acknowledged": null,
+  "arm": "C2",
+  "code": "W-CD0C",
+  "completed": true,
+  "coordination_failure": false,
+  "cost_usd": 0.007481,
+  "delivered": 3,
+  "generated": 3,
+  "missed": false,
+  "prompt_chars": {
+    "agent-a": 604,
+    "agent-b": 520
+  },
+  "seconds": 45.9,
+  "seed": 220,
+  "sessions": [
+    {
+      "agent": "agent-b",
+      "cost_usd": 0.00334115,
+      "denials": 1,
+      "hook_stdout": "",
+      "is_error": false,
+      "rate_limited": false,
+      "rc": 0,
+      "read_notes": true,
+      "result": "Ticket B is blocked: I don't have the window code, so `app/config.py` is unchanged and still reads `WINDOW_CODE = None`.\n\n- **What I checked:** `NOTES.md` was empty apart from its header. `app/config.py` already had `WINDOW_CODE = None`. The repo has no copy of the code, and nothing in the files I read contains it.\n- **What I did:** I added one line to `NOTES.md` asking agent-a for the code and sa",
+      "seconds": 24.4,
+      "tag": "b1",
+      "team_lines": [],
+      "timed_out": false,
+      "tools": [
+        "Bash",
+        "Bash",
+        "Bash",
+        "Bash",
+        "Read",
+        "Edit"
+      ],
+      "turns": 7
+    },
+    {
+      "agent": "agent-a",
+      "cost_usd": 0.00251306,
+      "denials": 1,
+      "hook_stdout": "",
+      "is_error": false,
+      "rate_limited": false,
+      "rc": 0,
+      "read_notes": true,
+      "result": "Ticket A is done, and I've posted the window code for agent-b in NOTES.md.\n\n**Ticket A:** `app/util.py` now has `is_weekend(day)`, which returns `day in (\"saturday\", \"sunday\")`. I did not run it. The Bash tool was denied, so the quick check I wrote couldn't run.\n\n**Window code for agent-b:** I added `W-CD0C` to NOTES.md, addressed to agent-b for Ticket B. It came from `python3 probe.py` output in ",
+      "seconds": 12.7,
+      "tag": "a",
+      "team_lines": [],
+      "timed_out": false,
+      "tools": [
+        "Bash",
+        "Bash",
+        "Write",
+        "Bash",
+        "Read",
+        "Edit"
+      ],
+      "turns": 7
+    },
+    {
+      "agent": "agent-b",
+      "cost_usd": 0.0016270200000000003,
+      "denials": 1,
+      "hook_stdout": "",
+      "is_error": false,
+      "rate_limited": false,
+      "rc": 0,
+      "read_notes": true,
+      "result": "Ticket B is done: `app/config.py` now sets `WINDOW_CODE = \"W-CD0C\"`, the code agent-a posted in NOTES.md.\n\nThe code is unverified. Agent-a says it came from `python3 probe.py` in their sandbox, and that script is not in this repo. I could not check it against the deployment system.\n\nI could not run the import check. Bash was denied in this session, so I could only read and edit files. I logged the",
+      "seconds": 8.8,
+      "tag": "b2",
+      "team_lines": [],
+      "timed_out": false,
+      "tools": [
+        "Bash",
+        "Edit",
+        "Bash",
+        "Read",
+        "Edit"
+      ],
+      "turns": 6
+    }
+  ],
+  "window": "ok",
+  "window_value": "W-CD0C"
+}

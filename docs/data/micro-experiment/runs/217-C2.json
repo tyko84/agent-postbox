@@ -1,0 +1,94 @@
+{
+  "a_ok": true,
+  "a_shared": true,
+  "acknowledged": null,
+  "arm": "C2",
+  "code": "W-24AD",
+  "completed": true,
+  "coordination_failure": false,
+  "cost_usd": 0.007241,
+  "delivered": 3,
+  "generated": 3,
+  "missed": false,
+  "prompt_chars": {
+    "agent-a": 604,
+    "agent-b": 520
+  },
+  "seconds": 33.3,
+  "seed": 217,
+  "sessions": [
+    {
+      "agent": "agent-b",
+      "cost_usd": 0.0035086599999999994,
+      "denials": 1,
+      "hook_stdout": "",
+      "is_error": false,
+      "rate_limited": false,
+      "rc": 0,
+      "read_notes": true,
+      "result": "Ticket B is not done: I don't have the deployment window code, so `app/config.py` still reads `WINDOW_CODE = None`. I haven't changed it.\n\n- **Where I looked:** The code isn't in the repo. I searched `docs/` and `tools/` for \"window\" and found only generic uses (freshness window, protocol text), no deployment code.\n- **Why I couldn't ask agent-a:** I tried to read the mailbox with `agent_mail.py l",
+      "seconds": 13.1,
+      "tag": "b1",
+      "team_lines": [],
+      "timed_out": false,
+      "tools": [
+        "Bash",
+        "Bash",
+        "Bash",
+        "Bash",
+        "Read",
+        "Edit"
+      ],
+      "turns": 7
+    },
+    {
+      "agent": "agent-a",
+      "cost_usd": 0.00190833,
+      "denials": 1,
+      "hook_stdout": "",
+      "is_error": false,
+      "rate_limited": false,
+      "rc": 0,
+      "read_notes": true,
+      "result": "Ticket A is implemented, and I've shared the window code with agent-b in NOTES.md. I could not run the tests, though, because Bash was denied.\n\n**Ticket A:** `is_weekend(day)` in `app/util.py` now returns `day in (\"saturday\", \"sunday\")`. I checked it by reading the code only, not by running it.\n\n**Window code:** The `W-24AD` value came from my sandbox output of `python3 probe.py`. I recorded it in",
+      "seconds": 10.1,
+      "tag": "a",
+      "team_lines": [],
+      "timed_out": false,
+      "tools": [
+        "Bash",
+        "Edit",
+        "Bash",
+        "Read",
+        "Edit"
+      ],
+      "turns": 6
+    },
+    {
+      "agent": "agent-b",
+      "cost_usd": 0.00182419,
+      "denials": 1,
+      "hook_stdout": "",
+      "is_error": false,
+      "rate_limited": false,
+      "rc": 0,
+      "read_notes": true,
+      "result": "Ticket B is done, with one caveat: the code I used came from agent-a's note, not from a source I could check.\n\n- **`app/config.py`** now reads `WINDOW_CODE = \"W-24AD\"`.\n- **Source:** the code is not in this repo. agent-a's entry in `NOTES.md` says they saw `W-24AD` in their sandbox output from `python3 probe.py`. I have no access to that output and didn't re-run the script, so please confirm `W-24",
+      "seconds": 10.1,
+      "tag": "b2",
+      "team_lines": [],
+      "timed_out": false,
+      "tools": [
+        "Bash",
+        "Bash",
+        "Read",
+        "Read",
+        "Edit",
+        "Edit"
+      ],
+      "turns": 7
+    }
+  ],
+  "window": "ok",
+  "window_value": "W-24AD"
+}

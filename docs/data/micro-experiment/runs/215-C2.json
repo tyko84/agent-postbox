@@ -1,0 +1,92 @@
+{
+  "a_ok": true,
+  "a_shared": true,
+  "acknowledged": null,
+  "arm": "C2",
+  "code": "W-C784",
+  "completed": false,
+  "coordination_failure": true,
+  "cost_usd": 0.007058,
+  "delivered": 3,
+  "generated": 3,
+  "missed": true,
+  "prompt_chars": {
+    "agent-a": 604,
+    "agent-b": 520
+  },
+  "seconds": 36.0,
+  "seed": 215,
+  "sessions": [
+    {
+      "agent": "agent-b",
+      "cost_usd": 0.00330337,
+      "denials": 1,
+      "hook_stdout": "",
+      "is_error": false,
+      "rate_limited": false,
+      "rc": 0,
+      "read_notes": true,
+      "result": "I couldn't get the deployment window code, so `WINDOW_CODE` is still `None` in `app/config.py`. I didn't change that file.\n\n- **Why it's blocked:** The code isn't in this repository, and agent-a is the only one who has it. I was going to send agent-a an ASK through the agent-postbox tool, but Bash was denied partway through, so I couldn't send mail or check for a reply.\n- **What I did:** I appende",
+      "seconds": 11.4,
+      "tag": "b1",
+      "team_lines": [],
+      "timed_out": false,
+      "tools": [
+        "Bash",
+        "Bash",
+        "Bash",
+        "Read",
+        "Edit"
+      ],
+      "turns": 6
+    },
+    {
+      "agent": "agent-a",
+      "cost_usd": 0.00215761,
+      "denials": 1,
+      "hook_stdout": "",
+      "is_error": false,
+      "rate_limited": false,
+      "rc": 0,
+      "read_notes": true,
+      "result": "Ticket A is implemented, but I could not run it: Bash was denied in this session, so the test was not run.\n\n**Changed: `app/util.py`**\n```python\ndef is_weekend(day: str) -> bool:\n    return day in (\"saturday\", \"sunday\")\n```\nExpected results, by reading the code only: `saturday` and `sunday` return True, and other lowercase weekday names return False.\n\n**Window code for agent-b:** I recorded `W-C78",
+      "seconds": 15.2,
+      "tag": "a",
+      "team_lines": [],
+      "timed_out": false,
+      "tools": [
+        "Bash",
+        "Bash",
+        "Write",
+        "Bash",
+        "Read",
+        "Edit"
+      ],
+      "turns": 7
+    },
+    {
+      "agent": "agent-b",
+      "cost_usd": 0.0015969500000000002,
+      "denials": 1,
+      "hook_stdout": "",
+      "is_error": false,
+      "rate_limited": false,
+      "rc": 0,
+      "read_notes": true,
+      "result": "WINDOW_CODE is still `None` in `app/config.py`. I did not set it, so Ticket B is not finished.\n\nThe only code I found is W-C784, which agent-a recorded in `NOTES.md`. Agent-a marked it unverified, and it came from a `probe.py` that isn't in the repo. Setting it would mean trusting a value I can't check, so I left it out.\n\nI added a line to `NOTES.md` asking agent-a to confirm the code from a sourc",
+      "seconds": 9.3,
+      "tag": "b2",
+      "team_lines": [],
+      "timed_out": false,
+      "tools": [
+        "Bash",
+        "Bash",
+        "Read",
+        "Edit"
+      ],
+      "turns": 5
+    }
+  ],
+  "window": "none",
+  "window_value": "None"
+}
