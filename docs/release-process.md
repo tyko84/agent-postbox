@@ -451,8 +451,8 @@ done
 
 ### Immutable releases
 
-**Not yet enabled; the owner decides.** GitHub can make a repository's
-releases immutable. The feature is currently disabled for this repository:
+**Enabled for this repository (2026-10-12); v0.5.0 was the first immutable
+release.** GitHub can make a repository's releases immutable. To check the setting:
 
 ```sh
 gh api repos/tyko84/agent-postbox/immutable-releases      # read `enabled` in the body

@@ -37,6 +37,9 @@ behaviour).
   `AGENT_MAIL_IDENTITY` is set: a hook whose script moved, or an unset identity, used to
   look like an empty inbox. Informational; no change to `doctor`'s exit status. Found by
   `docs/first-use-audit.md`.
+- `docs/onboarding-first-exchange.md` (the tested path from clone to a first exchange, with
+  timings) and `docs/troubleshooting.md` (a symptom table and a tested cleanup procedure,
+  since there is no uninstall command).
 
 ### Changed
 
@@ -46,6 +49,17 @@ behaviour).
 - README: a "Which hosts are supported" table and a note on what "injection" means.
 - `docs/issues-to-open.md`: every claim re-run against 0.5.0; two issues opened (#20, #21),
   three held, one dropped as already fixed.
+- `install.py` prints numbered next steps: rename the example `PARTICIPANTS.md` rows, set an
+  identity, file a canary, and why the first `doctor` fails until then. Output text only.
+- README: `python3` throughout (stock macOS has no `python`), the demo's `body.txt` is created,
+  Windows and WSL are stated as untested.
+- `docs/pypi-publishing.md`: a dated re-check of the packaging dry run. Nothing is uploaded.
+
+### Fixed
+
+- A working directory that no longer exists (for example a removed git worktree) made every
+  command die with a `FileNotFoundError` traceback. It now prints one `refusing:` line and
+  exits 2; with `AGENT_MAIL_DIR` set the mailbox is still read.
 
 ## [0.5.0] - 2026-10-12
 
