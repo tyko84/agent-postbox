@@ -243,6 +243,9 @@ def setup(demo: Path, out: Any = None) -> dict[str, Any]:
                                     "commit", "-q", "-m", "baseline"]):
             subprocess.run(["git", "-C", str(project), *cmd], capture_output=True, env=clean_env())
     (demo / "logs").mkdir()
+    (demo / "prompts").mkdir()
+    for name, text in (("B1", PROMPT_B1), ("A", PROMPT_A), ("B2", PROMPT_B2)):
+        (demo / "prompts" / f"{name}.txt").write_text(text, encoding="utf-8")   # no newline
     state: dict[str, Any] = {"schema": 1, "project": str(project), "registry": str(registry),
                              "live_base": live, "token": token, "alpha": ALPHA, "beta": BETA}
     (demo / "state.json").write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
@@ -252,7 +255,8 @@ def setup(demo: Path, out: Any = None) -> dict[str, Any]:
 
 def guide(demo: Path, state: dict[str, Any]) -> str:
     p, reg, live = state["project"], state["registry"], state["live_base"]
-    me = "python3 " + shlex.quote(str(Path(__file__).resolve()))
+    me = ("python3 " + shlex.quote(str(Path(__file__).resolve())) + " {} --dir "
+          + shlex.quote(str(demo)))
     return f"""\
 LIVE DEMO READY (real Claude Code sessions; nothing here is scripted)
   demo dir : {demo}
@@ -263,7 +267,7 @@ LIVE DEMO READY (real Claude Code sessions; nothing here is scripted)
 BEFORE RECORDING (off camera)
   1. Open each terminal once, run `claude`, accept "trust this folder" (the project's
      hook lives in .claude/settings.json, so the host asks once), then /exit.
-  2. `{me} setup` resets everything; run it again to re-record.
+  2. `{me.format('setup')}` resets everything; run it again to re-record.
 
 TERMINAL 1 (alpha, left pane)
   cd {shlex.quote(p)}
@@ -276,7 +280,8 @@ TERMINAL 2 (beta, right pane)  -- no registry variable: beta cannot see the fact
   export AGENT_MAIL_IDENTITY={BETA}
   claude --model {MODEL}
 
-PROMPTS (paste exactly; the rehearsal uses the same text)
+PROMPTS (paste exactly; the rehearsal uses the same text). The same text is in
+  {demo}/prompts/B1.txt, A.txt, B2.txt: `pbcopy < FILE` puts one on the Mac clipboard.
   beta  #1 : {PROMPT_B1}
   alpha #1 : {PROMPT_A}
   beta  #2 : {PROMPT_B2}
@@ -289,7 +294,7 @@ EXPECTED ON SCREEN
              'beta'." with "ASK from alpha [awaiting your reply]" and the subject holding
              the URL; then a send --type ANSWER ... --result DONE; then client.py gains
              refund_url using {live}.
-  after    : {me} check   (OK/FAIL per beat, from the files)
+  after    : {me.format('check')}  (OK/FAIL per beat, from the files)
 
 NARRATION (about 80 s)
    0:00  "Two Claude Code sessions in one project, two terminals, two identities.
@@ -382,8 +387,11 @@ def check(demo: Path, transcripts: Path | None = None) -> list[Beat]:
     beats.append(Beat(3, "the message went through Postbox", bool(ask),
                       f"ASK {ask_id} alpha -> beta" if ask else "no ASK file alpha -> beta"))
     found = pickup_evidence(demo, state, ask_id, transcripts)
+    tdir = transcripts or transcript_dir(state["project"])
+    seen = (f"{len(list(tdir.glob('*.jsonl')))} transcript file(s) in {tdir}" if tdir.is_dir()
+            else f"no transcript directory {tdir}")
     beats.append(Beat(4, "beta's prompt hook handed it the message", found is not None,
-                      found or "no captured hook output or transcript names the ASK"))
+                      found or f"no captured hook output or transcript names the ASK ({seen})"))
     ack = bool(answers)
     closed = ack and next((r for r in rows if r.get("id") == ask_id), {}).get("owes_reply") is False
     beats.append(Beat(5, "beta acknowledged with an ANSWER citing the ASK", ack and bool(closed),
