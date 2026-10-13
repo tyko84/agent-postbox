@@ -38,6 +38,7 @@
   release is verified, immutable releases, rollback.
 * [onboarding-first-exchange.md](onboarding-first-exchange.md): the tested path from a clone to a
   first exchange, with timings.
+* [demo-narration.md](demo-narration.md): narration for the recorded two-agent demo.
 * [troubleshooting.md](troubleshooting.md): symptoms and fixes, and removing the install.
 * [pypi-publishing.md](pypi-publishing.md): the project is **not on PyPI**;
   this is the prepared plan for publishing there (checks done, the upload job,

@@ -37,6 +37,10 @@ behaviour).
   `AGENT_MAIL_IDENTITY` is set: a hook whose script moved, or an unset identity, used to
   look like an empty inbox. Informational; no change to `doctor`'s exit status. Found by
   `docs/first-use-audit.md`.
+- `docs/demo-narration.md` and a rewritten `examples/two-agents/RECORDING.md` (Part 1): a timed
+  60-90 s recording script for the live demo with honest narration, a Mac checklist and an
+  if-a-beat-fails table. Nineteen headless rehearsals (about USD 0.09) are tabulated there,
+  including the host refusals and wrong-URL answers seen; interactive mode is untested.
 - `docs/onboarding-first-exchange.md` (the tested path from clone to a first exchange, with
   timings) and `docs/troubleshooting.md` (a symptom table and a tested cleanup procedure,
   since there is no uninstall command).
@@ -57,6 +61,8 @@ behaviour).
 
 ### Fixed
 
+- `live_demo.py setup` writes the demo's own `alpha`/`beta` rows (the example rows made `send`
+  warn about its own recipient), and `rehearse` prints each tool call the host refused.
 - A working directory that no longer exists (for example a removed git worktree) made every
   command die with a `FileNotFoundError` traceback. It now prints one `refusing:` line and
   exits 2; with `AGENT_MAIL_DIR` set the mailbox is still read.
