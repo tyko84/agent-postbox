@@ -1,0 +1,94 @@
+{
+  "a_ok": true,
+  "a_shared": true,
+  "acknowledged": null,
+  "arm": "C2",
+  "code": "W-601C",
+  "completed": true,
+  "coordination_failure": false,
+  "cost_usd": 0.007118,
+  "delivered": 3,
+  "generated": 3,
+  "missed": false,
+  "prompt_chars": {
+    "agent-a": 604,
+    "agent-b": 520
+  },
+  "seconds": 33.4,
+  "seed": 213,
+  "sessions": [
+    {
+      "agent": "agent-b",
+      "cost_usd": 0.00346775,
+      "denials": 2,
+      "hook_stdout": "",
+      "is_error": false,
+      "rate_limited": false,
+      "rc": 0,
+      "read_notes": true,
+      "result": "Ticket B is blocked: I don't have the window code, so `app/config.py` still reads `WINDOW_CODE = None`. I made no guess.\n\n- **Code:** not in this repo. agent-a has it, and I haven't received it.\n- **Ask:** I added one line to NOTES.md asking agent-a for the code. That is the only thing I changed.\n- **Mail tool not used:** I didn't send through `tools/agent-postbox/agent_mail.py`. Running Bash was ",
+      "seconds": 14.1,
+      "tag": "b1",
+      "team_lines": [],
+      "timed_out": false,
+      "tools": [
+        "Bash",
+        "Bash",
+        "Bash",
+        "Read",
+        "Bash",
+        "Read",
+        "Edit"
+      ],
+      "turns": 8
+    },
+    {
+      "agent": "agent-a",
+      "cost_usd": 0.0019850700000000002,
+      "denials": 1,
+      "hook_stdout": "",
+      "is_error": false,
+      "rate_limited": false,
+      "rc": 0,
+      "read_notes": true,
+      "result": "Ticket A is implemented, and the window code is posted to NOTES.md for agent-b. I could not run the tests because Bash was denied.\n\n- **`is_weekend(day)`** in `app/util.py` now returns `day in (\"saturday\", \"sunday\")`. I checked it by reading the code only; I have not run it.\n- **Window code:** I posted `W-601C` to `NOTES.md` for agent-b, with the instruction to set `WINDOW_CODE = \"W-601C\"` in `app",
+      "seconds": 10.0,
+      "tag": "a",
+      "team_lines": [],
+      "timed_out": false,
+      "tools": [
+        "Bash",
+        "Edit",
+        "Bash",
+        "Read",
+        "Edit"
+      ],
+      "turns": 6
+    },
+    {
+      "agent": "agent-b",
+      "cost_usd": 0.0016648300000000002,
+      "denials": 1,
+      "hook_stdout": "",
+      "is_error": false,
+      "rate_limited": false,
+      "rc": 0,
+      "read_notes": true,
+      "result": "Ticket B is done: `app/config.py` now sets `WINDOW_CODE = \"W-601C\"`.\n\nAgent-a posted that code in NOTES.md, copied from the output of `python3 probe.py` in their sandbox. I haven't checked it independently, since I can't reach their sandbox. I added a line to NOTES.md saying I set it and that it is unverified.\n\nI couldn't re-read `app/config.py` after the edit, because Bash was denied for this ses",
+      "seconds": 9.3,
+      "tag": "b2",
+      "team_lines": [],
+      "timed_out": false,
+      "tools": [
+        "Bash",
+        "Edit",
+        "Bash",
+        "Read",
+        "Edit"
+      ],
+      "turns": 6
+    }
+  ],
+  "window": "ok",
+  "window_value": "W-601C"
+}

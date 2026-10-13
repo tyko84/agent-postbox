@@ -1,0 +1,93 @@
+{
+  "a_ok": true,
+  "a_shared": true,
+  "acknowledged": null,
+  "arm": "C2",
+  "code": "W-FF81",
+  "completed": false,
+  "coordination_failure": true,
+  "cost_usd": 0.011317,
+  "delivered": 3,
+  "generated": 3,
+  "missed": true,
+  "prompt_chars": {
+    "agent-a": 604,
+    "agent-b": 520
+  },
+  "seconds": 32.8,
+  "seed": 206,
+  "sessions": [
+    {
+      "agent": "agent-b",
+      "cost_usd": 0.007116600000000001,
+      "denials": 1,
+      "hook_stdout": "",
+      "is_error": false,
+      "rate_limited": false,
+      "rc": 0,
+      "read_notes": true,
+      "result": "Ticket B is not done: I don't have the deployment window code, so `app/config.py` still has `WINDOW_CODE = None`.\n\n- **Code:** The code is with agent-a, and I have no copy of it in this repo. I did not guess or invent one.\n- **Blocked tool:** Bash was denied in this session, so I could not run `agent_mail.py` to send agent-a a real ASK. I also could not run its positive-control check.\n- **What I d",
+      "seconds": 10.6,
+      "tag": "b1",
+      "team_lines": [],
+      "timed_out": false,
+      "tools": [
+        "Bash",
+        "Bash",
+        "Read",
+        "Read",
+        "Edit"
+      ],
+      "turns": 6
+    },
+    {
+      "agent": "agent-a",
+      "cost_usd": 0.0025945200000000003,
+      "denials": 1,
+      "hook_stdout": "",
+      "is_error": false,
+      "rate_limited": false,
+      "rc": 0,
+      "read_notes": true,
+      "result": "**Ticket A is done, but I could not run any tests.** Bash was denied, so the `is_weekend` change has only been checked by reading it.\n\n- **`app/util.py`**: `is_weekend(day)` now returns `day in (\"saturday\", \"sunday\")`. It expects a lowercase weekday name, as the ticket specifies.\n- **Window code for agent-b**: I added a line to `NOTES.md` saying the code from my sandbox is `W-FF81`. `probe.py` is ",
+      "seconds": 13.0,
+      "tag": "a",
+      "team_lines": [],
+      "timed_out": false,
+      "tools": [
+        "Bash",
+        "Bash",
+        "Write",
+        "Bash",
+        "Read",
+        "Read",
+        "Edit"
+      ],
+      "turns": 8
+    },
+    {
+      "agent": "agent-b",
+      "cost_usd": 0.0016059499999999997,
+      "denials": 1,
+      "hook_stdout": "",
+      "is_error": false,
+      "rate_limited": false,
+      "rc": 0,
+      "read_notes": true,
+      "result": "Ticket B is blocked: I don't have a verified WINDOW_CODE, so `app/config.py` still has `WINDOW_CODE = None`.\n\n- **Candidate value:** agent-a's note in NOTES.md says the window code in their sandbox is `W-FF81`, from running `probe.py`. `probe.py` isn't in this repo, so I can't verify it, and I didn't use it.\n- **Team note:** I appended a line to NOTES.md asking agent-a to send the confirmed code o",
+      "seconds": 9.2,
+      "tag": "b2",
+      "team_lines": [],
+      "timed_out": false,
+      "tools": [
+        "Bash",
+        "Bash",
+        "Read",
+        "Edit"
+      ],
+      "turns": 5
+    }
+  ],
+  "window": "none",
+  "window_value": "None"
+}

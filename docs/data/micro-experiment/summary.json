@@ -1,0 +1,65 @@
+{
+  "ceiling_usd": 14.0,
+  "date": "2026-10-12T23:46:32+00:00",
+  "host_version": "2.1.296",
+  "model": "haiku",
+  "models_reported": [
+    "claude-haiku-5-5"
+  ],
+  "schema": 1,
+  "sessions": 180,
+  "spent_usd": 0.4507,
+  "summary": {
+    "C1": {
+      "a_ok": 20,
+      "acknowledged": 0,
+      "completed": 1,
+      "cost_usd": 0.1551,
+      "delivered": 45,
+      "generated": 71,
+      "runs": 20,
+      "seconds": 618.6,
+      "window_none": 19,
+      "window_ok": 1,
+      "window_ok_wilson95": [
+        0.01,
+        0.24
+      ],
+      "window_wrong": 0
+    },
+    "C2": {
+      "a_ok": 20,
+      "acknowledged": 0,
+      "completed": 12,
+      "cost_usd": 0.1687,
+      "delivered": 60,
+      "generated": 60,
+      "runs": 20,
+      "seconds": 698.0,
+      "window_none": 7,
+      "window_ok": 12,
+      "window_ok_wilson95": [
+        0.39,
+        0.78
+      ],
+      "window_wrong": 1
+    },
+    "P": {
+      "a_ok": 20,
+      "acknowledged": 17,
+      "completed": 7,
+      "cost_usd": 0.097,
+      "delivered": 48,
+      "generated": 56,
+      "runs": 20,
+      "seconds": 482.9,
+      "window_none": 13,
+      "window_ok": 7,
+      "window_ok_wilson95": [
+        0.18,
+        0.57
+      ],
+      "window_wrong": 0
+    }
+  }
+}

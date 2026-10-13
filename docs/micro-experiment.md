@@ -134,3 +134,90 @@ lengths. Measured seeds remain 101 and up; a third shakedown (seed 102, arm P) c
 seeds **201 to 220** (20 instances, 3 arms, 60 runs). Shakedown runs (seeds 1, 101, 102)
 are listed in the results and excluded from the measured data, for the stated harness
 reasons only.
+
+# Results (2026-10-12)
+
+Claude Code 2.1.296, model `claude-haiku-5-5`, headless, effort low. 20 instances (seeds
+201 to 220) x 3 arms = 60 runs, 180 sessions, each arm run on every instance in a seeded
+shuffled order, nothing excluded and nothing re-run. Spend by the host's `total_cost_usd`:
+**USD 0.4507** (ceiling 14.00; the run was never near it). Wall-clock: P 483 s, C1 619 s,
+C2 698 s of session time. Per-run records are in
+[data/micro-experiment/](data/micro-experiment/) (`runs/`, `summary.json`; the
+shakedown runs of seeds 1, 101 and 102 are in `shakedown/`, labelled by their seed). The raw
+event streams (8 MB) are kept outside the repository and can be supplied on request.
+
+## The pre-registered outcome
+
+Did `app/config.py` end with the exact window code (`window_ok`)?
+
+| Arm | `window_ok` | 95% Wilson | wrong code | left `None` | ticket A ok | completed |
+|---|---|---|---|---|---|---|
+| P, Postbox | 7 / 20 | 0.18 to 0.57 | 0 | 13 | 20 | 7 |
+| C1, relay | 1 / 20 | 0.01 to 0.24 | 0 | 19 | 20 | 1 |
+| C2, notes | 12 / 20 | 0.39 to 0.78 | 1 | 7 | 20 | 12 |
+
+Messages (generated / delivered / acknowledged, per the definitions above): P 56 / 48 / 17;
+C1 71 / 45 / n.a.; C2 60 / 60 / n.a. Missed communication equals the number of runs that
+are not `window_ok` (P 13, C1 19, C2 8). Conflicting operations: not exercised by this
+design. Manual interventions: none. Permission denials (a Bash call outside the allowed
+mail command, mostly an attempt to test `is_weekend`): P 19, C1 45, C2 60.
+
+**Reading it.** The decision rule allows no claim here: the P and C2 intervals overlap
+(0.18 to 0.57 against 0.39 to 0.78). The point estimates favour the notes file, and
+nothing favours Postbox. The outcome is a *negative or null result for Postbox on this
+task*, and it is reported as such.
+
+## What actually happened (post-hoc, labelled as such)
+
+These were looked at after seeing the table, to understand it. They are not part of the
+pre-registered metrics.
+
+1. **The value usually reached agent-b, in every arm.** Counting a run if the code is in
+   agent-b's final report or in its config: P 17 / 20, C1 18 / 20, C2 20 / 20. In all ten
+   P runs where the ANSWER arrived and `window_ok` was false, the code appears in
+   agent-b's own report. The failure is not delivery.
+2. **Agent-b declined to use what it received.** Agent-a's text called the value
+   unverified sandbox output (`probe.py` is not in the repository, which is true), and
+   agent-b's instruction said not to guess. Haiku repeatedly chose to leave `None`. The
+   task therefore measures how a consumer weighs a hedged fact as much as whether the fact
+   moves. That is a design flaw of this pilot, not a finding about the tool.
+3. **Both controls are confounded by the harness.** The control projects still contained
+   `tools/agent-postbox` (installed without the adapter, which is how the shared project
+   builder works). Agents mention the mailbox tool in 18 of 20 C1 runs and 14 of 20 C2 runs
+   (counted in the first 400 characters of each session's report, so a lower bound). In C1
+   they tried the mailbox CLI, were denied Bash, and wrote `TO TEAM:` lines about being
+   blocked instead of relaying the code. The C1 number is not a fair measure of a relay and
+   should not be quoted as one; C2 was less disturbed but is not clean either.
+4. **The notes file was read in 60 of 60 sessions.** Every C2 agent read `NOTES.md` when
+   told to. The premise that motivates the adapter (an agent that does not remember to
+   look) did not occur when the instruction to look was explicit and the model was
+   small. This agrees with `team_sim.py`, which found Postbox's advantage in missed facts
+   vanishing once a control reads its notes reliably.
+5. **Postbox took more steps.** P needs a send, a reply and a `show`; C2 needs a read and
+   an append. P's delivered-to-B rate (17 / 20) is slightly below C2's (20 / 20). The P
+   instruction was also longer (941 against 604 characters for agent-a), which this
+   design disclosed.
+
+## What this does and does not show
+
+* It shows the harness works end to end with real sessions at about USD 0.0025 per
+  session, that the Postbox chain (ASK, hook pickup, ANSWER, `show`) functions in the real
+  host when the agent follows it (17 of 20 runs acknowledged), and that the real model
+  behaves as the earlier simulation predicted when the control reliably reads its notes.
+* It does **not** show that Postbox improves a team's outcome. On this task it did not,
+  and the notes control, though not clean, did at least as well.
+* It does not test the case the adapter exists for: an agent that does not read a shared
+  file unprompted, over a long session, with several agents and conflicting edits.
+
+## Threats specific to this run
+
+One model (haiku), one task shape, headless sessions, sequential schedule, small N, a
+scout whose fact is handed to it as an observation, a consumer told not to guess, a
+longer instruction in P, and the C1 contamination above. Model sampling was not seeded.
+
+## What would make a better second experiment (not run)
+
+Remove the confounds first: no mailbox tool in the control projects; a scout told the value is
+authoritative; the same instruction length in every arm; a control that does not tell the
+agent to read the notes (the failure the README describes), run alongside one that does.
+Re-use the harness; at this cost, 40 instances x 3 arms is about USD 1.

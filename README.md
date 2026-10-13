@@ -58,6 +58,12 @@ two from run to run, because races between claims are settled at run time;
 and nothing here says what a model does with mail once it has it. How to run
 it and how to read it: [docs/benchmarking.md](docs/benchmarking.md).
 
+A pilot with real agents (20 paired instances, two Claude Code sessions each, haiku) did
+**not** show an advantage: the fact reached the consumer in most runs under every
+arrangement, and a shared notes file the agents were told to read did at least as well as
+mail. That pilot was small, one model, with known confounds; read it before drawing
+conclusions: [docs/micro-experiment.md](docs/micro-experiment.md).
+
 ## Which hosts are supported
 
 | Host | Automatic pickup | Status |

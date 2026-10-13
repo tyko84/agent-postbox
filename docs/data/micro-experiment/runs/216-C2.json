@@ -1,0 +1,93 @@
+{
+  "a_ok": true,
+  "a_shared": true,
+  "acknowledged": null,
+  "arm": "C2",
+  "code": "W-BB69",
+  "completed": true,
+  "coordination_failure": false,
+  "cost_usd": 0.007192,
+  "delivered": 3,
+  "generated": 3,
+  "missed": false,
+  "prompt_chars": {
+    "agent-a": 604,
+    "agent-b": 520
+  },
+  "seconds": 32.7,
+  "seed": 216,
+  "sessions": [
+    {
+      "agent": "agent-b",
+      "cost_usd": 0.00353954,
+      "denials": 1,
+      "hook_stdout": "",
+      "is_error": false,
+      "rate_limited": false,
+      "rc": 0,
+      "read_notes": true,
+      "result": "Ticket B is not done: `WINDOW_CODE` is still `None` in `app/config.py`, because I don't have the deployment window code.\n\n- **Why I don't have it:** The code isn't in this repository, and agent-a is the only one who has it. Bash was denied in this session, so I couldn't run the mail tool to send agent-a an ASK. I also couldn't read `PROTOCOL.md` through the shell, so I haven't checked the mailbox ",
+      "seconds": 12.7,
+      "tag": "b1",
+      "team_lines": [],
+      "timed_out": false,
+      "tools": [
+        "Bash",
+        "Bash",
+        "Bash",
+        "Read",
+        "Read",
+        "Edit"
+      ],
+      "turns": 7
+    },
+    {
+      "agent": "agent-a",
+      "cost_usd": 0.00195742,
+      "denials": 1,
+      "hook_stdout": "",
+      "is_error": false,
+      "rate_limited": false,
+      "rc": 0,
+      "read_notes": true,
+      "result": "Ticket A is done, and the window code is in NOTES.md for agent-b.\n\n- **`is_weekend(day)`** in `app/util.py` now returns `day in (\"saturday\", \"sunday\")`. I did not run it, because the shell was denied. It is a one-line check, but it is unverified.\n- **Window code:** I added a line to `NOTES.md` saying `WINDOW_CODE` is `W-BB69`, taken from the `probe.py` output in my sandbox. It is not in the repo, ",
+      "seconds": 10.3,
+      "tag": "a",
+      "team_lines": [],
+      "timed_out": false,
+      "tools": [
+        "Bash",
+        "Write",
+        "Bash",
+        "Read",
+        "Edit"
+      ],
+      "turns": 6
+    },
+    {
+      "agent": "agent-b",
+      "cost_usd": 0.00169535,
+      "denials": 1,
+      "hook_stdout": "",
+      "is_error": false,
+      "rate_limited": false,
+      "rc": 0,
+      "read_notes": true,
+      "result": "Ticket B is done: `app/config.py` now has `WINDOW_CODE = \"W-BB69\"`.\n\n- **Source:** The code comes from agent-a's note in NOTES.md, which says it was read from agent-a's sandbox `probe.py` output. That file isn't in this repo, so I could not check the value against its source.\n- **Verification:** I did not run an import check. Bash was denied in this session, so I could only read and edit files.\n- ",
+      "seconds": 9.6,
+      "tag": "b2",
+      "team_lines": [],
+      "timed_out": false,
+      "tools": [
+        "Bash",
+        "Edit",
+        "Bash",
+        "Read",
+        "Edit"
+      ],
+      "turns": 6
+    }
+  ],
+  "window": "ok",
+  "window_value": "W-BB69"
+}

@@ -21,6 +21,11 @@ behaviour).
   The design was committed before the first run; outcomes come from files; a hard spend
   ceiling is enforced from the host-reported cost. `test_micro_experiment.py` is its
   offline test. Neither script is run in CI.
+- Results of the two-agent micro-experiment (`docs/micro-experiment.md`, per-run records in
+  `docs/data/micro-experiment/`): 20 paired instances, 60 real-agent runs, USD 0.45. A null
+  result for Postbox on this task: the notes control did at least as well, the fact reached
+  the consumer in most runs under every arm, and both controls were contaminated by the
+  mailbox tool being present. The README now says so.
 - `docs/first-use-audit.md`: first-use timings from a clean clone, a ranked friction list
   and a tested manual cleanup procedure (there is no uninstall command).
 - `send` writes one stderr warning (exit status and stdout unchanged) when `--to` is not a

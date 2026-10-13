@@ -1,0 +1,95 @@
+{
+  "a_ok": true,
+  "a_shared": true,
+  "acknowledged": null,
+  "arm": "C2",
+  "code": "W-75A2",
+  "completed": false,
+  "coordination_failure": true,
+  "cost_usd": 0.012335,
+  "delivered": 3,
+  "generated": 3,
+  "missed": true,
+  "prompt_chars": {
+    "agent-a": 604,
+    "agent-b": 520
+  },
+  "seconds": 37.2,
+  "seed": 203,
+  "sessions": [
+    {
+      "agent": "agent-b",
+      "cost_usd": 0.00261475,
+      "denials": 1,
+      "hook_stdout": "",
+      "is_error": false,
+      "rate_limited": false,
+      "rc": 0,
+      "read_notes": true,
+      "result": "Ticket B is not done: I don't have the deployment window code, so `app/config.py` still has `WINDOW_CODE = None`. I did not change the file.\n\n- **Why I couldn't get it:** The code is only with agent-a, and the mail tool that would ask them is a shell command. Bash was denied in this session (don't-ask mode), so I couldn't run the mail tool to send a request or check the inbox.\n- **What I did:** I ",
+      "seconds": 10.6,
+      "tag": "b1",
+      "team_lines": [],
+      "timed_out": false,
+      "tools": [
+        "Bash",
+        "Bash",
+        "Bash",
+        "Read",
+        "Edit"
+      ],
+      "turns": 6
+    },
+    {
+      "agent": "agent-a",
+      "cost_usd": 0.0028015700000000006,
+      "denials": 1,
+      "hook_stdout": "",
+      "is_error": false,
+      "rate_limited": false,
+      "rc": 0,
+      "read_notes": true,
+      "result": "Ticket A is implemented, and the window code is in NOTES.md for agent-b. I could not run any tests because Bash was denied.\n\n- **Ticket A:** `is_weekend(day)` in `app/util.py` now returns `day in (\"saturday\", \"sunday\")`. I checked it by reading the code only. It is not tested.\n- **Window code:** I added a line to `NOTES.md` saying `W-75A2` came from my sandbox's `probe.py` output. I could not find",
+      "seconds": 13.0,
+      "tag": "a",
+      "team_lines": [],
+      "timed_out": false,
+      "tools": [
+        "Bash",
+        "Bash",
+        "Bash",
+        "Write",
+        "Bash",
+        "Read",
+        "Edit"
+      ],
+      "turns": 8
+    },
+    {
+      "agent": "agent-b",
+      "cost_usd": 0.00691874,
+      "denials": 1,
+      "hook_stdout": "",
+      "is_error": false,
+      "rate_limited": false,
+      "rc": 0,
+      "read_notes": true,
+      "result": "Ticket B is not done: `WINDOW_CODE` is still `None` in `app/config.py`, because I could not get a verified code.\n\n- **Why I didn't set it:** agent-a's note in `NOTES.md` gives `W-75A2`, but agent-a marked it unverified. They said they got it from sandbox probe output and could not find `probe.py` in the repo to re-check it. I did not treat it as confirmed.\n- **Why I couldn't ask:** Bash was denied",
+      "seconds": 13.6,
+      "tag": "b2",
+      "team_lines": [],
+      "timed_out": false,
+      "tools": [
+        "Bash",
+        "Bash",
+        "Read",
+        "Read",
+        "Edit",
+        "Edit"
+      ],
+      "turns": 7
+    }
+  ],
+  "window": "wrong",
+  "window_value": "None  # Pending: agent-a has not verifie"
+}
