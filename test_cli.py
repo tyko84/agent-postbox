@@ -1676,7 +1676,7 @@ def test_visibility(root: Path) -> None:
     check("doctor with no hook: says none is registered and that pickup is poll, informational",
           "pickup_hook: none registered (pickup is poll" in base.stdout, base.stdout[-300:])
     check("doctor with no identity: says UNSET and why it matters",
-          "identity: UNSET in this shell" in base.stdout and "empty inbox" in base.stdout,
+          "AGENT_MAIL_IDENTITY: UNSET in this shell" in base.stdout and "empty inbox" in base.stdout,
           base.stdout[-300:])
     (proj / ".claude").mkdir()
     (proj / ".claude" / "settings.json").write_text(settings, encoding="utf-8")
@@ -1685,7 +1685,7 @@ def test_visibility(root: Path) -> None:
           "pickup_hook: registered" in r.stdout
           and "script is MISSING at tools/agent-postbox/hooks/agent_mail_check.py" in r.stdout,
           r.stdout[-400:])
-    check("...and prints the identity it will use", "identity: 'agent-b' (AGENT_MAIL_IDENTITY)" in r.stdout)
+    check("...and prints the identity it will use", "AGENT_MAIL_IDENTITY: 'agent-b'" in r.stdout)
     script = proj / "tools" / "agent-postbox" / "hooks" / "agent_mail_check.py"
     script.parent.mkdir(parents=True)
     script.write_text("# stand-in\n", encoding="utf-8")

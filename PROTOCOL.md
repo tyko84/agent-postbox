@@ -2076,7 +2076,7 @@ directory with `.git` at or above the working directory, or `AGENT_MAIL_PROJECT`
   project that polls has none; this is information, not a fault.
 * `  - <host>: ... is UNREADABLE (not valid JSON)` for a settings file that cannot be
   parsed; the file is never written.
-* `identity: 'name' (AGENT_MAIL_IDENTITY)`, or `identity: UNSET in this shell`, because
+* `AGENT_MAIL_IDENTITY: 'name'`, or `AGENT_MAIL_IDENTITY: UNSET in this shell`, because
   the adapter prints nothing without it, which looks exactly like an empty inbox.
 
 None of these lines adds a reason for `doctor` to FAIL.

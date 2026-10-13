@@ -3353,10 +3353,12 @@ def pickup_hook_lines(root: Path) -> list[str]:
             continue
         events = (data.get("hooks") or {}) if isinstance(data, dict) else {}
         groups = events.get("UserPromptSubmit") if isinstance(events, dict) else None
-        commands = [h.get("command", "") for g in (groups if isinstance(groups, list) else [])
-                    if isinstance(g, dict)
-                    for h in (g.get("hooks") if isinstance(g.get("hooks"), list) else [])
-                    if isinstance(h, dict) and isinstance(h.get("command"), str)]
+        commands: list[str] = []
+        for g in (groups if isinstance(groups, list) else []):
+            inner = g.get("hooks") if isinstance(g, dict) else None
+            for h in (inner if isinstance(inner, list) else []):
+                if isinstance(h, dict) and isinstance(h.get("command"), str):
+                    commands.append(h["command"])
         for command in commands:
             if "agent_mail_check.py" not in command:
                 continue
@@ -3475,8 +3477,8 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     for line in pickup_hook_lines(project_root()):
         print(line)
     who = os.environ.get("AGENT_MAIL_IDENTITY", "").strip()
-    print(f"identity: {who.lower()!r} (AGENT_MAIL_IDENTITY)" if who else
-          "identity: UNSET in this shell (AGENT_MAIL_IDENTITY): the pickup adapter prints "
+    print(f"AGENT_MAIL_IDENTITY: {who.lower()!r}" if who else
+          "AGENT_MAIL_IDENTITY: UNSET in this shell: the pickup adapter prints "
           "nothing without it, which looks exactly like an empty inbox")
 
     canary = find_live_canary(everything, now=now)
