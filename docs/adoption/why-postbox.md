@@ -22,12 +22,32 @@ a study). Postbox is built around that failure.
 * A message is one Markdown file in a directory of your repository. Five message types
   (ASK, ANSWER, NOTICE, CLAIM, DISPUTE) with a small fixed shape.
 * History is immutable. Status ("open", "answered", "claimed") is derived from the files, not
-  stored, so there is no state to corrupt and nothing to repair.
+  stored, so there is no separate state file to fall out of sync. Damaged or odd files are
+  reported by `status`, `verify` and `doctor` rather than hidden.
 * Pickup is part of the design. For Claude Code, and experimentally Codex, an installed
   adapter prints waiting mail into the agent's context before it sees the prompt, so there
-  is no decision to look. Hosts without a hook poll with one command.
+  is no decision to look. Codex support has never run inside the real Codex, and Codex
+  asks you to trust the hook in `/hooks` first. Hosts without a hook poll with one command.
 * Claims are advisory leases that expire, so a crashed session does not hold a task forever.
-* One standard-library Python file. No daemon, no database, no network, no accounts.
+* The tool is one standard-library Python file (`agent_mail.py`), plus a small hook script
+  and an installer. No daemon, no database, no network, no accounts.
+
+## What installing changes, and the risk it brings
+
+`install.py` copies the tool into `tools/agent-postbox/` and creates a mailbox at
+`docs/agent-mail/` in your project. With `--adapter claude-code` it also adds one
+`UserPromptSubmit` entry to `.claude/settings.json`, merging into your file and keeping the
+first backup as `settings.json.bak`; `--adapter codex` does the same in `.codex/hooks.json`.
+It touches nothing under `~` and no global settings. There is no uninstall command, but
+[troubleshooting.md](../troubleshooting.md#removing-it) has a removal procedure that was
+tested to restore the prior state, and [first-use-audit.md](../first-use-audit.md) lists
+every path. Try it in a throwaway project first.
+
+The risk: with the hook, anyone who can write a file into the mailbox can put text in front
+of your agent before it sees your prompt, including pull-request contributors in a public
+repository. Messages are labelled as evidence, never authority, but that depends on the
+model honouring it; read [SECURITY.md](../../SECURITY.md) before using it in a repository
+others can write to.
 
 ## What it deliberately does not do
 
@@ -41,10 +61,12 @@ a study). Postbox is built around that failure.
 
 Shown, by tests that run in CI and by sessions with a real host:
 
-* Messages are written atomically and are never silently lost or overwritten; concurrent
-  sends and claims behave (stress and adversarial tests).
-* The hook delivers mail into a real Claude Code session, the receiver can answer, and the
-  mailbox records it ([e2e-real-sessions.md](../e2e-real-sessions.md)).
+* Messages are written atomically, and the stress and adversarial tests found no silent loss
+  or overwrite under concurrent sends and claims. Tests passing is not a proof of absence.
+* The hook delivers mail into real headless Claude Code sessions (`claude -p`, one small
+  model, one run on 2026-10-12), the receiver answered an ASK correctly 3 of 3 times, and
+  the mailbox records it ([e2e-real-sessions.md](../e2e-real-sessions.md)). Interactive
+  mode was not run.
 
 Not shown:
 
