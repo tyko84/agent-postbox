@@ -156,7 +156,7 @@ example for this event).
 
 Confirm it in the real host (five steps, with a positive control):
 
-1. `python install.py <project> --adapter codex`, then in the project start
+1. `python3 install.py <project> --adapter codex`, then in the project start
    Codex with an identity: `AGENT_MAIL_IDENTITY=bob codex`.
 2. Run `/hooks`; review and trust the `UserPromptSubmit` entry (trust the
    project too if Codex asks).

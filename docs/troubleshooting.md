@@ -1,0 +1,130 @@
+# Troubleshooting and removing it
+
+Each symptom below was reproduced on 2026-10-13 (macOS, Python 3.13) unless it
+says otherwise. Run `doctor` first: it is read-only, exits 2 on a problem and
+tells you what to do.
+
+```sh
+python3 tools/agent-postbox/agent_mail.py doctor
+```
+
+## Common failures
+
+| What you see | Why | What to do |
+|---|---|---|
+| `doctor` ends `FAIL: pickup canary missing or stale` (exit 2) | No canary has been filed yet, or the last one is over 24 h old. Not a broken install | `canary --from <you> --to <you>`, then `doctor` again |
+| `doctor`: `AGENT_MAIL_IDENTITY: UNSET in this shell` | The adapter prints nothing without an identity, which looks exactly like an empty inbox | `export AGENT_MAIL_IDENTITY=<name>` in the shell the session starts from |
+| `doctor`: `pickup_hook: none registered` | `install.py` ran without `--adapter` | `python3 <clone>/install.py <project> --adapter claude-code` (or `codex`); safe to re-run |
+| `send` prints a usage block ending `the following arguments are required: --from` | `send` always needs `--from`; `AGENT_MAIL_IDENTITY` is read by `inbox` and the adapter only | add `--from <you>` |
+| `NO MAILBOX at <path>` (exit 2) | No `docs/agent-mail` above the current directory, or `AGENT_MAIL_DIR` points at a missing directory. Not an empty inbox | `cd` into the project, run `install.py`, or `mkdir` the `AGENT_MAIL_DIR` directory (it is never created for you) |
+| `send --to agent_b` prints `wrote ...` but nobody gets it | The recipient is not an identity anyone uses (hyphen versus underscore); the message waits as an open ASK | resend with the exact name; check `list --to <name> --live` |
+| Mail was sent, the other session shows nothing | Hook not registered or not trusted (Codex: `/hooks`), identity unset, or the host does not run hooks | `doctor` in that shell; positive control in [hosts.md](hosts.md) |
+| `python: command not found` | Stock macOS has no `python` | use `python3` |
+| `Permission denied` running `tools/agent-postbox/agent_mail.py` directly | The copy is not executable | prefix with `python3` |
+| `can't open file ... agent_mail_check.py` on stderr at each prompt | `tools/agent-postbox` was moved or deleted; the registered command ends in `|| true`, so the prompt still goes through, minus the mail | re-run `install.py <project> --adapter ...` |
+| `selftest.py` takes about 20 s | It exercises crashes and races on purpose | wait; it ends `all checks passed` |
+| `pip install agent-postbox` installed something else | That name on PyPI is an unrelated project | `python3 -m pip uninstall agent-postbox`, then `python3 -m pip install ./agent-postbox` from a clone. This project's distribution is `tyko84-agent-postbox` |
+| `git status` shows `.claude/`, `.codex/`, `docs/`, `tools/` untracked | The install added them | commit `.claude/settings.json` and `.codex/hooks.json` (that is how the hook reaches the next clone) along with `docs/agent-mail/` and `tools/agent-postbox/` if the team shares them; `*.bak*` files are your pre-install originals |
+| Windows | Unsupported and untested. WSL: not tried | use Linux or macOS |
+
+A mailbox that is wrong in some other way: `agent_mail.py verify` and `status`
+are read-only too.
+
+## Removing it
+
+There is no uninstall command. These steps were run in three throwaway git
+projects (nothing of ours; an existing `.claude/settings.json` with other keys;
+an existing `UserPromptSubmit` hook plus a `.codex/hooks.json` of its own) and
+each came back to the exact prior state (SHA-256 of every file and the
+directory list compared; `git status` empty). The one change since then: step 4
+used a glob that stops with `no matches found` in zsh (the macOS default shell)
+when no numbered backup exists; it now uses `find`. Re-run on 2026-10-13 in zsh,
+on a project with both adapters. Not covered: Codex's own trust record for the
+hook, and any tooling of yours that learned the paths.
+
+Run from the project root. Read each step first; **step 3 deletes every
+message and claim.**
+
+```sh
+# 1. The tool and the adapter script. Nothing else lives there by default.
+rm -rf tools/agent-postbox
+rmdir tools 2>/dev/null          # only removes it if now empty
+
+# 2. The hook registrations. Removes only entries whose command mentions
+#    agent_mail_check.py, keeps every other key and every other hook, and
+#    restores your original file byte for byte from <file>.bak when the result
+#    is identical to it. A file that holds nothing else is deleted.
+python3 -I - .claude/settings.json .codex/hooks.json <<'EOF'
+import json, shutil, sys
+from pathlib import Path
+
+MARK = "agent_mail_check.py"
+for name in sys.argv[1:]:
+    p = Path(name)
+    if not p.is_file():
+        print(f"skip   {p}: not there")
+        continue
+    cfg = json.loads(p.read_text(encoding="utf-8-sig"))
+    kept = []
+    for group in cfg.get("hooks", {}).get("UserPromptSubmit") or []:
+        group["hooks"] = [h for h in group.get("hooks", [])
+                          if MARK not in str(h.get("command", ""))]
+        if group["hooks"]:
+            kept.append(group)
+    if kept:
+        cfg["hooks"]["UserPromptSubmit"] = kept
+    else:
+        cfg.get("hooks", {}).pop("UserPromptSubmit", None)
+        if not cfg.get("hooks", True):
+            cfg.pop("hooks")
+    bak = p.with_name(p.name + ".bak")
+    if not cfg:
+        p.unlink()
+        print(f"removed {p}: nothing else was in it")
+    elif bak.is_file() and json.loads(bak.read_text(encoding="utf-8-sig")) == cfg:
+        shutil.copy2(bak, p)
+        bak.unlink()
+        print(f"restored {p} byte for byte from {bak.name}")
+    else:
+        p.write_text(json.dumps(cfg, indent=2) + "\n")
+        print(f"rewrote {p} without the adapter; {bak.name}* files are left for you to inspect")
+    try:
+        p.parent.rmdir()         # .claude / .codex, only if now empty
+    except OSError:
+        pass
+EOF
+
+# 3. OPTIONAL AND DESTRUCTIVE: the mailbox, which is every message and claim.
+#    Skip it, or `git add` it somewhere first, if anyone might want the history.
+rm -rf docs/agent-mail
+rmdir docs 2>/dev/null
+
+# 4. The numbered backups (.bak.1, .bak.2, ...). The unnumbered .bak is
+#    consumed by step 2 when it matches; if step 2 said "left for you to
+#    inspect", compare, then delete by hand.
+find .claude .codex -maxdepth 1 -name '*.bak.[0-9]*' -delete 2>/dev/null
+rmdir .claude .codex 2>/dev/null
+```
+
+What it matches and what it leaves:
+
+* Step 2 matches the file name `agent_mail_check.py` in a hook's `command`, the
+  same marker `install.py` uses. A hand-written entry that mentions that file
+  would be removed too.
+* If you edited `settings.json` after the install, the result no longer equals
+  the `.bak`, so the file is rewritten (two-space indent, key order kept) and
+  the `.bak` is left; nothing else in the file is lost.
+* `rmdir` removes `.claude`, `.codex`, `docs` and `tools` only when empty, so a
+  directory that was already there with other contents stays.
+* With `--dest` or `--mailbox`, substitute those paths in steps 1 and 3.
+* Nothing under `~`, `.git/`, `.gitignore`, global Claude Code or Codex
+  settings, environment variables or shell profiles was touched by the install,
+  so nothing there needs undoing except an `AGENT_MAIL_IDENTITY` you exported
+  (`unset AGENT_MAIL_IDENTITY`). Codex's hook trust lives in Codex; remove it
+  there.
+
+A `pip install` of this project adds only the `agent-postbox` command and the
+`agent_mail` module: `python3 -m pip uninstall tyko84-agent-postbox`.
+
+Background and the full list of what `install.py` creates:
+[first-use-audit.md](first-use-audit.md).
