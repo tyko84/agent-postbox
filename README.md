@@ -10,6 +10,10 @@ the answer carried back. agent-postbox is mail for those agents. One agent
 writes a message, and the other finds it in its context at its next prompt,
 **without having to remember to look.**
 
+It is a lightweight communication layer for agents you already run, not an orchestration
+framework: it does not start, plan or supervise anything. Why it exists, and what has and has
+not been shown: [docs/adoption/why-postbox.md](docs/adoption/why-postbox.md).
+
 No database. No daemon. No dependencies. A message is a Markdown file in a
 directory of your repository, the tool is one Python file (standard library
 only), and identity is a name you choose: there is no vendor default.
