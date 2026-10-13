@@ -40,6 +40,8 @@
   first exchange, with timings.
 * [demo-narration.md](demo-narration.md): narration for the recorded two-agent demo.
 * [troubleshooting.md](troubleshooting.md): symptoms and fixes, and removing the install.
+* [adoption/](adoption/): why Postbox exists, launch drafts (not posted), where to share it, and
+  how feedback is collected and prioritised.
 * [pypi-publishing.md](pypi-publishing.md): the project is **not on PyPI**;
   this is the prepared plan for publishing there (checks done, the upload job,
   the owner's checklist). Nothing in it has been carried out.
