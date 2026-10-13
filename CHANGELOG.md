@@ -60,6 +60,11 @@ behaviour).
 - README: `python3` throughout (stock macOS has no `python`), the demo's `body.txt` is created,
   Windows and WSL are stated as untested.
 - `docs/pypi-publishing.md`: a dated re-check of the packaging dry run. Nothing is uploaded.
+- README Quickstart: a copy-pasteable first exchange (send an ASK, read it as the other agent,
+  ANSWER, read it back) and a command that previews what the hook shows a session, both run
+  literally from a fresh project; post-install steps are a numbered list; the informational
+  `doctor` lines (`AGENT_MAIL_IDENTITY: UNSET`, `authorship: CANNOT_VERIFY`) are explained.
+  From a cold read by a fresh agent, which found the first exchange missing from the Quickstart.
 
 ### Fixed
 
