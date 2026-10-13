@@ -1,6 +1,6 @@
 # Documentation
 
-* [../README.md](../README.md): what this is, install, quickstart.
+* [../README.md](../README.md): what this is, quickstart, CLI usage, then install and reference.
 * [../PROTOCOL.md](../PROTOCOL.md): the whole spec.
 * [../SECURITY.md](../SECURITY.md): threat model.
 * [identity.md](identity.md): optional Unix-user identity binding (PROTOCOL.md
@@ -15,6 +15,10 @@
   behavioural observations, and what a missing hook script does (it blocks the
   prompt). `scripts/e2e_claude.py` re-runs it; it spends usage and is not in CI.
 * [packaging.md](packaging.md): building and checking the wheel and sdist.
+* [benchmarks-summary.md](benchmarks-summary.md): the pickup-versus-polling results table from one
+  `scripts/scenario.py` run, with its caveats (moved from the README).
+* [install-reference.md](install-reference.md): the pre-0.3.0 distribution-name note and
+  verifying a release download (moved from the README).
 * [benchmarking.md](benchmarking.md): `scripts/scenario.py`, the reproducible
   benchmark and reliability harness (hook pickup versus a polling baseline
   under injected faults): what is simulated, how to run it, how to read it.
