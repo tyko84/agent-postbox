@@ -66,6 +66,7 @@ if sys.version_info < MIN_PYTHON:
 
 import argparse  # noqa: E402
 import builtins  # noqa: E402
+import difflib  # noqa: E402
 import errno  # noqa: E402
 import re  # noqa: E402
 import hashlib  # noqa: E402
@@ -2104,6 +2105,35 @@ def _send_input_error(args: argparse.Namespace, body: str) -> str:
     return ""
 
 
+def unknown_recipient_note(to: str) -> str | None:
+    """PROTOCOL.md section 41: one stderr line when `--to` names nobody the mailbox
+    knows. Only a mailbox whose PARTICIPANTS.md has at least one row can be compared
+    with, so nothing is said for one without a table (or one that cannot be read).
+    The message is filed regardless and the exit status is unchanged: a name need not
+    have a row to be legitimate, but a typo looks exactly like that. Reads only
+    PARTICIPANTS.md; never scans the mailbox."""
+    table = next((p for p in (mail_dir() / "PARTICIPANTS.md", mail_dir().parent / "PARTICIPANTS.md")
+                  if _is_file(p)), None)
+    if table is None:   # the table next to the tool or in the cwd is not this mailbox's
+        return None
+    try:
+        rows = set(load_participants(table))
+    except ValueError:
+        return None
+    known = set(rows)
+    if not known:
+        return None
+    known |= set(load_aliases())
+    known |= _SOFT_CAN_TOKENS
+    if to in known:
+        return None
+    near = difflib.get_close_matches(to, sorted(known - _SOFT_CAN_TOKENS), n=1)
+    hint = f" Did you mean {near[0]!r}?" if near else ""
+    return (f"warning: --to {to!r} is not a row in PARTICIPANTS.md, so the message is filed "
+            f"but nobody by that name may ever read it.{hint} (Known: "
+            + ", ".join(sorted(rows - _SOFT_CAN_TOKENS)[:12]) + ".)")
+
+
 def cmd_send(args: argparse.Namespace) -> int:
     _Stdout.optional = True  # section 35: the mail matters more than the confirmation
     mtype = args.type.upper()
@@ -2386,6 +2416,8 @@ def cmd_send(args: argparse.Namespace) -> int:
               file=sys.stderr)
     print(f"wrote {final}")
     print(f"id: {msg_id}")
+    if (note := unknown_recipient_note(to)) is not None:
+        print(note, file=sys.stderr)
     return 0
 
 
@@ -3299,6 +3331,52 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def pickup_hook_lines(root: Path) -> list[str]:
+    """PROTOCOL.md section 41: where a prompt-submit hook for the pickup adapter is
+    registered under `root`, and whether the script it names is there. Read only and
+    informational: a project that polls has none, and that is not a fault."""
+    out: list[str] = []
+    found = False
+    for host, rel, pat in (
+            ("claude-code", ".claude/settings.json",
+             r"\$CLAUDE_PROJECT_DIR/([^\"\s]*agent_mail_check\.py)"),
+            ("codex", ".codex/hooks.json",
+             r"show-toplevel\)/([^\"\s]*agent_mail_check\.py)")):
+        path = root / rel
+        if not _is_file(path):
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8-sig") or "{}")
+        except (OSError, ValueError):
+            out.append(f"  - {host}: {rel} is UNREADABLE (not valid JSON); hooks in it, if "
+                       "any, could not be checked")
+            continue
+        events = (data.get("hooks") or {}) if isinstance(data, dict) else {}
+        groups = events.get("UserPromptSubmit") if isinstance(events, dict) else None
+        commands = [h.get("command", "") for g in (groups if isinstance(groups, list) else [])
+                    if isinstance(g, dict)
+                    for h in (g.get("hooks") if isinstance(g.get("hooks"), list) else [])
+                    if isinstance(h, dict) and isinstance(h.get("command"), str)]
+        for command in commands:
+            if "agent_mail_check.py" not in command:
+                continue
+            found = True
+            m = re.search(pat, command)
+            if m is None:
+                out.append(f"  - {host}: registered in {rel} (script path not checked: a "
+                           "hand-written command)")
+            elif _is_file(root / m.group(1)):
+                out.append(f"  - {host}: registered in {rel}, script present at {m.group(1)}")
+            else:
+                out.append(f"  - {host}: registered in {rel}, but the script is MISSING at "
+                           f"{m.group(1)}: the hook cannot run, so mail is not surfaced "
+                           "(re-run install.py)")
+    head = ("pickup_hook: " + ("registered" if found else
+            "none registered (pickup is poll: `list --to <you> --live` at session start; "
+            "see `install.py --adapter`)"))
+    return [head, *out]
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     """Read-only mailbox health. Never mutates. Never invents authorship."""
     box = mail_dir()
@@ -3392,6 +3470,14 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         if ident["mismatched"]:
             failures.append(f"identity mismatch: {ident['mismatched']} message(s) whose observed "
                             "OS owner is not the bound uid of the self-declared sender")
+
+    # PROTOCOL.md section 41: where mail is surfaced from. Reported, never a reason to FAIL.
+    for line in pickup_hook_lines(project_root()):
+        print(line)
+    who = os.environ.get("AGENT_MAIL_IDENTITY", "").strip()
+    print(f"identity: {who.lower()!r} (AGENT_MAIL_IDENTITY)" if who else
+          "identity: UNSET in this shell (AGENT_MAIL_IDENTITY): the pickup adapter prints "
+          "nothing without it, which looks exactly like an empty inbox")
 
     canary = find_live_canary(everything, now=now)
     if canary is None:

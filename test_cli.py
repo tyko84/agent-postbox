@@ -1630,6 +1630,77 @@ def test_participants_not_utf8(root: Path) -> None:
     check("control: ...and send writes", r.returncode == 0 and "wrote " in r.stdout, r.stderr)
 
 
+def test_visibility(root: Path) -> None:
+    print("\na mistyped recipient and a dead pickup are visible (section 41)")
+    box = root / "visibility-box"
+    box.mkdir()
+    table = "| Identity | can | cannot |\n|---|---|---|\n| agent-a | read | push |\n| agent-b | read | push |\n"
+    (box / "PARTICIPANTS.md").write_text(table, encoding="utf-8")
+
+    def send(to: str, where: Path = box) -> subprocess.CompletedProcess[str]:
+        return run(where, "send", "--type", "NOTICE", "--from", "agent-a", "--to", to,
+                   "--subject", "s", "--body", "b")
+
+    r = send("agent_b")
+    warn = r.stderr.splitlines()
+    check("send --to <typo>: still exit 0, the message is filed, stdout is unchanged",
+          r.returncode == 0 and r.stdout.startswith("wrote ") and "\nid: " in r.stdout
+          and len(list(box.glob("*-s.md"))) == 1, f"{r.returncode} {r.stdout!r} {r.stderr!r}")
+    check("...and exactly one stderr line says nobody may read it and names the near match",
+          len(warn) == 1 and warn[0].startswith("warning: --to 'agent_b'")
+          and "nobody by that name" in warn[0] and "Did you mean 'agent-b'" in warn[0], r.stderr)
+    r = send("agent-b")
+    check("control: a name that has a row warns about nothing", r.returncode == 0 and r.stderr == "",
+          r.stderr)
+    r = send("AGENT-B")
+    check("control: the row is matched case-insensitively", r.returncode == 0 and r.stderr == "",
+          r.stderr)
+    r = send("all")
+    check("control: `all` is not a typo", r.returncode == 0 and r.stderr == "", r.stderr)
+    bare = root / "visibility-bare"
+    bare.mkdir()
+    r = send("anyone-at-all", bare)
+    check("control: a mailbox with no PARTICIPANTS.md has nothing to compare with, so no warning",
+          r.returncode == 0 and r.stderr == "", r.stderr)
+
+    proj = root / "visibility-project"
+    (proj / ".git").mkdir(parents=True)
+    cmd = ('python3 \\"$CLAUDE_PROJECT_DIR/tools/agent-postbox/hooks/agent_mail_check.py\\" || true')
+    settings = ('{"theme": "dark", "hooks": {"UserPromptSubmit": [{"hooks": '
+                '[{"type": "command", "command": "' + cmd + '"}]}]}}')
+
+    def doctor(env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+        return run(box, "doctor", cwd=proj, env=env)
+
+    base = doctor()
+    check("doctor with no hook: says none is registered and that pickup is poll, informational",
+          "pickup_hook: none registered (pickup is poll" in base.stdout, base.stdout[-300:])
+    check("doctor with no identity: says UNSET and why it matters",
+          "identity: UNSET in this shell" in base.stdout and "empty inbox" in base.stdout,
+          base.stdout[-300:])
+    (proj / ".claude").mkdir()
+    (proj / ".claude" / "settings.json").write_text(settings, encoding="utf-8")
+    r = doctor({"AGENT_MAIL_IDENTITY": "Agent-B"})
+    check("doctor with the hook registered but its script missing: says MISSING and where",
+          "pickup_hook: registered" in r.stdout
+          and "script is MISSING at tools/agent-postbox/hooks/agent_mail_check.py" in r.stdout,
+          r.stdout[-400:])
+    check("...and prints the identity it will use", "identity: 'agent-b' (AGENT_MAIL_IDENTITY)" in r.stdout)
+    script = proj / "tools" / "agent-postbox" / "hooks" / "agent_mail_check.py"
+    script.parent.mkdir(parents=True)
+    script.write_text("# stand-in\n", encoding="utf-8")
+    r = doctor()
+    check("control: with the script present it says so",
+          "script present at tools/agent-postbox/hooks/agent_mail_check.py" in r.stdout
+          and "script is MISSING" not in r.stdout, r.stdout[-400:])
+    (proj / ".claude" / "settings.json").write_text("{not json", encoding="utf-8")
+    r = doctor()
+    check("an unparseable settings file: UNREADABLE, never a traceback",
+          "settings.json is UNREADABLE" in r.stdout and "Traceback" not in r.stderr, r.stdout[-300:])
+    check("the exit status does not depend on any of this (same as with no hook at all)",
+          r.returncode == base.returncode, f"{r.returncode} vs {base.returncode}")
+
+
 def main() -> int:
     faulthandler.dump_traceback_later(WATCHDOG, exit=True)
     with tempfile.TemporaryDirectory() as td:
@@ -1642,6 +1713,7 @@ def main() -> int:
         test_reader_gone(root)
         test_fuzz(root)
         test_participants_not_utf8(root)
+        test_visibility(root)
     faulthandler.cancel_dump_traceback_later()
     if KNOWN:
         print(f"\nKNOWN ({len(KNOWN)}; defects outside this file's reach, not failures):")

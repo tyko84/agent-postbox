@@ -2042,3 +2042,48 @@ matches and is flagged until its other name is gone; a symlinked mailbox
 directory reports `is_symlink`; a renamed row unbinds the old identity.
 `test_adversarial.py` pins (b), (c) and (d); `test_field.py` pins (a) and
 (b) on the field mailbox.
+
+## 41. Two silent failures made visible: a recipient nobody has, a pickup that cannot run
+
+Two situations looked exactly like an empty inbox: a message addressed to a name no
+agent has (a typo), and a pickup adapter that cannot deliver. Both are now reported.
+Neither changes an exit status, a stdout line a script may parse, a `--json` key or the
+meaning of any earlier section.
+
+**A recipient with no row (`send`).** After a message is filed, `send` writes one line to
+**stderr** when `--to` is not an identity in the mailbox's own `PARTICIPANTS.md` (the
+file in the mailbox directory, or the directory above it; the one beside the tool or in
+the working directory is not this mailbox's), not an alias there, and not one of the
+broadcast words (`all`, `any`, `*`, `everything`):
+`warning: --to 'agent_b' is not a row in PARTICIPANTS.md, so the message is filed but
+nobody by that name may ever read it. Did you mean 'agent-b'? (Known: ...)`. The near
+match is `difflib`'s closest row, when there is one. The message is filed anyway and
+`send` exits as it did: a name need not have a row to be legitimate, but a typo looks
+like that. Nothing is said for a mailbox with no table, an empty table, or one that
+cannot be read (those commands already refuse on an unreadable table). The check reads
+`PARTICIPANTS.md` only; it never scans the mailbox. A fan-out through an alias warns
+for none of its writers that have a row.
+
+**A pickup that cannot run (`doctor`).** `doctor` prints, from the project root (the
+directory with `.git` at or above the working directory, or `AGENT_MAIL_PROJECT`):
+
+* `pickup_hook: registered` and one line per host, naming `.claude/settings.json` or
+  `.codex/hooks.json`, and whether the script the command names is `present` or `MISSING`
+  (a moved or deleted tool directory: the hook cannot run, so no mail is surfaced). A
+  hand-written command whose path cannot be read is reported as registered, "script path
+  not checked".
+* `pickup_hook: none registered (pickup is poll: ...)` when neither file registers it. A
+  project that polls has none; this is information, not a fault.
+* `  - <host>: ... is UNREADABLE (not valid JSON)` for a settings file that cannot be
+  parsed; the file is never written.
+* `identity: 'name' (AGENT_MAIL_IDENTITY)`, or `identity: UNSET in this shell`, because
+  the adapter prints nothing without it, which looks exactly like an empty inbox.
+
+None of these lines adds a reason for `doctor` to FAIL.
+
+**Invariant a test must pin.** (a) `send --to <typo>` exits 0, files the message, leaves
+stdout as it was and writes one stderr warning naming the near match; a name with a row
+(in any case), `all`, and a mailbox without a table write nothing to stderr. (b)
+`doctor` reports a registered hook with its script present, with it MISSING, none
+registered, and an unparseable settings file; reports the identity set and unset; and
+exits as it did without any of the lines. `test_cli.py` pins both.
