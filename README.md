@@ -27,6 +27,7 @@ and untested (WSL has not been tried). Use `python3`: stock macOS has no
 
 ```sh
 # 1. Clone. (Not on PyPI: `pip install agent-postbox` is a different project; see Install.)
+#    Already have the repo? Skip this.
 git clone https://github.com/tyko84/agent-postbox
 
 # 2. Watch two sessions exchange a message. Under a second, in a throwaway directory.
@@ -35,24 +36,46 @@ python3 agent-postbox/examples/two-agents/run.py
 # 3. Install into your own project (a git repository), and register the pickup hook
 #    for Claude Code. Use --adapter codex for Codex, or no --adapter to poll.
 python3 agent-postbox/install.py /path/to/your/project --adapter claude-code
-export AGENT_MAIL_IDENTITY=agent-a      # in the shell each session starts from; one name per agent
+
+# 4. Your first exchange. Run from the project's root; works as written with the two
+#    example identities the installer put in PARTICIPANTS.md.
+cd /path/to/your/project
+python3 tools/agent-postbox/agent_mail.py send --type ASK --from agent-a --to agent-b \
+    --subject "who owns the billing client?" --body "Is anyone editing it?"
+AGENT_MAIL_IDENTITY=agent-b python3 tools/agent-postbox/agent_mail.py inbox     # shows the ASK and its id
+python3 tools/agent-postbox/agent_mail.py send --type ANSWER --from agent-b --to agent-a \
+    --reply-to <the ASK's id> --subject "re: billing client" --body "Mine. Safe to edit."
+AGENT_MAIL_IDENTITY=agent-a python3 tools/agent-postbox/agent_mail.py inbox     # shows the ANSWER
+
+# 5. Preview what the hook will put in front of a Claude Code session (the real hook only
+#    fires inside one, before the model sees your prompt).
+echo '{}' | AGENT_MAIL_IDENTITY=agent-a CLAUDE_PROJECT_DIR="$PWD" \
+    python3 tools/agent-postbox/hooks/agent_mail_check.py
 ```
 
-After step 3: rename the example rows `agent-a` and `agent-b` in
-`docs/agent-mail/PARTICIPANTS.md` to your agents' names, then file a canary and
-run `doctor` (`python3 tools/agent-postbox/agent_mail.py canary --from agent-a
---to agent-a`, then `... doctor`). The first `doctor` on a fresh install ends
-in `FAIL: pickup canary missing or stale` (exit 2) until a canary exists, and
-the canary lasts 24 hours, so file a new one to see `PASS` again; that is not a
-broken install. `send` always takes `--from` explicitly; `AGENT_MAIL_IDENTITY`
-is read by `inbox` and by the pickup adapter. `selftest.py` takes about 20
-seconds. Commit `.claude/settings.json` (or `.codex/hooks.json`) so the hook
-reaches the next clone; the `.bak` files next to them are your pre-install
-originals. The whole path with output and timings:
-[docs/onboarding-first-exchange.md](docs/onboarding-first-exchange.md); when it
-does not work: [docs/troubleshooting.md](docs/troubleshooting.md); to remove it
-again: [docs/troubleshooting.md#removing-it](docs/troubleshooting.md#removing-it)
-(there is no uninstall command).
+For real use, then:
+
+1. Rename the example rows `agent-a` and `agent-b` in `docs/agent-mail/PARTICIPANTS.md` to
+   your agents' names, and start each session from a shell with its own name:
+   `export AGENT_MAIL_IDENTITY=<name>` (`inbox` and the hook read it; `send` always takes
+   `--from` explicitly).
+2. File a canary and run `doctor`:
+   `python3 tools/agent-postbox/agent_mail.py canary --from <name> --to <name>`, then
+   `... doctor`. The first `doctor` on a fresh install ends in
+   `FAIL: pickup canary missing or stale` (exit 2) until a canary exists, and a canary lasts
+   24 hours; that is not a broken install. Two other lines are informational:
+   `AGENT_MAIL_IDENTITY: UNSET in this shell` describes the shell you ran `doctor` in, and
+   `authorship: CANNOT_VERIFY` says a `from:` name is a claim anyone can write, not a
+   verified identity.
+3. Commit `.claude/settings.json` (or `.codex/hooks.json`) so the hook reaches the next
+   clone; the `.bak` files next to them are your pre-install originals.
+4. `selftest.py` takes about 20 seconds.
+
+The whole path with output and timings:
+[docs/onboarding-first-exchange.md](docs/onboarding-first-exchange.md); when it does not
+work: [docs/troubleshooting.md](docs/troubleshooting.md); to remove it again:
+[docs/troubleshooting.md#removing-it](docs/troubleshooting.md#removing-it) (there is no
+uninstall command).
 
 Step 2 runs the real installer, the real CLI and the real pickup adapter; only
 the two "agents" are a script. It prints every command with its output, checks
@@ -120,7 +143,7 @@ wire to its own prompt-submit event; Claude Code users can register it as
 ## 30-second demo (project install)
 
 ```text
-$ python3 agent-postbox/install.py .           # tool -> tools/agent-postbox/, mailbox -> docs/agent-mail/
+$ python3 agent-postbox/install.py .           # (run from your project's root) tool -> tools/agent-postbox/, mailbox -> docs/agent-mail/
 $ export AGENT_MAIL_IDENTITY=agent-a
 $ echo "I'm about to refactor its retry handling." > body.txt
 $ python3 tools/agent-postbox/agent_mail.py send --type ASK --from agent-a --to agent-b \
