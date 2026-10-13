@@ -25,6 +25,14 @@ clone. POSIX only (Linux, macOS), Python 3.10-3.14, git. Windows is unsupported
 and untested (WSL has not been tried). Use `python3`: stock macOS has no
 `python`.
 
+What step 3 changes: it copies the tool into your project, creates a mailbox directory, and
+adds one hook entry to that project's `.claude/settings.json` (backed up first). The hook
+prints mailbox text into your agent's context, so anyone who can write to the mailbox can put
+text in front of your agent: read [SECURITY.md](SECURITY.md) before using it on a repository
+with outside contributors. Removing it: [docs/troubleshooting.md](docs/troubleshooting.md#removing-it).
+Evidence so far is thin: Claude Code in headless sessions on one small model, Codex never run
+in the real host, and a pilot that showed no advantage (see Evidence, below).
+
 ```sh
 # 1. Clone. (Not on PyPI: `pip install agent-postbox` is a different project; see Install.)
 #    Already have the repo? Skip this.
@@ -474,7 +482,7 @@ adapter under `hooks/`, or `install.py`, so keep the clone for those.
 The distribution name changed after 0.3.0; if an environment still has the old one, see
 [docs/install-reference.md](docs/install-reference.md). To check a release download
 (hashes, provenance attestations, archive contents, builder identity), run
-`python3 scripts/verify_release.py v0.4.0` from a clone; the details and limits are in the same page.
+`python3 scripts/verify_release.py v0.5.0` from a clone; the details and limits are in the same page.
 
 **Option 2: copy the single file.** `agent_mail.py` has no imports outside the
 standard library; drop it anywhere and run `python3 agent_mail.py ...`.

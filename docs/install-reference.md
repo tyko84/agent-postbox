@@ -20,7 +20,7 @@ From a clone, one command checks a
 release the way a consumer can:
 
 ```sh
-python3 scripts/verify_release.py v0.4.0
+python3 scripts/verify_release.py v0.5.0
 ```
 
 It downloads the tag's wheel, sdist and `SHA256SUMS` with `gh release
