@@ -1445,6 +1445,29 @@ def main() -> int:
         rc, out, err = patched(r16f, "pass", *F16)
         check("control: with the FIFO gone the same claim is written", rc == 0 and "wrote " in out, err)
 
+        print("a working directory that was deleted under the process")
+        gone_shim = ("import os, runpy, sys, tempfile\n"
+                     "d = tempfile.mkdtemp(dir=sys.argv.pop(1))\n"
+                     "os.chdir(d)\nos.rmdir(d)\n"
+                     "sys.argv[0] = sys.argv.pop(1)\n"
+                     "runpy.run_path(sys.argv[0], run_name='__main__')\n")
+        gone_env = {k: v for k, v in os.environ.items()
+                    if k not in ("AGENT_MAIL_DIR", "AGENT_MAIL_PROJECT", "CLAUDE_PROJECT_DIR")}
+        gone_box = Path(td) / "gone-box"
+        gone_box.mkdir()
+        for label, extra in (("no AGENT_MAIL_DIR", {}), ("AGENT_MAIL_DIR set", {"AGENT_MAIL_DIR": str(gone_box)})):
+            cp = subprocess.run([sys.executable, "-I", "-c", gone_shim, td, TOOL, "inbox", "--to", "bob"],
+                                capture_output=True, text=True, env=dict(gone_env, **extra),
+                                timeout=STEP_TIMEOUT)
+            if extra:
+                check(f"deleted cwd, {label}: the mailbox is still read, no traceback",
+                      cp.returncode == 0 and "Traceback" not in cp.stderr, cp.stdout + cp.stderr)
+            else:
+                check(f"deleted cwd, {label}: one line, exit 2, no traceback",
+                      cp.returncode == 2 and "Traceback" not in cp.stderr
+                      and cp.stderr.startswith("refusing: the working directory cannot be read")
+                      and len(cp.stderr.strip().splitlines()) == 1, cp.stdout + cp.stderr)
+
     faulthandler.cancel_dump_traceback_later()
     if FAILS:
         print("\nFAILED:")
