@@ -7,6 +7,32 @@ behaviour).
 
 ## [Unreleased]
 
+### Added
+
+- `examples/two-agents/live_demo.py`: a recording kit for a demonstration with two REAL
+  Claude Code sessions. `setup` prints the terminal commands, prompts and narration;
+  `check` judges six beats (both identities wrote, the live value is in the ASK subject, an
+  ASK exists, the hook named it, an ANSWER cites it, the receiver's code uses the live
+  value) from the mailbox and code, never from what a model said; `rehearse` runs the
+  scenario headless under a call and cost budget and exits 2 without `claude`.
+  `examples/two-agents/RECORDING.md` covers it; `run.py` stays labelled as scripted.
+- `scripts/experiment_micro.py` and `docs/micro-experiment.md`: a two-agent pilot with real
+  headless sessions comparing Postbox with a scripted relay and with a shared notes file.
+  The design was committed before the first run; outcomes come from files; a hard spend
+  ceiling is enforced from the host-reported cost. `test_micro_experiment.py` is its
+  offline test. Neither script is run in CI.
+- `docs/first-use-audit.md`: first-use timings from a clean clone, a ranked friction list
+  and a tested manual cleanup procedure (there is no uninstall command).
+
+### Changed
+
+- `install.py` prints the verify command with `cd <project> &&` (shell-quoted) so it runs
+  from any directory, and names the `AGENT_MAIL_IDENTITY` step. Wording only; exit codes
+  and files are unchanged.
+- README: a "Which hosts are supported" table and a note on what "injection" means.
+- `docs/issues-to-open.md`: every claim re-run against 0.5.0; two issues opened (#20, #21),
+  three held, one dropped as already fixed.
+
 ## [0.5.0] - 2026-10-12
 
 ### Added

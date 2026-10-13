@@ -1,336 +1,288 @@
 # Starter issues, drafted
 
-Five issues the owner can paste into GitHub, one per heading. None is open
-yet; this file is the draft, not the tracker. Each names a known gap, what
-was observed, what "done" means, which files it touches and how to check it.
-Delete an entry here once its issue exists.
+This file is a draft, not the tracker. Each entry below is ready to paste into
+GitHub. Delete an entry once its issue exists. Entries under **Hold** must not
+be opened until the question named for them is decided.
 
-Every one of them follows the project's rules (CONTRIBUTING.md): standard
-library only; a change in behaviour is a new numbered `PROTOCOL.md` section,
-never an edit that changes what an old one means; a new check asserts on
-content that must appear; `CHANGELOG.md` gets a line.
+Every contribution follows CONTRIBUTING.md: standard library only; a change in
+behaviour is a new numbered `PROTOCOL.md` section, never an edit that changes
+what an old one means; a new check asserts on content that must appear; POSIX
+only; `CHANGELOG.md` gets a line under `[Unreleased]`.
 
-Observations below were made on 2026-10-12 against the tree at version 0.4.0
-(unreleased), with Python 3.12 on macOS, using only the shipped CLI.
+Every observation below was re-run on 2026-10-12 against the tree at version
+0.5.0 (`agent_mail.py --version` prints `agent-postbox 0.5.0`), Python 3.12,
+macOS, in a throwaway directory with `AGENT_MAIL_DIR` pointing at it. Line
+numbers are for that tree and drift; the names beside them are stable.
+
+## Ranked: open now / hold
+
+| Rank | Entry | Decision | Labels | Why |
+| --- | --- | --- | --- | --- |
+| 1 | A. CONTRIBUTING.md names 6 of the 26 files CI type-checks | opened as #20 | `documentation`, `good first issue`, `help wanted` | A demonstrated gap (26 files in `ci.yml` against 6 in CONTRIBUTING.md), one file to edit, checkable by diffing two strings |
+| 2 | B. Run the pickup adapter inside a real Codex and record the result | opened as #21 | `field-report`, `help wanted` | `docs/hosts.md` states that nothing was observed inside Codex and gives a five-step checklist with a positive control; needs only a Codex install |
+| 3 | C. `status --json`: report ask results as keys | hold | `enhancement` | Reverses a choice section 39 made on purpose, and a consumer can already derive the numbers from `list --json`; no one has asked for it |
+| 4 | D. `inbox` / `list` exit 2 while the listing is complete and a file is quarantined | hold | `enhancement` | The behaviour is documented and intended; whether to change an exit status is the owner's decision (three options, one is "do nothing") |
+| 5 | E. `status`: see a dead holder inside the first 60 seconds | hold | `enhancement` | Reproduced, but the only consumer is this repo's own harness, and the fix is a protocol design choice (flag or field) not yet made |
+| - | Former issue 3 (orphaned key marker after a refused retry) | **dropped** | - | Already fixed: PROTOCOL.md section 31 "Refused at the scope stage", `test_field.py` phase "orphan", CHANGELOG.md line 207 |
+
+A and B are open (#20, #21); they do not depend on each other or on anything in Hold.
+C, D and E are independent of each other, but C and E both add keys to
+`status --json` and therefore both touch the same pin (see Traps); if both are
+ever accepted, take them one after the other.
+
+## Traps that apply to any code change (put a link to this list in the issue)
+
+* `test_hardening.py` (the check named "documented key set is exactly stable",
+  line 279) compares the top-level keys of `status --json`, and the keys of
+  six of its sub-objects, with an exact list. Adding a key fails it until the
+  list is edited on purpose, with a comment naming the new `PROTOCOL.md`
+  section. Keep it an exact comparison.
+* `test_publication.py` requires every `.py` file in the root, `hooks/`,
+  `scripts/` and `examples/` to be on the one `mypy` line of
+  `.github/workflows/ci.yml` (`mypy_files`, `python_files`, line 1652 and
+  following), and a new test file to be on every list that names the test
+  files: the steps of `ci.yml`, the `test` job of `release.yml`,
+  `.github/pull_request_template.md`, `CONTRIBUTING.md` and
+  `scripts/preflight.sh`. A new file added in one place only fails
+  `python test_publication.py`; copy what `test_team_sim.py` did.
+* `test_readme_examples.py` executes every `bash runnable` block of
+  `README.md` and resolves every "section N" reference to a real `PROTOCOL.md`
+  heading. Change an example or renumber nothing without running it.
+* `PROTOCOL.md` section numbers are never reused. The next free number is the one after the last heading in `PROTOCOL.md`
+  (the last heading is "40. Identity binding").
+* Never run the CLI against the checkout as a mailbox (SECURITY.md): set
+  `AGENT_MAIL_DIR` to a temporary directory, as the commands below do.
 
 ---
 
-## 1. `status --json`: report ask results as keys, not only as problem codes
+## Opened
+
+* A (CONTRIBUTING.md's `mypy` command) is issue #20 (`documentation`, `good first issue`, `help wanted`).
+* B (field check of the adapter inside the real Codex CLI) is issue #21 (`field-report`, `help wanted`).
+
+# Hold
+
+Do not open these. Each has been reproduced and corrected, so that if the owner
+decides to proceed the text is ready, but each depends on a decision that has
+not been made, or has no demonstrated user.
+
+## C. `status --json`: report ask results as keys
+
+**Labels if opened:** `enhancement`, `help wanted`. Not `good first issue`: it
+adds a protocol section and edits an exact pin.
+
+**Hold because.** Section 39 chose not to add these keys ("No other key is
+added: which result stands on which ASK is a row of `list --json --type ASK`,
+and a consumer that wants only the ASKs with results filters that document on
+`result`", PROTOCOL.md lines 1922 to 1927). Reversing that is a design
+decision, and the derivation it points to works today. Open it only when a
+real consumer reports that deriving the numbers is a problem.
 
 **Title:** `status --json` should carry `ask_results` and `results_attention`
 
-**Context.** An ANSWER can carry `--result` (PROTOCOL.md section 39). Text
-`status` prints one line for it:
+**Evidence.** In a clean mailbox: one ASK from `agent-a` to `agent-b`, then
+`send --type ANSWER --from agent-b --to agent-a --reply-to <ask id> --result
+done --reason ok --subject re --body x`. Then `status`:
 
 ```text
+messages: 2  (live ANSWER=1, ASK=0, CLAIM=0, DISPUTE=0, NOTICE=0)
+asks: open=0  oldest_open_age=-
+claims: held=0  expired=0  malformed_expiry=0  superseded=0
 ask results (claimed, not proven): with_result=1 (DONE=1)  answered=0  unanswered=0
 ```
 
-and, when something needs a look, a `results attention` table. `status
---json` has neither. Section 39 says so on purpose ("No other key is added"):
-the JSON only gains four codes in `problems`, and a consumer is told to
-derive the rest from `list --json --type ASK`. So a tool that wants the
-counts the text view already prints has to parse prose or re-derive them.
-Adding the keys is blocked by a deliberate pin in `test_hardening.py`
-("documented key set is exactly stable"), which compares the top-level keys
-of `status --json` with an exact list.
+`status --json` on the same mailbox has 23 top-level keys (`agents`, `asks`,
+`claims`, `claims_attention`, `claims_attention_truncated`, `claims_held`,
+`claims_held_truncated`, `contested_scopes`, `dangling_replies`,
+`foreign_supersedes`, `idem_markers`, `mailbox`, `messages`, `now`,
+`problems`, `quarantined`, `schema`, `scope_filter`, `scope_locks`,
+`stale_tmp`, `stalled_agents`, `stalled_hours`, `takeover_mutexes`), none of
+which carries the line above; `problems` is `[]`. A planted unattached result
+shows as a text table row (`UNATTACHED_RESULT  -  <answer id>  agent-b  DONE`)
+and as `{"code": "UNATTACHED_RESULT", "count": 1}`, with no row in JSON. The
+text comes from `_results_lines` (`agent_mail.py` line 3204), called from
+`cmd_status` (line 3241).
 
-**Proposal.** Add two keys, and relax the pin deliberately rather than by
-accident:
-
-* `ask_results`: `{"with_result": N, "by_value": {"DONE": n, ...},
-  "answered_without_result": N, "unanswered": N}`, the numbers of the text
-  line, present (with zeros) whether or not any ANSWER carries a result;
-* `results_attention`: the rows of the text table (`reason`, `ask`, `answer`,
-  `sender`, `result`), capped like `claims_attention` with a
-  `results_attention_truncated` count.
+**Proposal.** Two keys: `ask_results` (`with_result`, `by_value`,
+`answered_without_result`, `unanswered`) and `results_attention` (rows of
+`reason`, `ask`, `answer`, `sender`, `result`, capped like `claims_attention`
+with a `results_attention_truncated` count).
 
 **Acceptance criteria.**
 
-* A new numbered `PROTOCOL.md` section defines both keys and states that
-  section 39's "No other key is added" described 0.4.0; sections 29, 33 and 34
-  already promise that keys are only ever added.
-* `test_hardening.py`'s key-set check lists the new keys explicitly, with a
-  comment naming the new section. It stays an exact comparison: the point of
-  the pin is that a key cannot appear unannounced.
-* Text `status` is byte-for-byte unchanged, for mailboxes with and without
-  results.
-* A mailbox with one `DONE` result reports `with_result: 1` and
-  `by_value.DONE: 1`; a contested or third-party result appears in
-  `results_attention` with the same reason code `problems` counts.
-* Subjects and bodies never appear in either key.
+- [ ] A new numbered `PROTOCOL.md` section (the next free number) defines both keys. Section 39
+      is not edited; the new section says it supersedes the one sentence
+      "No other key is added". Sections 29 (line 775) and 37 (line 1679)
+      already say keys are only ever added within a schema.
+- [ ] `test_hardening.py` line 279: the key-set list names the new keys
+      explicitly, with a comment citing the new section. It stays an exact
+      comparison.
+- [ ] Text `status` is byte-for-byte unchanged, with and without results.
+- [ ] A mailbox with one `DONE` result reports `with_result: 1` and
+      `by_value.DONE: 1`; a third-party or contested result appears in
+      `results_attention` with the reason code `problems` counts.
+- [ ] Subjects and bodies appear in neither key.
+- [ ] `python selftest.py`, `test_hardening.py`, `test_cli.py` and
+      `test_readme_examples.py` pass; README.md "Observability: `status`" (line
+      408) lists the keys; `CHANGELOG.md` has a line.
 
-**Files to touch.** `agent_mail.py` (`build_status`, next to
-`_results_lines`), `PROTOCOL.md` (new section), `README.md` (Observability:
-`status`), `test_hardening.py` (the pin), `selftest.py` or `test_cli.py` (the
-new assertions), `CHANGELOG.md`.
+**Files.** `agent_mail.py` (`build_status`, line 3009), `PROTOCOL.md`,
+`README.md`, `test_hardening.py`, `test_cli.py`, `CHANGELOG.md`.
 
-**How to test.** `python selftest.py`, `python test_hardening.py`,
-`python test_cli.py`, and by hand: the fourth runnable block of README.md
-(Using the CLI), then `agent-postbox status --json`.
+**Out of scope.** Any change to `list`/`inbox`/`show` rows; any new result value.
+
+**Dependencies.** Shares the `test_hardening.py` pin with E; land one at a time.
 
 ---
 
-## 2. `inbox` exits 2 while a quarantined file is present, although the admitted mail is listed
+## D. `inbox` / `list` exit 2 although the listing is complete
+
+**Labels if opened:** `enhancement`. Not `good first issue`: it changes an exit
+status that wrappers depend on.
+
+**Hold because.** The exit status is documented and deliberate (README.md
+line 502, PROTOCOL.md lines 1142, 1642 and 1782, and the command says so on
+stderr). Whether to change a documented exit status in a 0.x tool is the
+owner's call. The only part that needs no decision, the documentation, already
+exists. If the owner wants to keep exit 2, close this as "working as
+documented".
 
 **Title:** Decide what `inbox` / `list` exit when mail was listed in full but a quarantined file exists
 
-**Context.** A file the reader refuses (unknown `type`, malformed id, and so
-on) is quarantined: reported, never delivered, never deleted. While one is
-in the mailbox, `list`, `inbox` and `latency` exit 2. This is documented
-(README.md, Exit statuses; PROTOCOL.md sections 33, 37 and 38) and the
-command says so on stderr. The open question is whether it is the right
-contract for the caller, because the listing itself is complete and correct.
-
-**Observed.** A mailbox with one real ASK to `agent-b` and one planted file
-with `type: ACK`:
-
-```text
-$ agent_mail.py inbox --to agent-b
-REJECT 01ARZ3NDEKTSV4RRFFQ69G5FAV-planted.md: unknown type 'ACK' (CANNOT_VERIFY; closed set ASK/ANSWER/NOTICE/CLAIM/DISPUTE)
-hint: 1 quarantined file(s) (REJECT above) are never delivered and never deleted; the admitted mail is still listed in full, and the exit status is 2 until they are repaired or moved out of the mailbox
-# inbox: agent-b  mailbox: <mailbox>  (AGENT_MAIL_DIR)
-! ASK     [open      ] agent-a -> agent-b  real question
-    01M4R38Y0FRZ5PR9R60TMQC243
-[exit 2]
-```
-
-`inbox --to agent-b --json` printed the complete document (`"matched": 1`,
-`"quarantined": 1`, the ASK's row) and also exited 2. `list --to agent-b
---live` behaved the same. `status` exited 0 with `PROBLEMS: QUARANTINED=1`.
-The pickup adapter exited 0 and surfaced the ASK. `doctor` exited 2 with
-`FAIL: reject envelopes present`.
-
-**Why it matters.** A polling host that treats a non-zero exit as "the poll
-failed" discards a listing that was complete, so one stray file in a shared
-mailbox makes every poller deaf while the adapter keeps working. Anyone who
-can write a file into the mailbox can cause it. `scripts/scenario.py` has to
-count exit 2 from a poll as a success for this reason
-(docs/benchmarking.md, "pickup success rate").
-
-**Decide one of:**
-
-1. Keep exit 2, and document the contract where a wrapper author will find
-   it: "exit 2 with a complete listing on stdout means quarantine; read
-   stdout anyway". The `--json` document's `quarantined` count already lets a
-   tool tell this case from a refusal with empty stdout.
-2. Give the case its own exit status, distinct from "refused, nothing
-   listed".
-3. Exit 0 from `list` and `inbox` when the listing is complete, keep the
-   `REJECT` and `hint:` lines on stderr and the `quarantined` count in JSON,
-   and leave the non-zero exit to `doctor`.
-
-**Acceptance criteria.**
-
-* The decision is written as a new numbered `PROTOCOL.md` section (options 2
-  and 3 change section 33's table, which is a behaviour change; option 1 is a
-  clarification and may live in the README and `--help` alone).
-* The README's Exit statuses table, `agent-postbox --help` and
-  `list`/`inbox --help` say the same thing.
-* A test plants an `ACK` file next to one real ASK and asserts the listing on
-  stdout, the `REJECT` line on stderr and the chosen exit status, for `list`,
-  `inbox`, `inbox --json` and `latency`.
-* The adapter still exits 0 and still surfaces the admitted mail.
-
-**Files to touch.** `agent_mail.py` (`cmd_list`, `cmd_inbox`, `cmd_latency`,
-the help epilog), `PROTOCOL.md`, `README.md`, `test_cli.py` or `selftest.py`;
-for options 2 and 3 also `scripts/scenario.py` (how the baseline classifies a
-poll) and `docs/benchmarking.md`.
-
-**How to test.** Reproduce with:
+**Evidence.** One real ASK to `agent-b` and one planted file with `type: ACK`:
 
 ```sh
-export AGENT_MAIL_DIR="$PWD/box"; mkdir -p "$AGENT_MAIL_DIR"
+export AGENT_MAIL_DIR="$(mktemp -d)/box"; mkdir -p "$AGENT_MAIL_DIR"
 python agent_mail.py send --type ASK --from agent-a --to agent-b --subject "real question" --body hello
 ID=01ARZ3NDEKTSV4RRFFQ69G5FAV
 printf -- '---\nid: %s\ntype: ACK\nfrom: agent-a\nto: agent-b\nsubject: planted\ndate: 2026-10-12T00:00:00Z\n---\nbody\n' "$ID" > "$AGENT_MAIL_DIR/$ID-planted.md"
 python agent_mail.py inbox --to agent-b; echo "exit $?"
 ```
 
-then `python selftest.py`, `python test_cli.py` and
-`python scripts/scenario.py --quick --seed 1`.
+Observed: stdout has the header and `! ASK [open] agent-a -> agent-b  real question`
+with its id; stderr has `REJECT 01ARZ3NDEKTSV4RRFFQ69G5FAV-planted.md: unknown
+type 'ACK' (CANNOT_VERIFY; closed set ASK/ANSWER/NOTICE/CLAIM/DISPUTE)` and a
+`hint:` line saying the admitted mail "is still listed in full, and the exit
+status is 2 until they are repaired or moved out of the mailbox"; exit 2.
+`inbox --to agent-b --json` prints the complete document (`"matched": 1`,
+`"quarantined": 1`) and exits 2; `list --to agent-b --live` and `latency` also
+exit 2. `status` exits 0 (`PROBLEMS: QUARANTINED=1`); `doctor` exits 2
+(`FAIL: reject envelopes present`); `hooks/agent_mail_check.py` with
+`AGENT_MAIL_IDENTITY=agent-b` exits 0 and prints the ASK.
 
----
+`docs/benchmarking.md` line 161 ("pickup success rate") says a poll that
+exits 2 because of a planted file counts as a success and is shown under
+"pickup exit nonzero", which is why `scripts/scenario.py` (lines 785, 1000)
+has to treat it specially.
 
-## 3. A key marker stays orphaned when the retry of a killed keyed CLAIM is refused at the scope stage
-
-**Title:** Keyed CLAIM killed mid-send: a retry refused with exit 3 never clears its own orphaned key marker
-
-**Resolved** on branch dev/a-hardening: a scope-stage refusal clears its own key's orphaned marker (PROTOCOL.md section 31, "Refused at the scope stage"; test_field.py phase 2c); do not open.
-
-**Context.** `send --key K` reserves a marker file `.idem.<hash>` and holds a
-kernel lock on it while it publishes (PROTOCOL.md section 31). A sender that
-dies leaves the marker; a retry with the same key takes it over at once. For
-a scoped `CLAIM` the order is: take the scope lock, check for a rival holder,
-then handle the key. If, between the death and the retry, another agent
-claimed the scope, the retry is refused at the rival check and never reaches
-the key stage, so nothing takes the marker over. docs/benchmarking.md names
-this as the one fault `scripts/scenario.py` deliberately does not inject.
-
-**Observed.** With the same technique `test_field.py` and
-`scripts/scenario.py` use (the real `agent_mail.main` in a child, `os.link`
-made to block, then SIGKILL):
-
-1. `agent-a` sends `CLAIM --scope src/x.py --key k-a-1` and is killed after
-   reserving the key and writing its temp file. Left behind: one
-   `.<id>-a-claims.md.<pid>.tmp`, one `.idem.<hash>`, one
-   `.scope.<hash>.lock`.
-2. `agent-b` sends a `CLAIM` on `src/x.py`: exit 0, written. The scope lock
-   file is gone afterwards (reclaimed, as section 30 says).
-3. `agent-a` retries the identical keyed claim:
-   `scope 'src/x.py' is already held by agent-b (..., until ...)`, exit 3.
-   The `.idem.<hash>` file is still there.
-4. `status` right away: `idem_markers: total=1 resolved=0 in_flight=1 held=0
-   orphaned=0`, no problem reported. `status --now` 61 seconds later:
-   `idem_markers: total=1 resolved=0 in_flight=0 held=0 orphaned=1` and
-   `PROBLEMS: ORPHAN_IDEM_MARKER=1`.
-
-Control: a keyed `CLAIM` that is simply refused at the scope stage, with no
-earlier crash, left no hidden file at all. The marker comes from the killed
-sender; what is missing is that its own refused retry does not clear it.
-
-The marker is inert (it blocks nobody but a retry of the same key, which
-would take it over), and `status` and `doctor` report it. But it stays until
-a retry with the same content gets past the scope check, which may be never
-if the agent gives up once the scope is taken, and until then an operator
-sees `ORPHAN_IDEM_MARKER` with no command that clears it.
-
-**Proposal.** When a keyed send is refused at the scope stage, look at its
-own key: if a marker for that key exists, names no landed message, and no
-live process holds its lock, remove it under the same takeover rules section
-31 already defines. A marker held by a live sender, or one whose message
-landed, is left alone.
-
-**Acceptance criteria.**
-
-* After steps 1 to 3 above, no `.idem.*` file for that key remains, and
-  `status --now` 61 seconds later reports `idem_markers.orphaned == 0` and no
-  `ORPHAN_IDEM_MARKER`.
-* A marker whose holder is alive is never removed by a refused retry (the
-  retry still exits 3 and the live sender still publishes exactly once).
-* A later retry of the same key, after the rival claim has expired, still
-  writes exactly one message.
-* The refusal still writes no message and still exits 3.
-* A new numbered `PROTOCOL.md` section states the rule; section 31 is not
-  rewritten.
-* `scripts/scenario.py` can then inject this fault instead of avoiding it,
-  and the paragraph in docs/benchmarking.md that explains the omission is
-  updated (may be a follow-up).
-
-**Files to touch.** `agent_mail.py` (the scope refusal in `cmd_send` and the
-key takeover helpers), `PROTOCOL.md`, `test_field.py` (it already has the
-kill-at-`os.link` harness), `CHANGELOG.md`; optionally `scripts/scenario.py`
-and `docs/benchmarking.md`.
-
-**How to test.** `python test_field.py`, `python stress_test.py`,
-`python selftest.py`, `python scripts/scenario.py --seed 1`.
-
----
-
-## 4. `status --json`: let a tool see a dead holder without shifting the clock by 61 seconds
-
-**Title:** `status --json` hides whether a young lock or key marker has a live holder; tools pass `--now` +61 s to find out
-
-**Context.** `status` classifies each scope lock and key marker as in flight,
-held by a live process, or orphaned (PROTOCOL.md section 33). A file younger
-than 60 seconds is counted `in_flight` and is not probed at all. That is
-right for a person (a send in progress is not a problem), but a tool that
-has just killed or lost a sender cannot ask "is anyone holding this?" for a
-minute. `scripts/scenario.py` works around it by reading `status --json`
-twice at every boundary, the second time with `--now` set 61 seconds ahead
-(docs/benchmarking.md, "The workload and its determinism" and the
-recovery entry under "How to read the output"), and `status --help` describes `--now` as
-being for tests. Shifting `--now` also shifts everything else `status`
-derives at that instant (claim expiry, stalled agents), so the second
-reading is not the same picture with one difference.
-
-**Observed.** In the reproduction of issue 3, immediately after the sender
-was killed `status` reported the marker as `in_flight=1` with no problem;
-the same mailbox read with `--now` 61 seconds ahead reported `orphaned=1`
-and `ORPHAN_IDEM_MARKER=1`. Nothing in the first document says that the
-holder is already dead.
-
-**Proposal (either, or both).**
-
-* `status --no-grace`: probe every lock and marker regardless of age, so
-  `held` and `orphaned` are current and `in_flight` is 0. The 60 second
-  window exists for a reason (a sender may have created its file and not yet
-  locked it), so the new section must say what a tool may conclude from
-  `orphaned` on a very young file, and the default must not change.
-* A per-file list in `status --json`, for example `hidden_files`: one row per
-  lock and marker with `kind`, `age_seconds` and `holder` (`held`, `free` or
-  `unknown`, straight from the read-only probe), capped and with a
-  `_truncated` count like the other lists. The file name is a hash and
-  carries no scope text, but confirm that before exposing it.
-
-**Acceptance criteria.**
-
-* Default `status` and `status --json` output is unchanged except for keys
-  that are added (and `test_hardening.py`'s exact key-set pin is updated
-  deliberately, as in issue 1).
-* With the new flag or field, a marker whose sender was SIGKILLed is
-  reported as having no live holder in the first reading, with the real
-  clock.
-* A marker or lock whose sender is alive (parked, not killed) is reported as
-  held, never as orphaned.
-* `status` still writes nothing and still exits 0; the probe stays read-only.
-* `scripts/scenario.py` can drop its second, shifted reading (may be a
-  follow-up).
-* A new numbered `PROTOCOL.md` section; `README.md` (Observability) and
-  `status --help` mention it.
-
-**Files to touch.** `agent_mail.py` (`scan_hidden`, `build_status`, the
-`status` parser), `PROTOCOL.md`, `README.md`, `test_hardening.py`,
-`test_field.py` (live versus dead holder), `CHANGELOG.md`; optionally
+**Options.** (1) Keep exit 2 and say in the README that stdout is still
+complete (a clarification; no new section). (2) Give the case its own exit
+status. (3) Exit 0 from `list`/`inbox` when the listing is complete and leave
+the non-zero exit to `doctor`. Options 2 and 3 change the PROTOCOL.md section 33
+exit table (line 1142) and need a new section; they also touch
 `scripts/scenario.py` and `docs/benchmarking.md`.
 
-**How to test.** `python test_field.py`, `python test_hardening.py`,
-`python selftest.py`, `python scripts/scenario.py --seed 1`.
+**Acceptance criteria (after a decision).**
+
+- [ ] The decision is a new numbered section (option 1 may be a README
+      clarification only).
+- [ ] README.md "Exit statuses" (line 496), `agent-postbox --help` and
+      `list`/`inbox --help` agree.
+- [ ] A test plants the `ACK` file next to one real ASK and asserts stdout,
+      the `REJECT` line on stderr and the exit status for `list`, `inbox`,
+      `inbox --json` and `latency`; the adapter still exits 0.
+- [ ] `python scripts/scenario.py --quick --seed 1` and `python test_scenario.py` pass.
+
+**Files.** `agent_mail.py` (`cmd_list` line 2645, `cmd_inbox` line 2686,
+`cmd_latency` line 1545), `PROTOCOL.md`, `README.md`, `test_cli.py`,
+`scripts/scenario.py`, `docs/benchmarking.md`.
+
+**Dependencies.** None.
 
 ---
 
-## 5. Confirm the pickup adapter inside a real second host
+## E. `status`: see a dead holder inside the first 60 seconds
 
-**Title:** Field check: run `hooks/agent_mail_check.py` from a host other than Claude Code and record what happened
+**Labels if opened:** `enhancement`. Not `good first issue`.
 
-**Context.** The adapter is host-neutral by design: it reads
-`AGENT_MAIL_IDENTITY`, prints live mail on stdout and always exits 0
-(PROTOCOL.md sections 9 and 33). `install.py --adapter claude-code` registers it for
-one host. Every automated test, `scripts/scenario.py` and
-`examples/two-agents/run.py` run the adapter as a subprocess, which shows
-what it prints, not that a given host puts that text in front of its model.
-For any host other than Claude Code the repository has no recorded
-confirmation at all. `docs/hosts.md` holds the per-host wiring notes and the
-checklist to follow; if that file is not in the tree yet, this issue waits
-for it.
+**Hold because.** The behaviour is reproduced but intended (PROTOCOL.md
+section 33: nothing younger than `PROBE_MIN_AGE_SECONDS`, which is
+`IDEM_WAIT_MAX`, 60 s, is probed; `agent_mail.py` lines 2793 and 2902). The
+only consumer that needs more is this repository's own harness, which already
+works around it with a second reading at `--now` +61 s
+(`GRACE_SHIFT`, `scripts/scenario.py` line 199). The fix is a design choice
+(a flag, a per-file list, or neither) with a safety argument that has to be
+made first: the grace exists because a sender may have created a file and not
+yet locked it. Open it when someone other than the harness needs it.
 
-**What to do.** Pick one host that has a prompt-submit (or equivalent) hook,
-follow the checklist in `docs/hosts.md` from start to finish, and report.
-This is a field report, not a code change, unless the check finds a bug.
+**Title:** `status --json` cannot tell a dead holder from a live one for the first 60 seconds
 
-**Acceptance criteria.**
+**Evidence.** A sender parked after reserving its key, then SIGKILLed. This
+is the technique `test_field.py` uses (`BEFORE_PUBLISH`, line 118): the real
+`agent_mail.main` in a child with `_publish` replaced by a blocking function.
 
-* The report names the host and its version, the operating system, the
-  Python version and `agent_mail.py --version`.
-* It shows the hook registration used (the host's own configuration, with
-  private paths replaced).
-* It shows, for one ASK sent from another identity: the adapter's output as
-  the host captured it, and evidence that the text reached the model's
-  context (the host's transcript or debug view, or the model quoting the
-  message id back). A screenshot of the adapter run by hand does not count.
-* It states what happens when `AGENT_MAIL_IDENTITY` is unset in the host's
-  hook environment, since a silent adapter looks like an empty inbox.
-* It follows CONTRIBUTING.md's field report walkthrough: no message bodies,
-  no private names, paths or hosts.
-* `docs/hosts.md` records what was observed for that host, with the date and
-  the versions; a host that does not work is recorded as such, with the
-  reason.
+```python
+import os, signal, subprocess, sys, tempfile, time
+repo = "/path/to/agent-postbox"            # a clone; the mailbox below is a temp dir
+tmp = tempfile.mkdtemp(); box = os.path.join(tmp, "box"); os.makedirs(box)
+env = dict(os.environ, AGENT_MAIL_DIR=box); ready = os.path.join(tmp, "ready")
+child = (f"import sys,time; sys.path.insert(0,{repo!r}); import agent_mail\n"
+         f"agent_mail._publish = lambda *a, **k: (open({ready!r},'w').close(), time.sleep(600))\n"
+         "sys.exit(agent_mail.main(['send','--type','ASK','--from','agent-a','--to','agent-b',"
+         "'--subject','s','--body','b','--key','k1']))\n")
+p = subprocess.Popen([sys.executable, "-c", child], env=env)
+while not os.path.exists(ready): time.sleep(0.05)
+status = lambda *a: subprocess.run([sys.executable, repo + "/agent_mail.py", "status", "--json", *a],
+                                   env=env, capture_output=True, text=True).stdout
+print("alive :", status())           # idem_markers: in_flight 1
+p.send_signal(signal.SIGKILL); p.wait()
+print("killed:", status())           # identical: in_flight 1, problems []
+```
 
-**Files to touch.** `docs/hosts.md`; `PARTICIPANTS.template.md` only if the
-host needs a mechanism wording that is not there; `hooks/` only if a bug is
-found (then with a test in `selftest.py`).
+Observed (only the relevant keys):
 
-**How to test.** By hand, in the host. Before and after:
-`python tools/agent-postbox/selftest.py` in the project, and
-`python examples/two-agents/run.py` in the clone to confirm the adapter
-itself behaves on that machine.
+```text
+alive : idem_markers {held 0, in_flight 1, orphaned 0, resolved 0, total 1}  problems []
+killed: idem_markers {held 0, in_flight 1, orphaned 0, resolved 0, total 1}  problems []
+killed, status --now <real time + 61 s>:
+        idem_markers {held 0, in_flight 0, orphaned 1, resolved 0, total 1}
+        problems [{"code": "ORPHAN_IDEM_MARKER", "count": 1}]
+```
+
+`status --help` describes `--now` as "evaluate at this ISO-8601 instant
+(tests)". `doctor` in the killed state prints `idem_markers: 1 (resolved 0,
+in_flight 1, held 0, orphaned 0)`.
+
+**Proposal (either, or both).** `status --no-grace`, which probes every lock
+and marker regardless of age (default unchanged); or a capped per-file list
+with `kind`, `age_seconds` and `holder` (`held` | `free` | `unknown`).
+
+**Acceptance criteria (after a decision).**
+
+- [ ] A new numbered section states what a tool may conclude from `orphaned`
+      on a file younger than 60 s; the default output does not change.
+- [ ] With the real clock, the SIGKILLed sender above reads as no live holder
+      in the first reading; a parked, not killed, sender reads as `held`,
+      never `orphaned`.
+- [ ] `status` still writes nothing and exits 0 (the probe stays read-only).
+- [ ] `test_hardening.py` line 279 (key-set pin) updated deliberately if a
+      key is added; `test_field.py` covers live and dead holders.
+- [ ] README.md (line 408) and `status --help` mention it.
+
+**Files.** `agent_mail.py` (`scan_hidden` line 2839, `build_status`, `cmd_status`
+line 3241 and its parser), `PROTOCOL.md`, `README.md`, `test_hardening.py`,
+`test_field.py`, `CHANGELOG.md`; optionally `scripts/scenario.py` and
+`docs/benchmarking.md`.
+
+**Dependencies.** Shares the `test_hardening.py` pin with C.
+
+---
+
+# Dropped
+
+**Former issue 3: "Keyed CLAIM killed mid-send: a retry refused with exit 3
+never clears its own orphaned key marker".** Fixed and tested:
+PROTOCOL.md section 31, "Refused at the scope stage" (line 949);
+`agent_mail.py` line 1895 (the helper that clears it); `test_field.py` lines
+570 to 640 (the same sequence, a live-holder control and the later retry);
+CHANGELOG.md line 207; `docs/benchmarking.md` lines 203 to 211. Do not open.

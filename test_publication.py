@@ -19,6 +19,7 @@ import io
 import lzma
 import os
 import pwd
+import re
 import shutil
 import stat
 import struct
@@ -1619,6 +1620,31 @@ class Workflows(unittest.TestCase):
         for f in ("scripts/e2e_claude.py", "test_e2e_script.py"):
             self.assertIn(f, self.mypy_files())
             self.assertIn(f" {f}", template)
+
+    def test_the_demo_kit_and_micro_experiment_are_tested_offline_and_never_run_in_ci(self) -> None:
+        # examples/two-agents/live_demo.py and scripts/experiment_micro.py start real model
+        # sessions (docs/micro-experiment.md): no workflow runs them; their offline tests are
+        # steps of the required selftest job and on every other test list
+        ci = self.jobs("ci.yml")["selftest"]
+        steps = [ln.strip() for ln in ci.splitlines() if ln.strip().startswith("- run: ")]
+        root = Path(__file__).resolve().parent
+        template = (root / ".github" / "pull_request_template.md").read_text(encoding="utf-8")
+        for test, tool in (("test_live_demo.py", "examples/two-agents/live_demo.py"),
+                           ("test_micro_experiment.py", "scripts/experiment_micro.py")):
+            self.assertIn(f"- run: python {test}", steps)
+            self.assertIn(test, self.jobs("release.yml")["test"])
+            for wf in sorted(p.name for p in self.WF.glob("*.yml")):
+                for job, text in self.jobs(wf).items():
+                    runs = [ln for ln in text.splitlines()
+                            if re.search(r"(?<!test_)" + re.escape(tool.rsplit("/", 1)[-1]), ln)
+                            and "mypy" not in ln]
+                    self.assertEqual(runs, [], f"{wf}:{job} must not run {tool}")
+            preflight = root / "scripts" / "preflight.sh"
+            if preflight.is_file():  # not shipped in an sdist
+                self.assertIn(f" {test}", preflight.read_text(encoding="utf-8"))
+            for f in (tool, test):
+                self.assertIn(f, self.mypy_files())
+                self.assertIn(f" {f}", template)
 
     def test_required_check_names_are_unchanged(self) -> None:
         ci = self.jobs("ci.yml")

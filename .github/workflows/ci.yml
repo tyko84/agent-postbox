@@ -43,6 +43,8 @@ jobs:
       - run: python test_adapters.py
       - run: python test_examples.py
       - run: python test_e2e_script.py
+      - run: python test_live_demo.py
+      - run: python test_micro_experiment.py
 
   packaging:
     runs-on: ubuntu-latest
@@ -74,7 +76,7 @@ jobs:
       # Every tracked .py, listed by name so adding a file is a deliberate choice
       # (test_publication.py Workflows requires every .py at the root and under hooks/,
       # scripts/ and examples/ here).
-      - run: mypy agent_mail.py install.py hooks/agent_mail_check.py check_handoff.py check_publication.py test_publication.py scripts/repro_build.py scripts/verify_release.py scripts/scenario.py scripts/team_sim.py stress_test.py test_field.py test_handoff.py test_packaging.py test_readme_examples.py selftest.py test_cli.py test_hardening.py test_adversarial.py test_scenario.py test_team_sim.py test_examples.py examples/two-agents/run.py test_adapters.py scripts/e2e_claude.py test_e2e_script.py
+      - run: mypy agent_mail.py install.py hooks/agent_mail_check.py check_handoff.py check_publication.py test_publication.py scripts/repro_build.py scripts/verify_release.py scripts/scenario.py scripts/team_sim.py stress_test.py test_field.py test_handoff.py test_packaging.py test_readme_examples.py selftest.py test_cli.py test_hardening.py test_adversarial.py test_scenario.py test_team_sim.py test_examples.py examples/two-agents/run.py test_adapters.py scripts/e2e_claude.py test_e2e_script.py scripts/experiment_micro.py examples/two-agents/live_demo.py test_live_demo.py test_micro_experiment.py
 
   publication-build:
     # The half of the publication check that needs code from PyPI: the pinned dev tools

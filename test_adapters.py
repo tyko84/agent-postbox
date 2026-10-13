@@ -848,5 +848,20 @@ class HostsDoc(unittest.TestCase):
             self.assertTrue(any(ln.startswith(f"| {host}") for ln in rows), host)
 
 
+class InstallNextSteps(unittest.TestCase):
+    """The commands the installer prints must work from wherever it was run."""
+
+    def test_verify_command_names_the_project_and_the_identity_step(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="test-adapters-") as tmp:
+            project = Path(tmp).resolve() / "my project"      # a space: the path must be quoted
+            (project / ".git").mkdir(parents=True)
+            cp = install(project)
+            self.assertEqual(cp.returncode, 0, cp.stderr)
+            line = next(x for x in cp.stdout.splitlines() if "selftest.py" in x and "&&" in x)
+            self.assertTrue(line.strip().startswith(f"cd '{project}' && "), line)
+            self.assertIn("AGENT_MAIL_IDENTITY=<name>", cp.stdout)
+            self.assertIn("(run from the project root)", cp.stdout)   # the poll hint is relative too
+
+
 if __name__ == "__main__":
     unittest.main()

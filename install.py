@@ -55,6 +55,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import shutil
 import stat
 import sys
@@ -484,11 +485,13 @@ def main() -> int:
         print(f"  {merge_settings(config, dest_rel, False, args.adapter)}")
     else:
         print(f"  pickup is poll: {python_cmd()} "
-              f"{dest_rel}/agent_mail.py list --to <you> --live")
+              f"{dest_rel}/agent_mail.py list --to <you> --live   (run from the project root)")
         print("  (pass --adapter claude-code or --adapter codex to register a prompt-submit hook)")
 
     print("\nVerify pickup before trusting it -- silence proves nothing (PROTOCOL.md §8):")
-    print(f"  {python_cmd()} {dest_rel}/selftest.py")
+    print(f"  cd {shlex.quote(str(project))} && {python_cmd()} {dest_rel}/selftest.py")
+    print("Then give each agent its own name in the shell its session starts from "
+          "(there is no default):  export AGENT_MAIL_IDENTITY=<name>")
     return 0
 
 

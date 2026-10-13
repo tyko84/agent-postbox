@@ -80,7 +80,7 @@ SDIST_ALLOWED = (
     "install.py", "check_handoff.py", "check_publication.py", "selftest.py", "stress_test.py", "agent_mail.py",
     "test_*.py", "ruff.toml", "mypy.ini", "pyproject.toml", "MANIFEST.in",
     "PKG-INFO", "setup.cfg", "hooks/*.py", "docs/*.md", "*.egg-info/*",
-    "examples/two-agents/run.py", "examples/two-agents/*.md",
+    "examples/two-agents/run.py", "examples/two-agents/live_demo.py", "examples/two-agents/*.md",
 )
 # The demo ships deliberately (MANIFEST.in): what it needs to run from an unpacked sdist.
 EXAMPLE_MEMBERS = ("examples/two-agents/run.py", "examples/two-agents/README.md",
