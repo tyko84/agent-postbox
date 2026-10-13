@@ -488,10 +488,19 @@ def main() -> int:
               f"{dest_rel}/agent_mail.py list --to <you> --live   (run from the project root)")
         print("  (pass --adapter claude-code or --adapter codex to register a prompt-submit hook)")
 
-    print("\nVerify pickup before trusting it -- silence proves nothing (PROTOCOL.md §8):")
-    print(f"  cd {shlex.quote(str(project))} && {python_cmd()} {dest_rel}/selftest.py")
-    print("Then give each agent its own name in the shell its session starts from "
+    print("\nNext, from the project root (walkthrough: docs/onboarding-first-exchange.md "
+          "in the agent-postbox repo):")
+    print(f"  1. Rename the example rows agent-a / agent-b in {args.mailbox}/PARTICIPANTS.md "
+          "to your agents' names.")
+    print("  2. Give each agent its own name in the shell its session starts from "
           "(there is no default):  export AGENT_MAIL_IDENTITY=<name>")
+    print(f"  3. {python_cmd()} {dest_rel}/agent_mail.py canary --from <name> --to <name>, "
+          f"then {python_cmd()} {dest_rel}/agent_mail.py doctor")
+    print("     `doctor` ends in FAIL: pickup canary missing or stale until a canary is filed "
+          "(and again after 24 h); that is not a broken install.")
+    print("Verify pickup before trusting it -- silence proves nothing (PROTOCOL.md §8). "
+          "Takes about 20 seconds:")
+    print(f"  cd {shlex.quote(str(project))} && {python_cmd()} {dest_rel}/selftest.py")
     return 0
 
 

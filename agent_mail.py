@@ -229,12 +229,22 @@ def _is_file(path: Path) -> bool:
         return False
 
 
+class WorkingDirectoryGone(RuntimeError):
+    """The working directory no longer exists (removed under the process, as when a
+    worktree or a branch switch deletes it): the walk-up search has no starting point."""
+
+
 def discovery_root() -> Path:
     for key in ("AGENT_MAIL_PROJECT", "CLAUDE_PROJECT_DIR"):
         env = os.environ.get(key)
         if env and _is_dir(Path(env)):
             return Path(env).resolve()
-    return Path.cwd().resolve()
+    try:
+        return Path.cwd().resolve()
+    except OSError as exc:
+        raise WorkingDirectoryGone(
+            f"the working directory cannot be read ({exc.strerror or exc}); it was probably "
+            "deleted. cd to a directory that exists, or set AGENT_MAIL_DIR to the mailbox") from None
 
 
 def project_root() -> Path:
@@ -1048,10 +1058,14 @@ def _split_cap_cell(cell: str) -> set[str]:
 def participants_paths() -> list[Path]:
     """Candidate PARTICIPANTS.md locations (mailbox, parent, cwd, tool dir)."""
     seen: list[Path] = []
+    try:
+        cwd_candidate = [Path.cwd() / "PARTICIPANTS.md"]
+    except OSError:     # the working directory was deleted: it has no PARTICIPANTS.md to offer
+        cwd_candidate = []
     for p in (
         mail_dir() / "PARTICIPANTS.md",
         mail_dir().parent / "PARTICIPANTS.md",
-        Path.cwd() / "PARTICIPANTS.md",
+        *cwd_candidate,
         Path(__file__).resolve().parent / "PARTICIPANTS.md",
     ):
         if p not in seen:
@@ -3810,6 +3824,9 @@ def main(argv: list[str] | None = None) -> int:
         except _ReaderGone:
             rc = EXIT_READER_GONE
         except ParticipantsUnreadable as exc:   # one line, never a traceback (section 38)
+            print(f"refusing: {exc}", file=sys.stderr)
+            rc = 2
+        except WorkingDirectoryGone as exc:     # likewise: one line, exit 2, nothing written
             print(f"refusing: {exc}", file=sys.stderr)
             rc = 2
         except SystemExit as exc:  # argparse: --help, --version, a usage error

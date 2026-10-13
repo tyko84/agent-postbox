@@ -64,8 +64,8 @@ setuptools 84.0.0):
    `pyproject.toml` before the first upload if another name should appear;
    metadata of an uploaded file cannot be edited afterwards.
 3. **The README as a project page.** PyPI renders the README but does not
-   resolve relative links. The README has eight of them (`SECURITY.md`,
-   `PROTOCOL.md`, `docs/packaging.md`, `CONTRIBUTING.md`, `CHANGELOG.md`): on
+   resolve relative links. The README had eight of them when this was written and has more now (count them before editing), among them `SECURITY.md`,
+   `PROTOCOL.md`, `docs/packaging.md`, `CONTRIBUTING.md`, `CHANGELOG.md`: on
    PyPI they would lead nowhere. Make them absolute
    (`https://github.com/tyko84/agent-postbox/blob/main/...`) in the release that
    is published first. The README also says the project is not on PyPI; see
@@ -416,6 +416,30 @@ version.
 * `.github/workflows/release.yml`: the header comment and the last two lines
   the `build` job appends to the release notes ("This project is not on PyPI").
 * `docs/README.md` and this page: the title and the first paragraph.
+
+## Re-check, 2026-10-13 (on 0.5.0, commit 954fb0b)
+
+Nothing was uploaded. Results of a second local dry run:
+
+* `scripts/repro_build.py --check` produced a byte-identical wheel and sdist.
+* `twine check --strict` passes on both, also with `readme_renderer[md]` installed
+  (a plain `pip install twine` has no Markdown renderer and only warns, so install it).
+* The wheel holds `agent_mail.py`, `LICENSE` and dist-info only; no dependencies.
+* Wheel and sdist install into fresh environments on CPython 3.11, 3.12 and 3.13, and
+  `agent-postbox --version`, send, inbox, list, status and doctor work from the installed
+  wheel. CPython 3.10 and 3.14 were not available locally; nothing in CI installs the built
+  wheel on them.
+* `tyko84-agent-postbox` still returns 404 on pypi.org and test.pypi.org; `agent-postbox` is
+  an unrelated project.
+* A pip install carries only the tool: `doctor`'s "see `install.py --adapter`" hint refers to
+  a file a wheel does not contain.
+* The sdist ships the `test_*.py` files but not `scripts/` or `.github/`, so
+  `test_readme_examples.py` cannot run from an sdist.
+
+Still open, all owner decisions: no upload job exists, v0.5.0's tag is permanent (so the first
+PyPI release is either a hand upload of the existing files or a later version), no PyPI or
+TestPyPI accounts or publishers exist, and the README notice and relative links must change
+in the release that is published first.
 
 ## Sources
 

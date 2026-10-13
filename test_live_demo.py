@@ -157,6 +157,27 @@ class Setup(Fixture):
             self.assertNotIn(self.state["token"], prompt)
 
 
+    def test_participants_names_alpha_and_beta_so_send_does_not_warn(self) -> None:
+        table = (self.project / "docs" / "agent-mail" / "PARTICIPANTS.md").read_text()
+        self.assertIn("| `alpha` |", table)
+        self.assertIn("| `beta` |", table)
+        self.assertNotIn("| `agent-a` |", table)
+        self.assertNotIn("**yes**", table)             # nothing claims a verified pickup
+        cp = subprocess.run([sys.executable, "-I", str(self.project / self.mod.TOOL), "send",
+                             "--type", "ASK", "--from", "alpha", "--to", "beta", "--subject",
+                             "s", "--body", "b"], cwd=self.project, capture_output=True,
+                            text=True, timeout=60, env={k: v for k, v in os.environ.items()
+                                                        if not k.startswith("AGENT_MAIL")})
+        self.assertEqual(cp.returncode, 0, cp.stdout + cp.stderr)
+        self.assertNotIn("not a row in PARTICIPANTS.md", cp.stdout + cp.stderr)
+
+    def test_prompt_b2_asks_for_one_plain_send_that_the_allow_rules_match(self) -> None:
+        b2 = self.mod.PROMPT_B2
+        self.assertIn("--to alpha", b2)
+        self.assertIn("one plain command", b2)
+        self.assertNotIn(self.state["live_base"], b2)
+
+
 class Check(Fixture):
     def test_nothing_done_fails_every_beat_and_exits_1(self) -> None:
         self.assertEqual(self.failed(), set(range(1, 7)))
@@ -259,6 +280,15 @@ class Rehearse(unittest.TestCase):
             self.assertEqual(argv[argv.index("--setting-sources") + 1], "project")
             self.assertEqual(argv[argv.index("--model") + 1], "haiku")
             self.assertEqual(argv[argv.index("--effort") + 1], "low")
+
+    def test_a_refused_tool_call_is_named_in_the_session_record(self) -> None:
+        mod = load()
+        ev = {"permission_denials": [
+            {"tool_name": "Bash", "tool_input": {"command": "python3 x.py; echo $?"}},
+            {"tool_name": "Edit", "tool_input": {"file_path": "/p/client.py"}}, "junk"]}
+        self.assertEqual(mod.denied_calls(ev), ["Bash: python3 x.py; echo $?",
+                                                "Edit: /p/client.py"])
+        self.assertEqual(mod.denied_calls({}), [])
 
     def test_max_calls_below_two_refuses_before_any_session(self) -> None:
         cp = self.rehearse("--max-calls", "1")

@@ -10,15 +10,50 @@ Two recordings are possible, and they must not be confused:
 
 # Part 1: two real Claude Code sessions (60 to 90 seconds)
 
-`live_demo.py` prepares the ground and judges the outcome. It does not drive
-the sessions: you start them, you paste the prompts, and `check` then reads the
-files they left behind, never what a model said.
+What this shows: the mechanism works. One session sends a message, the other
+is handed it automatically by a hook, acknowledges it, and writes code that
+uses the fact in it. What it does NOT show: that Postbox gets better outcomes
+than a shared notes file. A small pilot (`docs/micro-experiment.md`) found no
+advantage for Postbox over a notes file with haiku. Do not say "better",
+"faster" or "more reliable" in the video or the caption.
 
-```sh
-python3 examples/two-agents/live_demo.py setup      # prints everything below, with your paths
-python3 examples/two-agents/live_demo.py check      # after recording: OK/FAIL per beat
-python3 examples/two-agents/live_demo.py rehearse   # optional, spends a little usage (see below)
-```
+What is scripted and what is real:
+
+| Part | Status |
+|---|---|
+| The project, the secret URL, the allow-list, the prompts you paste | scripted (prepared by `setup`, printed in full) |
+| The hook output, the files in `docs/agent-mail/`, `client.py`, the `check` verdicts | real (made by the tool, the host and the model) |
+| Whether beta acts on the mail, and how | the model's choice; it can fail (see the table of runs) |
+
+## Pre-flight checklist (Mac, 5 minutes, off camera)
+
+1. `claude --version` works and `claude auth status` says logged in.
+2. `python3 --version` is 3.9 or newer (the tool is stdlib only).
+3. Two terminal windows (Terminal, iTerm, or Ghostty) side by side, or tmux
+   (`brew install tmux`, then `tmux`, `Ctrl-b %`). Two plain windows are fine
+   and are what the script below assumes; a tmux split is the same commands.
+4. Clone somewhere whose path you are content to show: `cd /tmp/agent-postbox`.
+5. `python3 examples/two-agents/live_demo.py setup` and keep its output open:
+   it prints the two blocks of commands and the three prompts with your real
+   paths. The commands below use `$D` for the demo dir (default
+   `/tmp/agent-postbox-live-demo`; on macOS `tempfile` may give
+   `/var/folders/...`, so copy the real `project:` path that `setup` prints).
+6. In each terminal run the `cd`/`export`/`claude --model haiku` lines once,
+   accept "trust this folder" (the hook is project configuration, so the host
+   asks once), then `/exit`. Clear both terminals (`Cmd-K`).
+7. Do one complete dry run (below) and run `check`. Then run `setup` again
+   (fresh URL) before the take.
+8. Quit notification apps; font large enough to read at half width; about 110
+   columns per pane; shell prompt short (`PS1='$ '`). The hook's `Reply:` and
+   `read:` lines are long and wrap; that is the tool's real output.
+
+`setup` also installs this clone's `install.py --adapter claude-code` into the
+throwaway project, registers the hook in `.claude/settings.json`, fills
+`PARTICIPANTS.md` with the rows alpha and beta (stating the mechanism, still
+`reachable: no`, `not observed`: nothing here ran a positive control) and
+writes `.claude/settings.local.json` pre-approving only `Read`, `Edit`,
+`Write`, `python3 discover.py` and the mailbox CLI, so no permission dialog
+should appear. If one does, see "If a beat fails".
 
 ## The story
 
@@ -28,7 +63,7 @@ that only alpha's terminal can see (an environment variable set there; the
 file is outside the project). It finds that the live URL is now
 `.../v7-<random>/ledger`, a value nobody can guess. Alpha tells agent **beta**
 through Postbox. Beta, asked to add `refund_url(charge_id)` to `client.py`,
-has no other way to learn the new URL. The six beats:
+has no other way to learn the new URL. The six beats `check` judges:
 
 1. two sessions, two identities (alpha, beta);
 2. alpha discovered the fact and put it in a message;
@@ -37,183 +72,155 @@ has no other way to learn the new URL. The six beats:
 5. beta acknowledged it with an ANSWER citing the ASK;
 6. beta's code uses the new URL.
 
-## Before recording
+## Layout
 
-* Run `setup`. It installs this clone's `install.py --adapter claude-code`
-  into a throwaway project, registers the hook in the project's
-  `.claude/settings.json`, and writes a `.claude/settings.local.json` that
-  pre-approves `Read`, `Edit`, `Write`, `python3 discover.py` and the mailbox
-  CLI, so no permission dialog should appear on camera. Nothing else is
-  approved.
-* Open `claude` once in the project in each terminal, accept the host's "trust
-  this folder" question (the hook is project configuration, so it asks once),
-  and `/exit`. Then clear both terminals.
-* Side by side, about 110 columns each. The `Reply:` and `read:` lines the hook
-  prints are long and will wrap; that is the tool's real output.
-* The prompts are long on purpose (they say exactly what to do and put the URL
-  in the SUBJECT, because the hook shows subjects, never bodies). Paste them
-  from the `setup` output; typing them live eats the time budget.
-
-## Commands (`setup` prints these with your real paths)
+Two panes, left = alpha, right = beta, both in the same project folder.
+`check` needs no third window: when alpha has finished, type `/exit` in
+the left pane and run it in that shell.
 
 ```
-TERMINAL 1 (alpha)                           TERMINAL 2 (beta; no registry variable)
-cd <demo>/project                            cd <demo>/project
-export AGENT_MAIL_IDENTITY=alpha             export AGENT_MAIL_IDENTITY=beta
+LEFT: alpha                                   RIGHT: beta (no registry variable)
+cd <project>                                  cd <project>
+export AGENT_MAIL_IDENTITY=alpha              export AGENT_MAIL_IDENTITY=beta
 export PAYMENTS_REGISTRY=<demo>/registry/payments.json
-claude --model haiku                         claude --model haiku
+claude --model haiku                          claude --model haiku
 ```
 
-## Shot list (about 80 seconds)
+Paste these from the `setup` output (they contain your real paths).
 
-| Time | Pane | You do | On screen |
-|---|---|---|---|
-| 0:00 | both | nothing | two `claude` sessions in one project folder, identities alpha and beta |
-| 0:08 | beta | paste prompt B1 (`Read client.py and summarise it in one line.`) | one-line summary; no "Agent mail" block, because nothing was sent |
-| 0:16 | alpha | paste prompt A | `python3 discover.py` prints the live URL; then the `send --type ASK` command, `wrote .../docs/agent-mail/<id>-....md`, `id: <id>`, "SENT" |
-| 0:42 | beta | paste prompt B2 | the hook block (below) BEFORE beta acts; then an `ANSWER ... --result DONE` send; then an edit of `client.py` |
-| 1:05 | any | `python3 .../live_demo.py check` | six `OK` lines |
+## Recording script (about 80 seconds)
 
-Prompts A, B1 and B2 are the `PROMPT_A`, `PROMPT_B1` and `PROMPT_B2` constants
-in `live_demo.py`; the rehearsal sends A and B2 verbatim (B1 is for the camera
-only: it shows beta working before any mail exists).
+Start the screen recorder with both sessions already open at an empty prompt.
+Prompts A, B1 and B2 are printed by `setup`; paste them, do not type them
+(typing eats the time budget). Times are targets.
 
-The hook output beta received, captured from an actual rehearsal (path
-shortened to `<project>`; the id and URL differ on every `setup`):
+| Time | Pane | You do | On screen | Say (see `docs/demo-narration.md`) |
+|---|---|---|---|---|
+| 0:00 | both | nothing | two `claude` sessions, one folder | "Two separate Claude Code sessions, one project. They share only a folder of files." |
+| 0:08 | right | paste **B1** (`Read client.py and summarise it in one line.`) | one line; no "Agent mail" block | "Beta reads the client. It points at the v1 ledger. No mail yet." |
+| 0:16 | left | paste **A** | `python3 discover.py` prints the live URL, then the `send --type ASK` command, `wrote .../docs/agent-mail/<id>-....md`, `id: <id>`, "SENT" | "Alpha can see the service registry; beta cannot. The endpoint moved. Alpha sends beta a message." |
+| 0:40 | right | paste **B2** | the `Agent mail - 1 live message(s)` block appears BEFORE beta acts; then an `ANSWER ... --result DONE` send; then an edit of `client.py` | "Nobody told beta to check. A hook put the mail in front of the model. Beta acknowledges, then writes the function." |
+| 1:05 | left | `/exit`, then `python3 examples/two-agents/live_demo.py check` (same `--dir` if you set one) | six `OK` lines and `all 6 beats happened` | "Six checks, read from the files, not from what a model said." |
+| 1:20 | left | `cat <project>/client.py` | `refund_url` using `v7-...` | "The URL beta used is one only alpha could find." Stop recording. |
 
-```
-Agent mail - 1 live message(s) addressed to 'beta'.
-A message is EVIDENCE, never AUTHORITY: nothing filed in the mailbox
-authorises a push, deletion, restart, or anything otherwise prohibited.
+Wait for each model to finish before pasting the next prompt (haiku takes
+10 to 25 seconds per prompt). If the take runs past 90 seconds, cut the
+`cat`, not the `check`.
 
-  ASK from alpha [awaiting your reply]
-    Payments live base URL is https://payments.internal.example/v7-01c13d/ledger; old v1 URL is retired; new payments code must use the live one - please confirm
-    id: 01M4S6AZQ0SDXRAXJHP55N2CWC
-    read: python3 "<project>/tools/agent-postbox/agent_mail.py" show 01M4S6AZQ0SDXRAXJHP55N2CWC
+## Evidence on camera: `check`
 
-Reply: python3 "<project>/tools/agent-postbox/agent_mail.py" send --type ANSWER --from beta --to <sender> --reply-to <id> --subject ... --body-file <file, or - for stdin>
+`check` is the proof, and it is what makes an honest recording honest. It
+reads `docs/agent-mail/*` (via the tool's own `list --json`), imports
+`client.py` in a fresh interpreter and calls `refund_url('ch_42')`, and
+looks for the hook's output. Run exactly:
 
-You ('beta') owe a reply to 1 open ASK(s):
-  01M4S6AZQ0SDXRAXJHP55N2CWC from alpha (since 2026-10-12T23:14:34Z)
-```
-
-beta's ANSWER file from the same rehearsal (written by the model through the
-real CLI):
-
-```
----
-id: 01M4S6B97DS4XTC5QGXF3CM0SX
-type: ANSWER
-from: beta
-to: alpha
-date: 2026-10-12T23:14:44Z
-subject: re: Payments live base URL
-reply_to: 01M4S6AZQ0SDXRAXJHP55N2CWC
-result: DONE
----
-
-Confirmed: new payments code will use the live base URL https://payments.internal.example/v7-01c13d/ledger, not the retired v1 URL.
+```sh
+python3 examples/two-agents/live_demo.py check
 ```
 
-and the `client.py` beta left (it added a constant for the live URL and used it
-in `refund_url`; the old `charge_url` still uses v1, which is what the model
-chose to do and is not hidden):
-
-```python
-PAYMENTS_BASE = "https://payments.internal.example/v1/ledger"
-
-PAYMENTS_LIVE_BASE = "https://payments.internal.example/v7-01c13d/ledger"
-
-def refund_url(charge_id: str) -> str:
-    return f"{PAYMENTS_LIVE_BASE}/charges/{charge_id}/refunds"
-```
-
-`check` after that rehearsal (the second line of each beat is the evidence it
-printed from the files):
+Example from a headless rehearsal (the second line of each beat is the
+evidence it printed):
 
 ```
 OK   beat 1: two sessions wrote under two identities
        senders in the mailbox: alpha, beta
 OK   beat 2: alpha's discovery is in its message (only alpha could know it)
-       ASK subject: 'Payments live base URL is https://payments.internal.example/v7-01c13d/ledger; old v1 URL is retired; ...'
+       ASK subject: 'Payments live base URL is https://payments.internal.example/v7-084c73/ledger; old v1 URL is retired; ...'
 OK   beat 3: the message went through Postbox
-       ASK 01M4S6AZQ0SDXRAXJHP55N2CWC alpha -> beta
+       ASK 01M4TWJZ... alpha -> beta
 OK   beat 4: beta's prompt hook handed it the message
-       hook output captured in beta.hook.txt names 01M4S6AZQ0SDXRAXJHP55N2CWC
+       hook output captured in beta.hook.txt names 01M4TWJZ...
 OK   beat 5: beta acknowledged with an ANSWER citing the ASK
-       ANSWER 01M4S6B97DS4XTC5QGXF3CM0SX reply_to 01M4S6AZQ0SDXRAXJHP55N2CWC, ASK no longer owed
+       ANSWER 01M4TWK... reply_to 01M4TWJZ..., ASK no longer owed
 OK   beat 6: beta's code uses the fact alpha found
-       refund_url('ch_42') = https://payments.internal.example/v7-01c13d/ledger/charges/ch_42/refunds
+       refund_url('ch_42') = https://payments.internal.example/v7-084c73/ledger/charges/ch_42/refunds
 all 6 beats happened
 ```
 
-## Narration (about 80 seconds)
+Beat 4 after an INTERACTIVE take is looked up in Claude Code's own transcript
+(`~/.claude/projects/<project path, non-alphanumerics as ->/*.jsonl`, or
+`--transcripts DIR`): it passes if one line holds the `Agent mail - ` header
+and the ASK's id. That lookup has never been run against a real interactive
+transcript (see the limits below). If beat 4 shows FAIL while the hook block
+was plainly on screen in beta's pane, say so on camera: it means "not verified
+from a file", not "did not happen".
 
-* 0:00 "Two Claude Code sessions in one project, two terminals, two identities.
-  They share nothing but a folder of files."
-* 0:08 "Beta reads the client; it points at the v1 ledger."
-* 0:16 "Alpha runs the discovery script. Only this terminal can see the
-  registry: the live Payments endpoint moved."
-* 0:34 "Alpha tells beta through Postbox. That is one file in docs/agent-mail."
-* 0:42 "Beta's next prompt. Nobody told beta to look: the hook put the mail in
-  front of the model before it saw my prompt." (point at the `Agent mail` block)
-* 0:55 "Beta acknowledges with an ANSWER, then writes `refund_url` against the new
-  URL, which it had no other way to know."
-* 1:10 "Six beats, each judged from the files, not from what a model said."
+## If a beat fails
+
+A FAIL is a result, not a reason to fake anything. Do not edit around it and
+do not publish a failed take as a success: re-run `setup` and re-record, or
+publish it labelled as a failure.
+
+| Symptom | Likely cause | Do |
+|---|---|---|
+| A permission dialog appears in either pane | a command outside the pre-approved list (for example the model chained `; echo $?` onto the send, or put `AGENT_MAIL_IDENTITY=beta` in front) | Choose "no" or approve once; say so on camera. Re-run `setup` for a clean take; B2 already asks for one plain command. |
+| Beat 5 FAIL, no ANSWER | beta's send was refused or beta skipped the mail | Re-run `setup`, re-record. In the rehearsals below this was the host refusing a chained command. |
+| Beat 6 FAIL, `refund_url` uses `/v1/` | beta confirmed but did not use the new URL (a model choice; seen in earlier runs) | Re-record; if it keeps happening, report it, do not hand-edit `client.py`. |
+| No `Agent mail` block when beta gets B2 | the hook did not fire: folder not trusted, wrong folder, or `AGENT_MAIL_IDENTITY` not exported in beta's terminal | `cat <project>/.claude/settings.json` shows the hook; check `echo $AGENT_MAIL_IDENTITY` in beta's shell before starting `claude`. Restart that session. |
+| Alpha's `discover.py` says `PAYMENTS_REGISTRY is not set` | the export was not in alpha's terminal | `export PAYMENTS_REGISTRY=...` and restart `claude` there. |
+| Beta answers with a path or URL that is not v7 | beta never saw the mail (hook silent) | as "no Agent mail block". |
+| Beat 4 FAIL only | transcript lookup untested (above) | decide from the screen; say so. |
 
 ## Reset and re-record
 
 `setup` rebuilds everything with a fresh random URL (it refuses to delete a
 directory it did not create, identified by a marker file); re-run it, re-open
 `claude` in both terminals, and record again. `--dir DIR` chooses the location
-(pass the same `--dir` to `check`). If `check` shows a FAIL, do not publish the
-take as a success: say what happened or re-record.
+(pass the same `--dir` to `check`).
 
-After an interactive take, beat 4 is looked up in Claude Code's own transcript
-for the project (`~/.claude/projects/<project path, non-alphanumerics as ->/*.jsonl`,
-or `--transcripts DIR`): it passes if one line holds both the `Agent mail - `
-header and the ASK's id. That lookup was written without a real interactive
-transcript to test against. If it finds nothing, beat 4 reports FAIL, which
-here means "not verified from a file", not "did not happen": the hook block on
-screen is then your evidence.
+## Dry run: `rehearse`
 
-## What a headless rehearsal proves, and what it does not
+```sh
+python3 examples/two-agents/live_demo.py rehearse --max-calls 2 --max-cost 0.5
+```
 
-`rehearse` runs alpha then beta as `claude -p` sessions (haiku, effort low,
+It runs alpha then beta as `claude -p` sessions (haiku, effort low,
 `--permission-mode dontAsk`, `--setting-sources project`, `--strict-mcp-config`,
 a short tool list, `--no-session-persistence`, a per-session
 `--max-budget-usd`, never `--dangerously-skip-permissions`), refuses to start a
-session past `--max-calls` (default 4) or once the summed `total_cost_usd` would
-pass `--max-cost` (default 1.50, never more than 2.00), and then runs `check`.
-Exit 0: all beats; 1: a beat failed; 2: not run (no `claude`, not signed in, or
-a budget refusal), which is a SKIP and never a pass.
+session past `--max-calls` or once the summed `total_cost_usd` would pass
+`--max-cost` (default 1.50, never more than 2.00), prints any tool call the
+host refused, and then runs `check`. Exit 0: all beats; 1: a beat failed; 2:
+not run (no `claude`, not signed in, or a budget refusal), a SKIP and never a
+pass. A rehearsal costs about USD 0.004 with haiku.
+
+## What a headless rehearsal proves, and what it does not
 
 * Proves: the project is installed the way a user installs it; the
   `UserPromptSubmit` hook registered in `.claude/settings.json` fires in print
   mode and its output reaches the model; the model can send an ANSWER with the
-  real CLI; the prompts and the scenario can produce all six beats.
-* Does not prove that an interactive TUI session behaves the same. The
-  interactive path (hooks in the TUI, the trust dialog, permission prompts) was
-  not exercised by the author of this kit; `docs/e2e-real-sessions.md` also
-  tests print mode only.
-* Does not prove the behaviour is reliable: a model decides whether to act on
-  a message. Do a full dry run yourself before the take; models vary, and a
-  take where beta ignores the mail is a real result, not something to edit
-  around.
-* Beat 4 in a rehearsal is read from the hook events the host emitted
+  real CLI; the prompts and scenario can produce all six beats. Beat 4 in a
+  rehearsal is read from the hook events the host emitted
   (`--include-hook-events`), which is stronger than the model's account.
+* Does not prove that an interactive TUI session behaves the same. The
+  interactive path (hooks in the TUI, the trust dialog, permission prompts,
+  the transcript lookup for beat 4) was NOT exercised: this kit's rehearsals
+  ran inside an automated session with no terminal, and no tmux. Do your own
+  complete dry run on the Mac before the take.
+* Does not prove reliability: the model decides whether to act on the message.
+* Does not show Postbox beats a notes file (`docs/micro-experiment.md`).
 
-### Results of the author's runs (2026-10-12, claude 2.1.296, haiku)
+### Results of the author's runs (claude 2.1.296, haiku)
 
-| Run | What | Result | Cost (alpha + beta) |
-|---|---|---|---|
-| 1 | rehearse, first wording of prompt A (only "ask beta to confirm") | beats 1-5 OK, **beat 6 FAIL**: beta confirmed by ANSWER but wrote `refund_url` against the old v1 URL | USD 0.0013 + 0.0039 |
-| 2 | rehearse, prompt A now also says the v1 URL is retired and new code must use the live one | all 6 beats OK | USD 0.0013 + 0.0036 |
-| 3 | control: beta only, no message from alpha | `refund_url` uses v1, as expected: the message is what changed the behaviour | USD 0.0024 |
+Earlier session (2026-10-12): run 1 with a first wording of prompt A ("ask
+beta to confirm") gave beats 1-5 OK and beat 6 FAIL (beta confirmed but wrote
+`refund_url` against v1), so prompt A now says the v1 URL is retired; with that
+all 6 beats were OK once; control (beta only, no mail) used v1.
 
-Total about USD 0.013. Run 1 is why prompt A's wording is what it is: a
-message that only asks to "confirm" gets confirmed and not acted on. One run
-per condition says the scenario can work, not that it always does.
+Hardening runs (2026-10-13, headless, 16 rehearsals plus one control):
+
+| Change tried | Runs | Result |
+|---|---|---|
+| none (as shipped) | 2 | one run: beta's ANSWER and the `ls`/`python3 -c` checks were refused by the host (beats 1, 5, 6 FAIL); one run: all beats but 6 |
+| PARTICIPANTS.md rows for alpha and beta (alpha had been warned "beta is not a row", and reported the message "may never be read") | 8 | beat 6 passed 7 of 8; beta's ANSWER was refused by the host in 5 of the 8 (it chained `; echo "exit $?"`, put `AGENT_MAIL_IDENTITY=beta` in front, or used `--to alice`) |
+| prompt B2 says `--to alpha` and "one plain command" | 4 | beats 1-5 OK in 4 of 4 (the host refused only beta's own `python3 -c` self-check); beat 6 OK in 2 of 4 (the others used v1) |
+| prompt B2 says "the live Payments service" instead of "the same" | 5 | all 6 beats in 5 of 5 |
+| control: beta only, B2, no mail | 1 | v1 URL, as expected |
+
+Total spend of everything above: about USD 0.09 (host-reported
+`total_cost_usd`, USD 0.002 to 0.005 per session). Five out of five after the
+last wording change is a small sample after several wording changes tuned on
+the same scenario: it says the scenario can work, not that it will every time.
 
 ---
 

@@ -17,19 +17,38 @@ only), and identity is a name you choose: there is no vendor default.
 ## Quickstart
 
 Nothing here needs a model, an account or a network connection after the
-clone. POSIX only (Linux, macOS), Python 3.10-3.14.
+clone. POSIX only (Linux, macOS), Python 3.10-3.14, git. Windows is unsupported
+and untested (WSL has not been tried). Use `python3`: stock macOS has no
+`python`.
 
 ```sh
 # 1. Clone. (Not on PyPI: `pip install agent-postbox` is a different project; see Install.)
 git clone https://github.com/tyko84/agent-postbox
 
-# 2. Watch two sessions exchange a message. A few seconds, in a throwaway directory.
+# 2. Watch two sessions exchange a message. Under a second, in a throwaway directory.
 python3 agent-postbox/examples/two-agents/run.py
 
-# 3. Install into your own project, and register the pickup hook for Claude Code.
+# 3. Install into your own project (a git repository), and register the pickup hook
+#    for Claude Code. Use --adapter codex for Codex, or no --adapter to poll.
 python3 agent-postbox/install.py /path/to/your/project --adapter claude-code
 export AGENT_MAIL_IDENTITY=agent-a      # in the shell each session starts from; one name per agent
 ```
+
+After step 3: rename the example rows `agent-a` and `agent-b` in
+`docs/agent-mail/PARTICIPANTS.md` to your agents' names, then file a canary and
+run `doctor` (`python3 tools/agent-postbox/agent_mail.py canary --from agent-a
+--to agent-a`, then `... doctor`). The first `doctor` on a fresh install ends
+in `FAIL: pickup canary missing or stale` (exit 2) until a canary exists, and
+the canary lasts 24 hours, so file a new one to see `PASS` again; that is not a
+broken install. `send` always takes `--from` explicitly; `AGENT_MAIL_IDENTITY`
+is read by `inbox` and by the pickup adapter. `selftest.py` takes about 20
+seconds. Commit `.claude/settings.json` (or `.codex/hooks.json`) so the hook
+reaches the next clone; the `.bak` files next to them are your pre-install
+originals. The whole path with output and timings:
+[docs/onboarding-first-exchange.md](docs/onboarding-first-exchange.md); when it
+does not work: [docs/troubleshooting.md](docs/troubleshooting.md); to remove it
+again: [docs/troubleshooting.md#removing-it](docs/troubleshooting.md#removing-it)
+(there is no uninstall command).
 
 Step 2 runs the real installer, the real CLI and the real pickup adapter; only
 the two "agents" are a script. It prints every command with its output, checks
@@ -97,14 +116,15 @@ wire to its own prompt-submit event; Claude Code users can register it as
 ## 30-second demo (project install)
 
 ```text
-$ python agent-postbox/install.py .            # tool -> tools/agent-postbox/, mailbox -> docs/agent-mail/
+$ python3 agent-postbox/install.py .           # tool -> tools/agent-postbox/, mailbox -> docs/agent-mail/
 $ export AGENT_MAIL_IDENTITY=agent-a
-$ python tools/agent-postbox/agent_mail.py send --type ASK --from agent-a --to agent-b \
+$ echo "I'm about to refactor its retry handling." > body.txt
+$ python3 tools/agent-postbox/agent_mail.py send --type ASK --from agent-a --to agent-b \
       --subject "who owns the billing client?" --body-file body.txt
 wrote /path/to/your/project/docs/agent-mail/01M4H63M3EC0JTP4236918WS9S-who-owns-the-billing-client.md
 id: 01M4H63M3EC0JTP4236918WS9S
 
-$ python tools/agent-postbox/agent_mail.py list --to agent-b --live
+$ python3 tools/agent-postbox/agent_mail.py list --to agent-b --live
 # mailbox: /path/to/your/project/docs/agent-mail  (walk-up default)
 ! ASK     [open      ] agent-a -> agent-b  who owns the billing client?
     01M4H63M3EC0JTP4236918WS9S
@@ -140,7 +160,8 @@ identity that holds a claim sees that block even with no mail addressed to it.
 
 agent-postbox is one stdlib-only file. **POSIX only** (Linux, macOS): the
 atomic-send and lock code relies on POSIX file semantics, CI runs on Linux and
-macOS, and Windows is untested and unsupported. Python 3.10-3.14.
+macOS, and Windows is untested and unsupported (WSL has not been tried).
+Python 3.10-3.14.
 
 > **Not on PyPI. Do not `pip install agent-postbox`.** This project is not
 > published on PyPI, and its distribution name is `tyko84-agent-postbox`. The
@@ -155,14 +176,14 @@ macOS, and Windows is untested and unsupported. Python 3.10-3.14.
 
 ```bash
 git clone https://github.com/tyko84/agent-postbox
-python -m pip install ./agent-postbox
+python3 -m pip install ./agent-postbox
 agent-postbox --version
 ```
 
 The `./` matters: `pip install ./agent-postbox` installs the directory you just
 cloned, while `pip install agent-postbox` would ask PyPI for the unrelated
 distribution of that name. To check what an environment has,
-`python -m pip show -f tyko84-agent-postbox` shows
+`python3 -m pip show -f tyko84-agent-postbox` shows
 `Home-page: https://github.com/tyko84/agent-postbox` and a single module,
 `agent_mail.py`.
 
@@ -174,16 +195,16 @@ The command and the module keep their names; only the distribution is called
 `tyko84-agent-postbox`. Releases up to 0.3.0 used the distribution name
 `agent-postbox`, which pip cannot tell apart from the unrelated PyPI project.
 If an environment still has one of those, run
-`python -m pip uninstall agent-postbox` before installing this version, because
+`python3 -m pip uninstall agent-postbox` before installing this version, because
 both own `agent_mail.py` and the `agent-postbox` command. (Uninstalling the old
-name afterwards instead removes those files; `python -m pip install
+name afterwards instead removes those files; `python3 -m pip install
 --force-reinstall ./agent-postbox` puts them back.)
 
 **Verifying a release download.** From a clone, one command checks a
 release the way a consumer can:
 
 ```sh
-python scripts/verify_release.py v0.4.0
+python3 scripts/verify_release.py v0.4.0
 ```
 
 It downloads the tag's wheel, sdist and `SHA256SUMS` with `gh release
@@ -194,20 +215,20 @@ any failed. `gh` must be installed and signed in, for the download and for
 downloaded; without `gh`, at least check the hashes by hand with
 `shasum -a 256 -c SHA256SUMS` (`sha256sum -c SHA256SUMS` on Linux). `--rebuild` also rebuilds the tag with `scripts/repro_build.py`
 and compares byte for byte; that needs the hash-pinned build tools
-(`python -m pip install --require-hashes -r requirements-build.txt`, in a
+(`python3 -m pip install --require-hashes -r requirements-build.txt`, in a
 venv). The same checks as manual commands, with their limits:
 [docs/release-process.md](docs/release-process.md), "Verifying the published
 release"; the build itself: [docs/packaging.md](docs/packaging.md).
 
 **Option 2: copy the single file.** `agent_mail.py` has no imports outside the
-standard library; drop it anywhere and run `python agent_mail.py ...`.
+standard library; drop it anywhere and run `python3 agent_mail.py ...`.
 
 **Option 3: install into a project** (copies the tool, spec and adapter, and
 creates the project's mailbox at `docs/agent-mail/`):
 
 ```bash
-python agent-postbox/install.py /path/to/your/project
-python /path/to/your/project/tools/agent-postbox/selftest.py
+python3 agent-postbox/install.py /path/to/your/project
+python3 /path/to/your/project/tools/agent-postbox/selftest.py
 ```
 
 `--check` reports without changing anything; `--dest` and `--mailbox` move the
@@ -217,16 +238,21 @@ for Claude Code (one hook entry in the *project's* `.claude/settings.json`,
 backed up first, refuses unparseable JSON, safe to re-run):
 
 ```bash
-python agent-postbox/install.py /path/to/your/project --adapter claude-code
+python3 agent-postbox/install.py /path/to/your/project --adapter claude-code
 ```
 
 Other hosts: copy `hooks/agent_mail_check.py` and wire it to your host's
 prompt-submit event, or keep polling. Then verify, because silence proves
-nothing (see below): run `selftest.py`.
+nothing (see below): run `selftest.py` (about 20 seconds).
 `install.py <project> --adapter codex` registers the same adapter as Codex's
 `UserPromptSubmit` hook (trust it once in `/hooks`); Cursor has no per-prompt
 injection and polls. [docs/hosts.md](docs/hosts.md) has the matrix and exactly
 what was verified.
+
+What to do after the install (rename the example identities, canary, the first
+`doctor` failing): see Quickstart above and
+[docs/onboarding-first-exchange.md](docs/onboarding-first-exchange.md). Removing
+it again: [docs/troubleshooting.md#removing-it](docs/troubleshooting.md#removing-it).
 
 ### Where the mailbox is
 
@@ -247,7 +273,7 @@ exits 2. That is not an empty inbox. `AGENT_MAIL_DIR` is never created for you:
 Every `bash runnable` block in this README is executed, in order, in a
 scratch mailbox by `test_readme_examples.py`, so these commands are known to
 work against the code in this checkout. (Shown with the pip-installed command;
-`python agent_mail.py` is identical.)
+`python3 agent_mail.py` is identical.)
 
 ```bash runnable
 export AGENT_MAIL_DIR="$PWD/mailbox"      # the shared inbox
@@ -613,7 +639,7 @@ executed or passed to a shell; the adapter only reads.
 * **Claims are advisory leases.** Nothing stops an agent from ignoring one.
 * **Local filesystems only.** Atomic rename, exclusive create and mtimes are
   assumed; network filesystems with weaker semantics are untested.
-* **POSIX only.** Windows is not supported or tested.
+* **POSIX only.** Windows is not supported or tested (WSL: not tried).
 
 ## Status
 

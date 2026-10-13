@@ -81,67 +81,12 @@ compared before the install and after the cleanup; `git status` empty):
 3. a project with its own `UserPromptSubmit` hook, an unrelated `Stop` entry
    and an `env` block in `.claude/settings.json`, and its own `.codex/hooks.json`.
 
-Run from the project root. Read each step first; step 3 deletes history.
-
-```sh
-# 1. The tool and the adapter script. Nothing else lives there by default.
-rm -rf tools/agent-postbox
-rmdir tools 2>/dev/null          # only removes it if now empty
-
-# 2. The hook registrations. Removes only entries whose command mentions
-#    agent_mail_check.py, keeps every other key and every other hook, and
-#    restores your original file byte for byte from <file>.bak when the result
-#    is identical to it. A file that holds nothing else is deleted.
-python3 -I - .claude/settings.json .codex/hooks.json <<'EOF'
-import json, shutil, sys
-from pathlib import Path
-
-MARK = "agent_mail_check.py"
-for name in sys.argv[1:]:
-    p = Path(name)
-    if not p.is_file():
-        print(f"skip   {p}: not there")
-        continue
-    cfg = json.loads(p.read_text(encoding="utf-8-sig"))
-    kept = []
-    for group in cfg.get("hooks", {}).get("UserPromptSubmit") or []:
-        group["hooks"] = [h for h in group.get("hooks", [])
-                          if MARK not in str(h.get("command", ""))]
-        if group["hooks"]:
-            kept.append(group)
-    if kept:
-        cfg["hooks"]["UserPromptSubmit"] = kept
-    else:
-        cfg.get("hooks", {}).pop("UserPromptSubmit", None)
-        if not cfg.get("hooks", True):
-            cfg.pop("hooks")
-    bak = p.with_name(p.name + ".bak")
-    if not cfg:
-        p.unlink()
-        print(f"removed {p}: nothing else was in it")
-    elif bak.is_file() and json.loads(bak.read_text(encoding="utf-8-sig")) == cfg:
-        shutil.copy2(bak, p)
-        bak.unlink()
-        print(f"restored {p} byte for byte from {bak.name}")
-    else:
-        p.write_text(json.dumps(cfg, indent=2) + "\n")
-        print(f"rewrote {p} without the adapter; {bak.name}* files are left for you to inspect")
-    try:
-        p.parent.rmdir()         # .claude / .codex, only if now empty
-    except OSError:
-        pass
-EOF
-
-# 3. OPTIONAL AND DESTRUCTIVE: the mailbox, which is every message and claim.
-#    Skip it, or `git add` it somewhere first, if anyone might want the history.
-rm -rf docs/agent-mail
-rmdir docs 2>/dev/null
-
-# 4. The numbered backups. The unnumbered .bak is consumed by step 2 when it
-#    matches; if step 2 said "left for you to inspect", compare, then delete by hand.
-rm -f .claude/settings.json.bak.[0-9]* .codex/hooks.json.bak.[0-9]*
-```
-
+The runnable procedure lives in [troubleshooting.md](troubleshooting.md#removing-it)
+(it moved there; one fix since this audit: step 4 used `rm -f
+.claude/settings.json.bak.[0-9]*`, which stops with `no matches found` in zsh,
+the macOS default shell, when no numbered backup exists; it is now a `find`).
+It was re-run on 2026-10-13 under zsh on a project with an existing
+`settings.json` plus both adapters and restored the project byte for byte.
 Limits of what was verified:
 
 * The snippet matches by the file name `agent_mail_check.py` in a hook's
@@ -160,6 +105,28 @@ Limits of what was verified:
 
 An installed pip package is a separate matter: `python -m pip uninstall
 tyko84-agent-postbox`.
+
+## Status after the 2026-10-13 onboarding pass
+
+Re-measured from a fresh copy: demo 0.4 s, `install.py` 0.03 s, canary,
+`doctor`, `send` and hook pickup about 0.05 s each, `selftest.py` 19 s. Fixed in
+docs and installer text (no change to `agent_mail.py`):
+
+| Item | State |
+|---|---|
+| 1 hook registration invisible | **Already fixed in the code:** `doctor` now prints `pickup_hook: registered` per host config, whether the script exists, and warns when `AGENT_MAIL_IDENTITY` is unset. The manual check in the Recommendations section below is no longer needed for that |
+| 2 recipient typo | Open (code change). Documented in [troubleshooting.md](troubleshooting.md) and the walkthrough |
+| 3 next step after install | Fixed: the installer prints the next steps (rename rows, identity, canary and `doctor`) |
+| 4 `doctor` red on day one | Fixed in README, the installer output and the walkthrough |
+| 5 `send` without `--from` | Documented next to the `export` (code change not made) |
+| 6 `selftest.py` about 20 s | Fixed in README and the installer output |
+| 7 `python` versus `python3` | Fixed in README and `docs/hosts.md` |
+| 8 wheel users | Already stated in README Option 1; kept |
+| 9 `.bak` and untracked files | Fixed: what to commit, in README and the walkthrough |
+| 10, 11, 12 | Unchanged |
+| Windows | README, walkthrough and troubleshooting say unsupported and untested; WSL not tried |
+
+Walkthrough: [onboarding-first-exchange.md](onboarding-first-exchange.md).
 
 ## Friction points, ranked by impact
 
