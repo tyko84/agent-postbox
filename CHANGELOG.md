@@ -74,6 +74,10 @@ behaviour).
   an if-it-goes-wrong table). What could not be checked without an interactive session (trust
   dialog, hook display, `/exit`) is marked UNVERIFIED. `live_demo.py setup` also writes
   `prompts/*.txt` for `pbcopy`.
+- `docs/adoption/invite-five.md`: a plan for inviting the first five external developers by direct
+  message (who, the honest invitation text, a 15-minute task, success and failure criteria). The
+  adoption drafts were corrected against the repo: headless-only evidence, Codex never run in the
+  real host, installer edits `.claude/settings.json`, a "do not post yet" gate.
 
 ### Fixed
 
