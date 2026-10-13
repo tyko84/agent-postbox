@@ -104,9 +104,10 @@ PROMPT_A = (
     "(beta sees only subjects at pickup). Then say SENT.")
 PROMPT_B1 = "Read client.py and summarise it in one line."
 PROMPT_B2 = (
-    "Handle any new Postbox mail first: answer it with the Reply command shown (use --body "
-    "'text' and --result DONE). Then add a function refund_url(charge_id) to client.py that "
-    "returns the refund URL of a charge on the same Payments service.")
+    "Handle any new Postbox mail first: answer it with the Reply command shown, with "
+    f"--to {ALPHA}, --body 'text' and --result DONE. Run that send as one plain command: no "
+    "`;`, `&&`, `echo` or environment prefix after or before it. Then add a function refund_url(charge_id) to client.py that "
+    "returns the refund URL of a charge on the live Payments service.")
 
 
 class Usage(Exception):
@@ -179,6 +180,31 @@ def prepare_dir(demo: Path) -> Path:
     return demo.resolve()
 
 
+def register_participants(project: Path) -> None:
+    """Replace the example rows of PARTICIPANTS.md with alpha and beta.
+
+    Without this, `send --to beta` warns that beta "is not a row in PARTICIPANTS.md" and
+    alpha tells the camera that the message may never be read: a defect of the demo
+    project, not of the scenario. The rows state the mechanism and stay `reachable: no`
+    and `not observed`, because nothing here has run a positive control."""
+    path = project / "docs" / "agent-mail" / "PARTICIPANTS.md"
+    text = path.read_text(encoding="utf-8")
+    mech = ("Prompt-injection hook: the host runs `tools/agent-postbox/hooks/agent_mail_check.py` "
+            "before the model sees the prompt.")
+    rows = [f"| `{who}` | **no** | {mech} | not observed |  |  |  |" for who in (ALPHA, BETA)]
+    out, done = [], False
+    for line in text.splitlines():
+        if line.startswith("| `agent-a`") or line.startswith("| `agent-b`"):
+            if not done:
+                out.extend(rows)
+                done = True
+            continue
+        out.append(line.replace("`agent-a`, `agent-b`", f"`{ALPHA}`, `{BETA}`"))
+    if not done:
+        raise Usage("the installed PARTICIPANTS.md has no example rows to replace")
+    path.write_text("\n".join(out) + "\n", encoding="utf-8")
+
+
 def load_state(demo: Path) -> dict[str, Any]:
     try:
         state = json.loads((demo / "state.json").read_text(encoding="utf-8"))
@@ -208,6 +234,7 @@ def setup(demo: Path, out: Any = None) -> dict[str, Any]:
         subprocess.run(["git", "init", "-q", str(project)], capture_output=True, env=clean_env())
     subprocess.run([sys.executable, "-I", str(INSTALL), str(project), "--adapter",
                     "claude-code"], check=True, capture_output=True, text=True, env=clean_env())
+    register_participants(project)
     local = project / ".claude" / "settings.local.json"
     local.write_text(json.dumps({"permissions": {"allow": allow_rules(project)}}, indent=2)
                      + "\n", encoding="utf-8")
@@ -404,6 +431,18 @@ def session_cmd(claude: str, project: Path, role: str, budget: float) -> list[st
             "--allowedTools", *allowed]
 
 
+def denied_calls(ev: dict[str, Any]) -> list[str]:
+    """One short line per tool call the host refused, so a FAIL can be diagnosed."""
+    rows = ev.get("permission_denials")
+    out: list[str] = []
+    for d in rows if isinstance(rows, list) else []:
+        if isinstance(d, dict):
+            inp = d.get("tool_input")
+            cmd = (inp.get("command") or inp.get("file_path")) if isinstance(inp, dict) else None
+            out.append(f"{d.get('tool_name')}: {str(cmd or inp)[:700]}")
+    return out
+
+
 def run_session(claude: str, demo: Path, state: dict[str, Any], role: str, prompt: str,
                 spend: Spend) -> dict[str, Any]:
     budget = spend.admit(role)
@@ -436,7 +475,8 @@ def run_session(claude: str, demo: Path, state: dict[str, Any], role: str, promp
             result.update(cost=float(cost) if isinstance(cost, (int, float)) else None,
                           turns=ev.get("num_turns"), is_error=bool(ev.get("is_error")),
                           said=str(ev.get("result") or "")[:300],
-                          denials=len(ev.get("permission_denials") or []))
+                          denials=len(ev.get("permission_denials") or []),
+                          denied=denied_calls(ev))
     spend.record(role, result.get("cost"))
     (demo / "logs" / f"{role}.hook.txt").write_text(hook, encoding="utf-8")
     (demo / "logs" / f"{role}.session.json").write_text(json.dumps(result, indent=2) + "\n",
@@ -463,6 +503,8 @@ def rehearse(args: argparse.Namespace) -> int:
             print(f"{role}: cost USD {r.get('cost')}, turns {r.get('turns')}, "
                   f"denials {r.get('denials')}, error {r.get('is_error')}, "
                   f"timed out {r['timed_out']}; said: {r.get('said', '')[:120]!r}")
+            for d in r.get("denied") or []:
+                print(f"  {role} was refused: {d}")
     except Usage as e:
         print(f"live_demo: {e}", file=sys.stderr)
         return SKIP
