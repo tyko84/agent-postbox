@@ -69,9 +69,17 @@ behaviour).
   the problem argument, hosts table, install options and the evidence (simulation and null pilot)
   follow. The simulation results table and the release-verification steps moved to
   `docs/benchmarks-summary.md` and `docs/install-reference.md`; the runnable examples keep their order.
+- `examples/two-agents/RECORDING.md` Part 1 is a single numbered Mac script (prerequisites with
+  expected output, a mandatory unrecorded dry run, what to paste in each Terminal, a beat table,
+  an if-it-goes-wrong table). What could not be checked without an interactive session (trust
+  dialog, hook display, `/exit`) is marked UNVERIFIED. `live_demo.py setup` also writes
+  `prompts/*.txt` for `pbcopy`.
 
 ### Fixed
 
+- `live_demo.py setup` printed `check`/`rehearse` commands without `--dir`, so after
+  `setup --dir X` they looked in the default directory; a beat 4 failure now says which transcript
+  directory it searched.
 - `live_demo.py setup` writes the demo's own `alpha`/`beta` rows (the example rows made `send`
   warn about its own recipient), and `rehearse` prints each tool call the host refused.
 - A working directory that no longer exists (for example a removed git worktree) made every
