@@ -1622,7 +1622,8 @@ class Workflows(unittest.TestCase):
             self.assertIn(f" {f}", template)
 
     def test_the_demo_kit_and_micro_experiment_are_tested_offline_and_never_run_in_ci(self) -> None:
-        # examples/two-agents/live_demo.py and scripts/experiment_micro.py start real model
+        # examples/two-agents/live_demo.py, scripts/experiment_micro.py and
+        # scripts/experiment_v2.py (docs/experiment-v2.md) start real model
         # sessions (docs/micro-experiment.md): no workflow runs them; their offline tests are
         # steps of the required selftest job and on every other test list
         ci = self.jobs("ci.yml")["selftest"]
@@ -1630,7 +1631,8 @@ class Workflows(unittest.TestCase):
         root = Path(__file__).resolve().parent
         template = (root / ".github" / "pull_request_template.md").read_text(encoding="utf-8")
         for test, tool in (("test_live_demo.py", "examples/two-agents/live_demo.py"),
-                           ("test_micro_experiment.py", "scripts/experiment_micro.py")):
+                           ("test_micro_experiment.py", "scripts/experiment_micro.py"),
+                           ("test_experiment_v2.py", "scripts/experiment_v2.py")):
             self.assertIn(f"- run: python {test}", steps)
             self.assertIn(test, self.jobs("release.yml")["test"])
             for wf in sorted(p.name for p in self.WF.glob("*.yml")):
@@ -1645,6 +1647,8 @@ class Workflows(unittest.TestCase):
             for f in (tool, test):
                 self.assertIn(f, self.mypy_files())
                 self.assertIn(f" {f}", template)
+        self.assertIn("scripts/analyze_v2.py", self.mypy_files())   # the hashed analysis
+        self.assertIn(" scripts/analyze_v2.py", template)
 
     def test_required_check_names_are_unchanged(self) -> None:
         ci = self.jobs("ci.yml")

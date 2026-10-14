@@ -1,7 +1,7 @@
 # Experiment v2 (pre-registration, not run): does the pickup mechanism help on a realistic two-agent task?
 
-Status: **a design, written before any model session**. Nothing here has been run, no
-money has been spent, and no code for it exists. It follows
+Status: **a design, written before any model session**. Nothing here has been run and no
+money has been spent; the harness exists (section 13) and is tested offline only. It follows
 [micro-experiment.md](micro-experiment.md) (the pilot, a null result with confounds) and
 the earlier design in [coordination-experiment.md](coordination-experiment.md). This page
 does not claim that Postbox improves performance, and the experiment may show that it
@@ -257,7 +257,8 @@ S4 nudges (assume 2 per instance on average) = 15. For 60 instances: 900 session
 The high case is deliberately pessimistic. The design is about 6 times the pilot's 180
 sessions at about 8 times the per-session cost (likely).
 
-**Recommended hard budget: USD 55 in total** (smoke 4, main 51). The likely total is about
+**Recommended hard budget: USD 55 in total** (smoke 4, main 51; amended 2026-10-14, see
+section 13: the integrator lowered the main cap to **USD 30**, smoke stays 4). The likely total is about
 USD 21, so 55 leaves a margin of about 2.5 times for a wrong extrapolation. The high case
 would reach the cap, and the cap, not the estimate, then binds. A cap near USD 25 would stop
 the run on a modestly wrong guess and waste what was spent; a larger one buys nothing the
@@ -307,7 +308,7 @@ task data is synthetic with random values: no personal data, nothing posted by t
 experiment. Raw event streams may contain model text; they stay out of the repository (as
 in the pilot) and per-run summaries are published.
 
-## 13. Harness changes needed (describe only; none made here)
+## 13. Harness changes (built offline in `scripts/experiment_v2.py`, `scripts/analyze_v2.py`, `test_experiment_v2.py`; no live run yet)
 
 1. A new instance builder: the `ledger/` project, `TICKETS.md`, a per-seed vendor sample,
    two separate checkouts, a shared channel directory; reference solutions and two hidden
@@ -329,6 +330,19 @@ in the pilot) and per-run summaries are published.
 
 Reused as is: Wilson, seeded arm order, cost accounting and ceiling, the stream-json
 session driver.
+
+**Amendment 2026-10-14 (before any measured run).** The main-stage hard ceiling is **USD 30**
+(a flag, default 30; smoke default 4), not 51. The smoke cost gate keeps its two parts: mean
+cost per session at most USD 0.034, and a projection (mean x 990 x 1.5) that must not pass the
+main ceiling; with a cap of 30 the second part needs a mean of about USD 0.020 or less, so it
+is the binding one and a mean between 0.020 and 0.034 stops the main run for the owner to
+decide. The harness refuses `--live` without `POSTBOX_EXPERIMENT_LIVE=1`, and the main stage
+without a passing, non-dry-run smoke gate whose arm prompts, model and effort match. S4 is
+given to arms P, N2, N1 and N0 only (O has a single session). Per-fact flags use test names
+in the hidden suites; a token guess such as `startswith("VOID")` would pass the void test
+(the doc fixes the token's form), so `b_void_ok` is weaker than `b_unit_ok`; `D` is the
+discriminating fact. Character counts are recorded for the arm paragraphs; token counts are
+not (the host reports usage per session, and no tokenizer is invented).
 
 ## 14. What the project will say
 
