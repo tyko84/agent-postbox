@@ -50,6 +50,8 @@ behaviour).
   two-agent task with hidden tests, a control that is not told to read the notes, no mailbox tool
   in controls, length-matched prompts, 60 paired instances, a decision rule fixed in advance, and
   a staged hard budget. It states that the likeliest result is again no measurable advantage.
+- A `Tried it` issue form and `docs/adoption/trial-log.md` for the five-developer trial; the
+  invite-five blocker list is refreshed (what is done, and the one owner action left).
 
 ### Changed
 

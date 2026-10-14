@@ -8,7 +8,7 @@ works for people other than its author and where it breaks.
 * **Field report** (issue template): a message did not arrive, arrived and was ignored, or
   was believed when it should not have been. This is the most valuable kind.
 * **Bug** (issue template): the tool did something other than `PROTOCOL.md` says.
-* **Questions and "I tried it"**: an issue titled `Question:` or `Tried it:` is fine. A
+* **Questions and "I tried it"**: use the `Tried it` issue form, or title an issue `Question:`. A
   first-use report that says where you got stuck is worth more than a feature request.
 * **Security**: privately, through the repository's security advisory link, never as an issue.
 
