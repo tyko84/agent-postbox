@@ -220,6 +220,28 @@ class Check(Fixture):
             json.dumps({"hook": f"Agent mail - 1 live message(s)\n id: {ask_id}"}) + "\n")
         self.assertEqual(self.failed(), set())
 
+    def test_printed_setup_and_check_commands_carry_the_demo_dir(self) -> None:
+        # Regression: they used to omit --dir, so after `setup --dir X` the printed
+        # `check` looked in the default directory and exited 2.
+        for sub in ("setup", "check"):
+            line = next(ln for ln in self.setup_out.splitlines() if f" {sub} --dir " in ln)
+            self.assertIn(str(self.demo.resolve()), line)
+        cp = run("check", "--dir", str(self.demo))      # what the printed command runs
+        self.assertEqual(cp.returncode, 1, cp.stdout + cp.stderr)
+
+    def test_setup_writes_the_prompts_as_files_for_the_clipboard(self) -> None:
+        for name, text in (("B1", self.mod.PROMPT_B1), ("A", self.mod.PROMPT_A),
+                           ("B2", self.mod.PROMPT_B2)):
+            self.assertEqual((self.demo / "prompts" / f"{name}.txt").read_text(), text)
+        self.assertIn("pbcopy < FILE", self.setup_out)
+
+    def test_a_beat_4_failure_says_where_it_looked(self) -> None:
+        self.artifacts(hook=False)
+        beat = next(b for b in self.mod.check(self.demo, self.empty) if b.n == 4)
+        self.assertFalse(beat.ok)
+        self.assertIn(str(self.empty), beat.evidence)
+        self.assertIn("0 transcript file(s)", beat.evidence)
+
     def test_check_without_setup_exits_2(self) -> None:
         cp = run("check", "--dir", str(Path(self.tmp.name) / "nothing"))
         self.assertEqual(cp.returncode, 2, cp.stdout)
