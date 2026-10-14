@@ -253,7 +253,7 @@ def reader_goes_away(root: Path) -> None:
 
     for entry in ("console script", "python -u agent_mail.py"):
         base, tag = ENTRIES[entry], entry.split()[1]
-        argv = base + ["send", "--type", "CLAIM", "--from", "alice", "--to", "all", "--subject",
+        argv = base + ["send", "--type", "CLAIM", "--from", "alice", "--to", "bob", "--subject",
                        f"gone {tag}", "--body", "b", "--scope", f"file:{tag}", "--expires", exp,
                        "--key", f"key-{tag}"]
         rc, err, _ = piped(argv, wbox, "closed")

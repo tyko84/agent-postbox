@@ -2119,13 +2119,22 @@ def _send_input_error(args: argparse.Namespace, body: str) -> str:
     return ""
 
 
-def unknown_recipient_note(to: str) -> str | None:
+def unknown_recipient_note(to: str, msg_type: str = "") -> str | None:
     """PROTOCOL.md section 41: one stderr line when `--to` names nobody the mailbox
     knows. Only a mailbox whose PARTICIPANTS.md has at least one row can be compared
     with, so nothing is said for one without a table (or one that cannot be read).
     The message is filed regardless and the exit status is unchanged: a name need not
     have a row to be legitimate, but a typo looks exactly like that. Reads only
     PARTICIPANTS.md; never scans the mailbox."""
+    if to in _SOFT_CAN_TOKENS and msg_type.upper() != "CLAIM":
+        # (a CLAIM to a broadcast word is how a lease is announced to everyone: its effect is the
+        # scope lock, which does not depend on any inbox, so it is not warned about)
+        # `all`, `any`, `*`, `everything` are not identities: the pickup adapter and
+        # `list --to <name>` match a message's `to` against one name exactly, so mail
+        # addressed to a broadcast word is filed but reaches no agent's context.
+        return (f"warning: --to {to!r} is a broadcast word, not an identity: the message is filed "
+                "but no pickup adapter or `list --to <name>` shows it to anyone. Address each "
+                "reader by name, or declare an alias for them in PARTICIPANTS.md.")
     table = next((p for p in (mail_dir() / "PARTICIPANTS.md", mail_dir().parent / "PARTICIPANTS.md")
                   if _is_file(p)), None)
     if table is None:   # the table next to the tool or in the cwd is not this mailbox's
@@ -2433,7 +2442,7 @@ def cmd_send(args: argparse.Namespace) -> int:
               file=sys.stderr)
     print(f"wrote {final}")
     print(f"id: {msg_id}")
-    if (note := unknown_recipient_note(to)) is not None:
+    if (note := unknown_recipient_note(to, mtype)) is not None:
         print(note, file=sys.stderr)
     return 0
 
@@ -3348,6 +3357,21 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def linked_worktree_line(root: Path) -> str | None:
+    """PROTOCOL.md section 41: a linked `git worktree` has its own checkout of the default
+    mailbox directory, so agents in two worktrees (or two clones) of one repository do not
+    share mail unless AGENT_MAIL_DIR names one directory for all. Said by `doctor` only when
+    the mailbox was found by walking up (not named) and `.git` here is the file a linked
+    worktree has, never the directory a main checkout has. Reported, never a FAIL."""
+    if os.environ.get("AGENT_MAIL_DIR"):
+        return None
+    if not _is_file(root / ".git"):
+        return None
+    return ("worktree: this checkout is a linked git worktree, so the mailbox above is this "
+            "worktree's own copy: agents in other worktrees or clones of the repository do not "
+            "see it. Point every agent's AGENT_MAIL_DIR at one shared directory to talk across them")
+
+
 def pickup_hook_lines(root: Path) -> list[str]:
     """PROTOCOL.md section 41: where a prompt-submit hook for the pickup adapter is
     registered under `root`, and whether the script it names is there. Read only and
@@ -3506,6 +3530,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     print(f"AGENT_MAIL_IDENTITY: {who.lower()!r}" if who else
           "AGENT_MAIL_IDENTITY: UNSET in this shell: the pickup adapter prints "
           "nothing without it, which looks exactly like an empty inbox")
+
+    if (wt := linked_worktree_line(project_root())) is not None:
+        print(wt)
 
     canary = find_live_canary(everything, now=now)
     if canary is None:

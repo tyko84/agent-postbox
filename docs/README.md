@@ -14,6 +14,7 @@
   sessions: delivery, no cross-talk, next-prompt and recovery checks, two
   behavioural observations, and what a missing hook script does (it blocks the
   prompt). `scripts/e2e_claude.py` re-runs it; it spends usage and is not in CI.
+* [reliability-evidence.md](reliability-evidence.md): twelve realistic failure scenarios (concurrency, restarts, busy or vanished recipients, claim holders, bad recipients, interrupted sends, duplicates, contention, acknowledgement, visibility to the human), each with its mechanism, the test or run that covers it (deterministic, simulated or observed), the gaps and the signal a person gets.
 * [packaging.md](packaging.md): building and checking the wheel and sdist.
 * [benchmarks-summary.md](benchmarks-summary.md): the pickup-versus-polling results table from one
   `scripts/scenario.py` run, with its caveats (moved from the README).

@@ -26,6 +26,7 @@ import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -1656,7 +1657,34 @@ def test_visibility(root: Path) -> None:
     check("control: the row is matched case-insensitively", r.returncode == 0 and r.stderr == "",
           r.stderr)
     r = send("all")
-    check("control: `all` is not a typo", r.returncode == 0 and r.stderr == "", r.stderr)
+    check("`all` is not a typo, but it is not an identity either: exit 0, filed, and one stderr line "
+          "says no pickup shows it to anyone (a broadcast word reaches nobody)",
+          r.returncode == 0 and r.stdout.startswith("wrote ") and len(r.stderr.splitlines()) == 1
+          and r.stderr.startswith("warning: --to 'all' is a broadcast word") and "Did you mean" not in r.stderr,
+          r.stderr)
+    exp = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def claim_as(who: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, "-I", TOOL, "send", "--type", "CLAIM", "--from", who, "--to", "all",
+             "--subject", f"claim by {who}", "--body", "b", "--scope", "billing/client.py",
+             "--expires", exp],
+            capture_output=True, text=True, env={**os.environ, "AGENT_MAIL_DIR": str(box)}, timeout=60)
+
+    first, second = claim_as("agent-a"), claim_as("agent-b")
+    check("control: a CLAIM to `all` is not warned about (its effect is the scope lock, not an "
+          "inbox), and the lease does hold against a second claimant",
+          first.returncode == 0 and first.stderr == "" and second.returncode != 0
+          and "already held by agent-a" in second.stderr, first.stderr + second.stderr)
+    every = send("everything")
+    hook_out = subprocess.run(
+        [sys.executable, "-I", str(HERE / "hooks" / "agent_mail_check.py")], capture_output=True,
+        text=True, env={**os.environ, "AGENT_MAIL_DIR": str(box), "AGENT_MAIL_IDENTITY": "agent-b"},
+        timeout=60)
+    check("control: the warning is true: agent-b's pickup hook shows the two messages addressed to "
+          "its name and nothing for the ones sent to `all` and `everything`",
+          every.stderr.startswith("warning: --to 'everything' is a broadcast word")
+          and hook_out.stdout.count("NOTICE from agent-a") == 2, hook_out.stdout)
     bare = root / "visibility-bare"
     bare.mkdir()
     r = send("anyone-at-all", bare)
@@ -1701,6 +1729,75 @@ def test_visibility(root: Path) -> None:
           r.returncode == base.returncode, f"{r.returncode} vs {base.returncode}")
 
 
+def test_linked_worktree(root: Path) -> None:
+    """Two agents in two linked worktrees of one repository each get their own copy of the
+    default mailbox directory: mail filed in one is not in the other, and `doctor` would
+    PASS in both. `doctor` now says so (PROTOCOL.md section 41). Reported, never a FAIL."""
+    note = "worktree: this checkout is a linked git worktree"
+
+    def fresh(name: str) -> Path:
+        d = root / name
+        (d / "docs" / "agent-mail").mkdir(parents=True)
+        return d
+
+    # Hand-made: a `.git` FILE is what a linked worktree has; a `.git` directory is a main checkout.
+    linked = fresh("wt-linked")
+    (linked / ".git").write_text("gitdir: /elsewhere/.git/worktrees/wt\n", encoding="utf-8")
+    main_co = fresh("wt-main")
+    (main_co / ".git").mkdir()
+    r_linked = run(None, "doctor", cwd=linked)
+    r_main = run(None, "doctor", cwd=main_co)
+    check("doctor in a linked worktree, mailbox found by walking up: says the mailbox is this "
+          "worktree's own and how to share one (AGENT_MAIL_DIR)",
+          note in r_linked.stdout and "AGENT_MAIL_DIR" in r_linked.stdout.split(note)[1].splitlines()[0],
+          r_linked.stdout[-500:])
+    check("control: a main checkout (.git is a directory) prints no such line",
+          note not in r_main.stdout, r_main.stdout[-300:])
+    r_named = run(linked / "docs" / "agent-mail", "doctor", cwd=linked)
+    check("control: with AGENT_MAIL_DIR named, the worktree line is not printed (the box is shared on purpose)",
+          note not in r_named.stdout, r_named.stdout[-300:])
+    check("the line is information: the exit status and every other line are as in the main checkout",
+          r_linked.returncode == r_main.returncode
+          and [ln for ln in r_linked.stdout.splitlines() if not ln.startswith(("worktree:", "# doctor"))]
+          == [ln for ln in r_main.stdout.splitlines() if not ln.startswith("# doctor")],
+          f"{r_linked.returncode} vs {r_main.returncode}")
+
+    # Real: a repository, a linked worktree made by the tool that makes them, one mailbox
+    # committed in the repository.
+    if shutil.which("git") is None:
+        print("  SKIP  real linked worktree: no git on PATH")
+        return
+    repo = root / "wt-real"
+    wt = root / "wt-real-b"
+
+    def g(*a: str, cwd: Path = repo) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.com", *a],
+                              cwd=cwd, capture_output=True, text=True, env=dict(BASE_ENV),
+                              timeout=STEP_TIMEOUT)
+
+    (repo / "docs" / "agent-mail").mkdir(parents=True)
+    (repo / "docs" / "agent-mail" / ".gitkeep").write_text("", encoding="utf-8")
+    ok = g("init", "-q", "-b", "main").returncode == 0 and g("add", "-A").returncode == 0 \
+        and g("commit", "-q", "-m", "x").returncode == 0 \
+        and g("worktree", "add", "-q", str(wt)).returncode == 0
+    if not ok:
+        print("  SKIP  real linked worktree: this git could not make one")
+        return
+    sent = run(None, "send", "--type", "NOTICE", "--from", "alice", "--to", "bob",
+               "--subject", "across", "--body", "b", cwd=repo)
+    there = run(None, "list", "--to", "bob", "--live", cwd=wt)
+    here = run(None, "list", "--to", "bob", "--live", cwd=repo)
+    check("control: the message is in the main checkout's mailbox", sent.returncode == 0
+          and "across" in here.stdout, here.stdout)
+    check("a real linked worktree does not see it (two mailboxes: the failure this line exists for)",
+          there.returncode == 0 and "across" not in there.stdout, there.stdout)
+    r = run(None, "doctor", cwd=wt)
+    check("...and its doctor names the cause", note in r.stdout, r.stdout[-400:])
+    shared = run(repo / "docs" / "agent-mail", "list", "--to", "bob", "--live", cwd=wt)
+    check("pointing AGENT_MAIL_DIR at the one mailbox is the documented way across: now it is seen",
+          "across" in shared.stdout, shared.stdout)
+
+
 def main() -> int:
     faulthandler.dump_traceback_later(WATCHDOG, exit=True)
     with tempfile.TemporaryDirectory() as td:
@@ -1714,6 +1811,7 @@ def main() -> int:
         test_fuzz(root)
         test_participants_not_utf8(root)
         test_visibility(root)
+        test_linked_worktree(root)
     faulthandler.cancel_dump_traceback_later()
     if KNOWN:
         print(f"\nKNOWN ({len(KNOWN)}; defects outside this file's reach, not failures):")

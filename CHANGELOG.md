@@ -52,6 +52,9 @@ behaviour).
   a staged hard budget. It states that the likeliest result is again no measurable advantage.
 - A `Tried it` issue form and `docs/adoption/trial-log.md` for the five-developer trial; the
   invite-five blocker list is refreshed (what is done, and the one owner action left).
+- `docs/reliability-evidence.md`: the twelve realistic reliability scenarios mapped to what covers each
+  (deterministic test, simulated, observed in a real headless session, or not covered), with the
+  gaps stated. One real-host check was added (USD 0.002): mail sent mid-turn is not seen by that turn.
 
 ### Changed
 
@@ -107,6 +110,15 @@ behaviour).
   stripped.
 - `scripts/preflight.sh` stops with a clear message when `git` does not run (for example an
   unaccepted Xcode license) instead of failing deep inside the tests.
+- `send --to all` (also `any`, `*`, `everything`) filed a message that no pickup adapter or
+  `list --to <name>` shows to anyone, with no warning. `send` now says so once on stderr (exit
+  status and stdout unchanged). A CLAIM to such a word is exempt: its scope lock works without an
+  inbox. PROTOCOL section 41.
+- `doctor` says when the checkout is a linked `git worktree`: each worktree has its own copy of the
+  default mailbox, so agents in two worktrees do not share mail unless `AGENT_MAIL_DIR` names one
+  directory. Informational, never a FAIL.
+- The README and PROTOCOL section 7 now say plainly that the hook runs once per prompt, so mail
+  that arrives during a long autonomous turn is seen at the next prompt.
 
 ## [0.5.0] - 2026-10-12
 
