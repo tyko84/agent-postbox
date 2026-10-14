@@ -1662,6 +1662,20 @@ def test_visibility(root: Path) -> None:
           r.returncode == 0 and r.stdout.startswith("wrote ") and len(r.stderr.splitlines()) == 1
           and r.stderr.startswith("warning: --to 'all' is a broadcast word") and "Did you mean" not in r.stderr,
           r.stderr)
+    exp = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def claim_as(who: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, "-I", TOOL, "send", "--type", "CLAIM", "--from", who, "--to", "all",
+             "--subject", f"claim by {who}", "--body", "b", "--scope", "billing/client.py",
+             "--expires", exp],
+            capture_output=True, text=True, env={**os.environ, "AGENT_MAIL_DIR": str(box)}, timeout=60)
+
+    first, second = claim_as("agent-a"), claim_as("agent-b")
+    check("control: a CLAIM to `all` is not warned about (its effect is the scope lock, not an "
+          "inbox), and the lease does hold against a second claimant",
+          first.returncode == 0 and first.stderr == "" and second.returncode != 0
+          and "already held by agent-a" in second.stderr, first.stderr + second.stderr)
     every = send("everything")
     hook_out = subprocess.run(
         [sys.executable, "-I", str(HERE / "hooks" / "agent_mail_check.py")], capture_output=True,

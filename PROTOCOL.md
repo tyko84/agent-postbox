@@ -2084,7 +2084,9 @@ message addressed to one of them is filed and shown to no agent. `send` says so 
 **stderr**, once, whether or not the mailbox has a table: `warning: --to 'all' is a
 broadcast word, not an identity: the message is filed but no pickup adapter or `list --to
 <name>` shows it to anyone. Address each reader by name, or declare an alias for them in
-PARTICIPANTS.md.` The exit status and stdout are unchanged. (An alias declared in
+PARTICIPANTS.md.` The exit status and stdout are unchanged. A CLAIM to a broadcast word is
+not warned about: a lease is announced to everyone by its scope lock (a second claim on the
+same scope is refused), which needs no inbox. (An alias declared in
 PARTICIPANTS.md, section 27, does fan out to its writers.)
 
 **A pickup that cannot run (`doctor`).** `doctor` prints, from the project root (the

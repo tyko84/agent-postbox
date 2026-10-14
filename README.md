@@ -624,6 +624,10 @@ executed or passed to a shell; the adapter only reads.
 * **Claims are advisory leases.** Nothing stops an agent from ignoring one.
 * **Local filesystems only.** Atomic rename, exclusive create and mtimes are
   assumed; network filesystems with weaker semantics are untested.
+* **Pickup happens at the next prompt.** The hook runs once per submitted prompt, so mail filed
+  while an agent is in the middle of a long autonomous turn is not seen until the next one;
+  nothing interrupts a running turn. A recipient that must notice mail mid-run has to run
+  `inbox` itself ([docs/reliability-evidence.md](docs/reliability-evidence.md)).
 * **POSIX only.** Windows is not supported or tested (WSL: not tried).
 
 ## Evidence, and what it does not show
