@@ -517,7 +517,7 @@ class Stages(Base):
             self.v.LiveDriver.run = saved
         self.assertEqual(rc, 0, err)
         self.assertIn("projected cost likely", out)
-        self.assertIn("P=317/317", out)
+        self.assertIn("P=346/346", out)
         gate = json.loads((self.root / "o" / "smoke_gate.json").read_text())
         self.assertTrue(gate["dry_run"])
         ns = self.args_ns("--stage", "main")

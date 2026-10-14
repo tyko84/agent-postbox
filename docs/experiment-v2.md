@@ -344,6 +344,22 @@ in the hidden suites; a token guess such as `startswith("VOID")` would pass the 
 discriminating fact. Character counts are recorded for the arm paragraphs; token counts are
 not (the host reports usage per session, and no tokenizer is invented).
 
+**Amendment 2026-10-14, after the first live smoke run (still before any measured run).** The
+first smoke run (3 instances, 48 sessions, USD 0.24 of the 4 ceiling, mean USD 0.005 per session,
+projected main cost USD 7.50) passed every check except "denials average at most 1 per run in
+every arm": N0 3.3, N1 5.7, N2 4.3, P 3.3 (O 1.0). The denied calls were of two kinds, in all arms:
+chained shell commands (`for` loops, `cd ... &&`, `;`) that the plain-command allow-rules reject,
+and the Edit tool on `NOTES.md`, which the host refuses because the file is a symlink to the
+shared directory (checked directly: an explicit `Edit(<real path>/**)` rule does not change it;
+the agent falls back to a shell `echo >>`). Two prompt changes follow, both before any measured
+run, so the smoke stage is repeated (the prompt hash restarts it): every agent's intro gains "Run
+each shell command as its own Bash call (no `cd`, `;`, `&&`, loops or pipes) and use Read to
+read files"; the notes arms say to append with a shell command "(the Edit tool cannot write this
+file)" and the mail arm says to send mail "never through the Edit tool", which keeps the P and N2
+paragraphs within 10% (346 and 363 characters). The first smoke run's data is kept outside the
+repository and is not part of any result. The O arm also showed `a_ok` false by design (it has a
+single session for agent-b).
+
 ## 14. What the project will say
 
 This experiment may again show **no advantage**, and a null result is the likeliest single

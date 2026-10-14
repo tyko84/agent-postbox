@@ -124,6 +124,9 @@ behaviour).
   directory. Informational, never a FAIL.
 - The README and PROTOCOL section 7 now say plainly that the hook runs once per prompt, so mail
   that arrives during a long autonomous turn is seen at the next prompt.
+- `scripts/experiment_v2.py`: after the first live smoke run (USD 0.24) the arm prompts say to run one
+  shell command per call and not to use the Edit tool on the shared notes file or for mail, which the
+  host refuses through a symlink; recorded as a dated amendment in `docs/experiment-v2.md`.
 
 ## [0.5.0] - 2026-10-12
 

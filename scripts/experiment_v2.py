@@ -77,10 +77,12 @@ SHARED_LINE = ("You and the other agent are building this together. Tell a teamm
                "they will need, using whatever the project provides.")
 INTRO = {A: "You are agent-a on a two-agent team building a ledger toolkit. Your checkout is "
             "your current directory; TICKETS.md lists both tickets and you do Ticket A. "
-            "Run tests with `python3 -m unittest discover tests`.",
+            "Run tests with `python3 -m unittest discover tests`. Run each shell command as its own "
+            "Bash call (no `cd`, `;`, `&&`, loops or pipes) and use Read to read files.",
          B: "You are agent-b on a two-agent team building a ledger toolkit. Your checkout is "
             "your current directory; TICKETS.md lists both tickets and you do Ticket B. "
-            "Run tests with `python3 -m unittest discover tests`."}
+            "Run tests with `python3 -m unittest discover tests`. Run each shell command as its own "
+            "Bash call (no `cd`, `;`, `&&`, loops or pipes) and use Read to read files."}
 TASK = {"s1": "Do your ticket now; stop when you have done what you can in this session.",
         "s2": "Do your ticket now; stop when you have done what you can in this session.",
         "s3": "Continue your ticket and finish it.",
@@ -91,13 +93,15 @@ PARAGRAPHS = {
     "P": ("Team mail uses `python3 tools/agent-postbox/agent_mail.py`. To tell {other} "
           "something, run `python3 tools/agent-postbox/agent_mail.py send --type NOTICE "
           "--from {me} --to {other} --subject '<subject>' --body '<text>'`. To answer a "
-          "message, use the Reply command it shows. Run each mail command as its own Bash call."),
+          "message, use the Reply command it shows. Run each mail command as its own Bash call, never through the Edit tool."),
     "N2": ("Team notes live in NOTES.md in this repository. To tell {other} something, append "
-           "a line to NOTES.md, for example `echo '{me}: <note>' >> NOTES.md`. Add one line "
+           "a line to NOTES.md with a shell command such as `echo '{me}: <note>' >> NOTES.md` "
+           "(the Edit tool cannot write this file). Add one line "
            "for each thing a teammate will need, keep each note to one line of plain text, "
            "and leave the earlier lines as they are, one Bash call per note."),
     "N1": ("Team notes live in NOTES.md in this repository. To tell {other} something, append "
-           "a line to NOTES.md, for example `echo '{me}: <note>' >> NOTES.md`. Add one line "
+           "a line to NOTES.md with a shell command such as `echo '{me}: <note>' >> NOTES.md` "
+           "(the Edit tool cannot write this file). Add one line "
            "for each thing a teammate will need, keep each note to one line of plain text, "
            "and leave the earlier lines as they are. At the start of each session, read NOTES.md."),
     "N0": "",
