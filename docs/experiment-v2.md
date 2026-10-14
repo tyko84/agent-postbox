@@ -377,6 +377,25 @@ still includes refused attempts, so the gate "denials at most 1 per run" stays a
 measures leakage attempts. The data of both earlier smoke runs is kept outside the repository and
 is not part of any result.
 
+**Amendment 2026-10-14, after the third live smoke run (still before any measured run).** With the
+leak closed, the no-channel arm passed 0 of 3 and the oracle 9 of 9, but denials stayed high in the
+notes arms (8.0 per run). The reason was worse than noise: **all 36 notes appends in the notes
+arms were refused and none succeeded**, so in those arms nobody could write a note while the mail
+arm worked. Direct tests (single sessions, about USD 0.03 in all) showed that no allow rule lets
+the host's `dontAsk` mode run a shell command containing a `>>` redirect (`Bash(echo *)`,
+`Bash(echo * >> NOTES.md)`, `Bash(echo:*)` and a redirect rule all refused it, even on a plain
+file in the working directory), and that the Edit tool refuses a symlink. What works, with zero
+denials: a real file in the shared directory, added with `--add-dir`, edited with the Edit or Write
+tool by relative path. The amendments above that told the notes arms to append with `echo >>` are
+therefore **superseded**. Now: the notes file is a real file `../../shared/NOTES.md`, reached by
+that path from either checkout (no symlink); the notes arms are told to add a line to it with the
+Edit or Write tool and to leave its heading alone (N1 is also told to read it at the start of a
+session; N2 is not); the mail arm's wording drops "never through the Edit tool"; the P and N2
+paragraphs are 317 and 308 characters, inside the 10% gate. Had the main stage been run on the
+earlier design, the notes arms would have measured the harness, not the notes file, and the result
+would have favoured Postbox. The data of all smoke runs is kept outside the repository and is not
+part of any result.
+
 ## 14. What the project will say
 
 This experiment may again show **no advantage**, and a null result is the likeliest single

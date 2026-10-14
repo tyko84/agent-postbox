@@ -202,9 +202,17 @@ class Arms(Base):
     def test_notes_arms_share_one_file(self) -> None:
         for arm in ("N2", "N1"):
             a, b, shared, _, _ = self.build(arm)
-            self.assertIn("team notes: NOTES.md", (b / "README.md").read_text())
-            (a / "NOTES.md").write_text((a / "NOTES.md").read_text() + "x\n")
-            self.assertEqual((b / "NOTES.md").read_text(), (shared / "NOTES.md").read_text())
+            self.assertIn("team notes: ../../shared/NOTES.md", (b / "README.md").read_text())
+            # a real file in the shared directory, reached by the same relative path from
+            # either checkout (the Edit tool refuses a symlink; shell redirects are refused)
+            for tree in (a, b):
+                self.assertFalse((tree / "NOTES.md").exists(), arm)
+                self.assertEqual((tree / self.v.NOTES_PATH).resolve(),
+                                 (shared / "NOTES.md").resolve(), arm)
+            (a / self.v.NOTES_PATH).write_text((a / self.v.NOTES_PATH).read_text() + "x\n")
+            self.assertEqual((b / self.v.NOTES_PATH).read_text(),
+                             (shared / "NOTES.md").read_text())
+            self.assertFalse((shared / "NOTES.md").is_symlink())
         a, b, shared, _, _ = self.build("N0")
         self.assertNotIn("NOTES.md", (b / "README.md").read_text())
         self.assertFalse((shared / "NOTES.md").exists())
@@ -228,8 +236,10 @@ class Arms(Base):
         s3 = self.v.session_prompt("N2", "agent-b", "s3", inst)
         self.assertIn("Continue your ticket and finish it.", s3)
         self.assertIn(self.v.SHARED_LINE, s3)
-        self.assertNotIn("read NOTES.md", s3)        # N2 is told how to write, not to read
-        self.assertIn("read NOTES.md", self.v.session_prompt("N1", "agent-b", "s3", inst))
+        self.assertNotIn("read it", s3)               # N2 is told how to write, not to read
+        self.assertNotIn("Bash", s3.split(self.v.SHARED_LINE)[1])   # no shell append: redirects are refused
+        self.assertIn("../../shared/NOTES.md", s3)
+        self.assertIn("read it", self.v.session_prompt("N1", "agent-b", "s3", inst))
         for arm in ("P", "N2", "N1", "N0"):
             self.assertNotIn(inst.token, self.v.session_prompt(arm, "agent-b", "s1", inst))
             self.assertNotIn("do not guess", self.v.session_prompt(arm, "agent-b", "s1",
@@ -551,7 +561,7 @@ class Stages(Base):
             self.v.LiveDriver.run = saved
         self.assertEqual(rc, 0, err)
         self.assertIn("projected cost likely", out)
-        self.assertIn("P=346/346", out)
+        self.assertIn("P=317/317", out)
         gate = json.loads((self.root / "o" / "smoke_gate.json").read_text())
         self.assertTrue(gate["dry_run"])
         ns = self.args_ns("--stage", "main")

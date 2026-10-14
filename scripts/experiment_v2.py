@@ -96,17 +96,16 @@ PARAGRAPHS = {
     "P": ("Team mail uses `python3 tools/agent-postbox/agent_mail.py`. To tell {other} "
           "something, run `python3 tools/agent-postbox/agent_mail.py send --type NOTICE "
           "--from {me} --to {other} --subject '<subject>' --body '<text>'`. To answer a "
-          "message, use the Reply command it shows. Run each mail command as its own Bash call, never through the Edit tool."),
-    "N2": ("Team notes live in NOTES.md in this repository. To tell {other} something, append "
-           "a line to NOTES.md with a shell command such as `echo '{me}: <note>' >> NOTES.md` "
-           "(the Edit tool cannot write this file). Add one line "
-           "for each thing a teammate will need, keep each note to one line of plain text, "
-           "and leave the earlier lines as they are, one Bash call per note."),
-    "N1": ("Team notes live in NOTES.md in this repository. To tell {other} something, append "
-           "a line to NOTES.md with a shell command such as `echo '{me}: <note>' >> NOTES.md` "
-           "(the Edit tool cannot write this file). Add one line "
-           "for each thing a teammate will need, keep each note to one line of plain text, "
-           "and leave the earlier lines as they are. At the start of each session, read NOTES.md."),
+          "message, use the Reply command it shows. Run each mail command as its own Bash call."),
+    "N2": ("Team notes live in ../../shared/NOTES.md, a file you both can edit. To tell {other} "
+           "something, add one line to it with the Edit or Write tool, keeping the earlier lines. "
+           "Add one line for each thing a teammate will need, and keep each note to one line of "
+           "plain text. Leave the heading '# Team notes' as it is."),
+    "N1": ("Team notes live in ../../shared/NOTES.md, a file you both can edit. To tell {other} "
+           "something, add one line to it with the Edit or Write tool, keeping the earlier lines. "
+           "Add one line for each thing a teammate will need, and keep each note to one line of "
+           "plain text. Leave the heading '# Team notes' as it is. At the start of each session, "
+           "read it."),
     "N0": "",
     "O": "",
 }
@@ -116,7 +115,8 @@ COMMON_ALLOW = (
     "Bash(python3 -m unittest *)", "Bash(python3 -m unittest)", "Bash(python3 tests/*)",
     "Bash(ls *)", "Bash(ls)", "Bash(pwd)", "Bash(cat *)", "Bash(head *)", "Bash(tail *)",
     "Bash(grep *)", "Bash(find *)", "Bash(wc *)", "Bash(sed -n *)", "Bash(echo *)")
-README_NOTES_LINE = "team notes: NOTES.md\n"
+NOTES_PATH = "../../shared/NOTES.md"      # from either checkout: root/<container>/<a|b> -> root/shared
+README_NOTES_LINE = f"team notes: {NOTES_PATH}\n"
 
 
 def arm_order(seed: int) -> list[str]:
@@ -644,9 +644,10 @@ class Harness(micro.Experiment):
             for tree in (a, b):
                 assert_mailbox_omitted(tree)
         if arm in ("N2", "N1"):
+            # a real file in the shared directory, reached by the relative path in the arm
+            # paragraph: the host's Edit tool refuses a symlink, and shell redirects (`>>`) are
+            # refused in this permission mode (both found by the smoke stage)
             (shared / NOTES_REL).write_text("# Team notes\n", encoding="utf-8")
-            for tree in (a, b):
-                (tree / NOTES_REL).symlink_to(shared / NOTES_REL)
         write_tree(a, {"vendor/sample_export.csv": inst.sample})
         assert_no_leak(b, inst.token)
         return a, b, shared, extra
@@ -967,7 +968,7 @@ class FakeDriver:
                                 "vendor facts", "--body", fact], cwd=proj, env=spec.env,
                                capture_output=True, check=True)
             elif spec.arm in ("N2", "N1"):
-                self.use(events, "Bash", command=f"echo 'agent-a: {fact}' >> NOTES.md")
+                self.use(events, "Edit", file_path=NOTES_PATH)
                 with (spec.shared / NOTES_REL).open("a", encoding="utf-8") as fh:
                     fh.write(f"agent-a: {fact}\n")
             return
@@ -995,7 +996,7 @@ class FakeDriver:
                     [sys.executable, "-I", str(proj / DEST / "agent_mail.py"), "show", m["id"]],
                     cwd=proj, env=spec.env, capture_output=True, text=True).stdout
         elif spec.arm in ("N2", "N1"):
-            self.use(events, "Read", file_path=str(proj / NOTES_REL))
+            self.use(events, "Read", file_path=NOTES_PATH)
             text = (spec.shared / NOTES_REL).read_text(encoding="utf-8")
         got = self.facts(text)
         if got:
