@@ -863,5 +863,89 @@ class InstallNextSteps(unittest.TestCase):
             self.assertIn("(run from the project root)", cp.stdout)   # the poll hint is relative too
 
 
+TABLE = ("| Identity | Reachable | Mechanism | Verified | can | cannot | uid |\n"
+         "|---|---|---|---|---|---|---|\n"
+         "| `alice` | **no** | poll | not observed | | | |\n"
+         "| `bob` | **no** | poll | not observed | | | |\n")
+
+
+@unittest.skipUnless(os.name == "posix", "POSIX permissions and shell")
+class ReliabilityProbes(unittest.TestCase):
+    """Defects a probe of the real CLI reproduced (each has its positive control)."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory(prefix="test-adapters-")
+        self.addCleanup(tmp.cleanup)
+        self.tmp = Path(tmp.name).resolve()
+        self.box = self.tmp / "mail"
+        self.box.mkdir()
+
+    def cli(self, *argv: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run([sys.executable, "-I", str(TOOL), *argv], capture_output=True,
+                              text=True, timeout=TIMEOUT, cwd=self.tmp,
+                              env=clean_env(AGENT_MAIL_DIR=str(self.box)))
+
+    def test_the_hook_spells_out_the_newest_20_live_messages_not_all_of_them(self) -> None:
+        for i in range(25):
+            send(self.box, type="NOTICE", **{"from": "alice"}, to="bob", subject=f"note{i:02d}")
+        cp = as_codex(HOOK, PAYLOAD, self.tmp, AGENT_MAIL_DIR=str(self.box),
+                      AGENT_MAIL_IDENTITY="bob")
+        out = cp.stdout.decode()
+        self.assertEqual(cp.returncode, 0, cp.stderr)
+        self.assertIn("Agent mail - 25 live message(s) addressed to 'bob'.", out)
+        self.assertEqual(out.count("    id: "), 20)
+        self.assertIn("(5 older live message(s) not listed;", out)
+        self.assertIn("note24", out)       # the newest is kept
+        self.assertNotIn("note04", out)    # the oldest are counted, not printed
+        send(self.box, type="NOTICE", **{"from": "alice"}, to="carol", subject="one")
+        few = as_codex(HOOK, PAYLOAD, self.tmp, AGENT_MAIL_DIR=str(self.box),
+                       AGENT_MAIL_IDENTITY="carol").stdout.decode()
+        self.assertNotIn("not listed", few)   # control: a small inbox is unchanged
+
+    def test_a_padded_to_is_not_called_an_unknown_recipient(self) -> None:
+        (self.box / "PARTICIPANTS.md").write_text(TABLE, encoding="utf-8")
+        base = ["send", "--from", "alice", "--type", "NOTICE", "--subject", "s", "--body", "b"]
+        control = self.cli(*base, "--to", "nobody")
+        self.assertIn("is not a row in PARTICIPANTS.md", control.stderr)
+        padded = self.cli(*base, "--to", " bob ")
+        self.assertEqual(padded.returncode, 0, padded.stderr)
+        self.assertEqual(padded.stderr, "")
+
+    def test_doctor_does_not_call_an_unlistable_mailbox_healthy(self) -> None:
+        if os.geteuid() == 0:
+            self.skipTest("root can list anything")
+        self.assertIn("store: OK", self.cli("doctor").stdout)   # control
+        self.box.chmod(0)
+        try:
+            cp = self.cli("doctor")
+            sent = self.cli("send", "--from", "alice", "--to", "bob", "--type", "NOTICE",
+                            "--subject", "s", "--body", "b")
+        finally:
+            self.box.chmod(0o755)
+        self.assertEqual(cp.returncode, 2, cp.stdout)
+        self.assertIn("store: UNREADABLE", cp.stdout)
+        self.assertIn("FAIL: mailbox unreadable", cp.stdout)
+        self.assertNotIn("Traceback", sent.stderr)
+        self.assertEqual(sent.returncode, 1)
+        self.assertIn("nothing written", sent.stderr)
+
+    def test_install_into_a_read_only_directory_is_one_line_not_a_traceback(self) -> None:
+        if os.geteuid() == 0:
+            self.skipTest("root can write anywhere")
+        project = self.tmp / "ro"
+        (project / ".git").mkdir(parents=True)
+        (project / ".claude").mkdir()
+        (project / ".claude" / "settings.json").write_text("{}\n", encoding="utf-8")
+        (project / ".claude").chmod(0o555)
+        try:
+            cp = install(project, "--adapter", "claude-code")
+        finally:
+            (project / ".claude").chmod(0o755)
+        self.assertEqual(cp.returncode, 1)
+        self.assertNotIn("Traceback", cp.stderr)
+        self.assertIn("ABORT: cannot write", cp.stderr)
+        self.assertEqual(install(project, "--adapter", "claude-code").returncode, 0)  # re-run heals
+
+
 if __name__ == "__main__":
     unittest.main()

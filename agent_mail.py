@@ -2255,7 +2255,7 @@ def cmd_send(args: argparse.Namespace) -> int:
         return 2
 
     now = _now()
-    sender, to = args.sender.lower(), args.to.lower()
+    sender, to = args.sender.lower(), args.to.strip().lower()
     idem = (getattr(args, "key", "") or "").strip()
     msg_id = _new_ulid(now)
     if not _is_ulid(msg_id) or msg_id.upper() == "REPLACE_ID":
@@ -2344,7 +2344,10 @@ def cmd_send(args: argparse.Namespace) -> int:
 
     def landed() -> bool:
         # The name carries this send's fresh ULID, so it exists iff we linked it.
-        return not collided and final.exists()
+        try:
+            return not collided and final.exists()
+        except OSError:   # cannot even look (an unsearchable mailbox): nothing was linked
+            return False
 
     trap = _SignalTrap()
     try:
@@ -3404,6 +3407,15 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         print(f"  - {_no_mailbox_hint()}")
         print("authorship: CANNOT_VERIFY")
         print("FAIL: mailbox missing")
+        return 2
+    if not os.access(box, os.R_OK | os.X_OK):
+        # glob() on a directory the OS will not list returns nothing, which would read as
+        # "store: OK, messages: 0": a healthy empty mailbox. It is not one.
+        print("store: UNREADABLE")
+        print(f"  - this user cannot list {box} (mode/ownership); mail in it cannot be read or "
+              "delivered: fix the permissions (e.g. chmod u+rwx), then run doctor again")
+        print("authorship: CANNOT_VERIFY")
+        print("FAIL: mailbox unreadable")
         return 2
     print("store: OK")
 

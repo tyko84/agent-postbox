@@ -243,6 +243,10 @@ this, in a throwaway mailbox; run it whenever you touch delivery.
   is read-only and fails silently like the rest; an identity that holds a
   claim sees it even when nothing is addressed to it. Positive controls for
   each line are in `selftest.py` (§8).
+* The adapter runs before every prompt, so it spells out at most the newest 20 live
+  messages; the header still counts all of them and one line says how many older ones
+  are not listed and that `list --to <you> --live` shows them. `doctor` reports a
+  mailbox the user cannot list as `store: UNREADABLE` (exit 2), not as an empty one.
 * Identity comes from `AGENT_MAIL_IDENTITY`. There is no default. A pickup
   (adapter or poll) without it cannot deliver to you, so one adapter file
   serves every participant.

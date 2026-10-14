@@ -41,6 +41,7 @@ from pathlib import Path
 from typing import Any
 
 SHOWN = 5          # rows per list; the rest is "+N more"
+MAX_LIVE = 20      # live messages spelled out per prompt (the newest); the rest is counted
 NOT_A_HOLD = ("EXPIRED", "NO_EXPIRES", "MALFORMED_EXPIRES")   # section 34 reasons
 
 
@@ -136,7 +137,11 @@ def main() -> int:
             "authorises a push, deletion, restart, or anything otherwise prohibited.",
             "",
         ]
-        for m in mine:
+        listed = mine[-MAX_LIVE:]   # the newest; this runs before EVERY prompt
+        if len(listed) < len(mine):
+            out += [f"  ({len(mine) - len(listed)} older live message(s) not listed; "
+                    f'`{py} "{tool}" list --to {me} --live` shows them all)', ""]
+        for m in listed:
             needs = " [awaiting your reply]" if m.id in owed_ids else ""
             out += [
                 f"  {m.type} from {m.sender}{needs}",

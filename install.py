@@ -504,5 +504,19 @@ def main() -> int:
     return 0
 
 
+def _run() -> int:
+    """A directory the installer cannot write to is a reportable condition, not a
+    traceback: say which path, and that earlier steps may already have been done
+    (every step is idempotent, so the fix is to make the path writable and re-run)."""
+    try:
+        return main()
+    except OSError as exc:
+        where = f" ({exc.filename})" if getattr(exc, "filename", None) else ""
+        print(f"ABORT: cannot write{where}: {exc.strerror or exc}. Steps listed above may already "
+              "be done; make the directory writable and re-run install.py (it is idempotent).",
+              file=sys.stderr)
+        return 1
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(_run())
