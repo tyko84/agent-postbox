@@ -68,6 +68,9 @@ GATE_FACTOR = 1.5
 DS = (250, 400, 640, 800, 1250, 2000)
 LIVE_ENV = "POSTBOX_EXPERIMENT_LIVE"
 NOTES_REL = "NOTES.md"
+# Each agent's checkout sits in its own container directory, so a `find ..` shows only its own
+# tree; the first live smoke run showed agent-b listing its parent and reading agent-a's sample.
+TREE = {"agent-a": "checkout_of_agent_a", "agent-b": "checkout_of_agent_b"}
 COST_SCENARIOS = {"low": 0.0075, "likely": 0.020, "high": 0.060}   # USD per session (doc 11)
 S4_PER_INSTANCE = 2                                                  # assumed average (doc 11)
 BACKOFF = (60, 180)                                                  # seconds, per rate limit
@@ -77,10 +80,14 @@ SHARED_LINE = ("You and the other agent are building this together. Tell a teamm
                "they will need, using whatever the project provides.")
 INTRO = {A: "You are agent-a on a two-agent team building a ledger toolkit. Your checkout is "
             "your current directory; TICKETS.md lists both tickets and you do Ticket A. "
-            "Run tests with `python3 -m unittest discover tests`.",
+            "Run tests with `python3 -m unittest discover tests`. Run each shell command as its own "
+            "Bash call (no `cd`, `;`, `&&`, loops or pipes), use Read to read files, work only inside "
+            "your checkout, and check your code with the unit tests, not `python3 -c`.",
          B: "You are agent-b on a two-agent team building a ledger toolkit. Your checkout is "
             "your current directory; TICKETS.md lists both tickets and you do Ticket B. "
-            "Run tests with `python3 -m unittest discover tests`."}
+            "Run tests with `python3 -m unittest discover tests`. Run each shell command as its own "
+            "Bash call (no `cd`, `;`, `&&`, loops or pipes), use Read to read files, work only inside "
+            "your checkout, and check your code with the unit tests, not `python3 -c`."}
 TASK = {"s1": "Do your ticket now; stop when you have done what you can in this session.",
         "s2": "Do your ticket now; stop when you have done what you can in this session.",
         "s3": "Continue your ticket and finish it.",
@@ -92,14 +99,15 @@ PARAGRAPHS = {
           "something, run `python3 tools/agent-postbox/agent_mail.py send --type NOTICE "
           "--from {me} --to {other} --subject '<subject>' --body '<text>'`. To answer a "
           "message, use the Reply command it shows. Run each mail command as its own Bash call."),
-    "N2": ("Team notes live in NOTES.md in this repository. To tell {other} something, append "
-           "a line to NOTES.md, for example `echo '{me}: <note>' >> NOTES.md`. Add one line "
-           "for each thing a teammate will need, keep each note to one line of plain text, "
-           "and leave the earlier lines as they are, one Bash call per note."),
-    "N1": ("Team notes live in NOTES.md in this repository. To tell {other} something, append "
-           "a line to NOTES.md, for example `echo '{me}: <note>' >> NOTES.md`. Add one line "
-           "for each thing a teammate will need, keep each note to one line of plain text, "
-           "and leave the earlier lines as they are. At the start of each session, read NOTES.md."),
+    "N2": ("Team notes live in ../../shared/NOTES.md, a file you both can edit. To tell {other} "
+           "something, add one line to it with the Edit or Write tool, keeping the earlier lines. "
+           "Add one line for each thing a teammate will need, and keep each note to one line of "
+           "plain text. Leave the heading '# Team notes' as it is."),
+    "N1": ("Team notes live in ../../shared/NOTES.md, a file you both can edit. To tell {other} "
+           "something, add one line to it with the Edit or Write tool, keeping the earlier lines. "
+           "Add one line for each thing a teammate will need, and keep each note to one line of "
+           "plain text. Leave the heading '# Team notes' as it is. At the start of each session, "
+           "read it."),
     "N0": "",
     "O": "",
 }
@@ -109,7 +117,8 @@ COMMON_ALLOW = (
     "Bash(python3 -m unittest *)", "Bash(python3 -m unittest)", "Bash(python3 tests/*)",
     "Bash(ls *)", "Bash(ls)", "Bash(pwd)", "Bash(cat *)", "Bash(head *)", "Bash(tail *)",
     "Bash(grep *)", "Bash(find *)", "Bash(wc *)", "Bash(sed -n *)", "Bash(echo *)")
-README_NOTES_LINE = "team notes: NOTES.md\n"
+NOTES_PATH = "../../shared/NOTES.md"      # from either checkout: root/<container>/<a|b> -> root/shared
+README_NOTES_LINE = f"team notes: {NOTES_PATH}\n"
 
 
 def arm_order(seed: int) -> list[str]:
@@ -510,6 +519,28 @@ def runs_show(tools: list[dict[str, Any]]) -> bool:
                for t in tools)
 
 
+def isolation_rules(root: Path, other: str) -> tuple[str, ...]:
+    """Deny rules that keep a session out of the OTHER agent's checkout: the Read, Edit and
+    Write tools on its container directory, and any Bash command that names it. Checked live
+    (2026-10-14): the file tools and `cat`/`find` naming the container are refused."""
+    c = (root / TREE[other]).resolve()
+    return (f"Read(/{c}/**)", f"Edit(/{c}/**)", f"Write(/{c}/**)", f"Bash(*{TREE[other]}*)")
+
+
+def channel_denials(denials: list[Any]) -> int:
+    """Refused calls that were a use of a communication channel: the mail command, or the shared
+    notes file. A channel that is refused is a harness defect, not an arm's behaviour."""
+    return sum(1 for d in denials
+               if isinstance(d, dict) and ("agent_mail.py" in json.dumps(d.get("tool_input"))
+                                           or NOTES_REL in json.dumps(d.get("tool_input"))))
+
+
+def crossed(tools: list[dict[str, Any]], other: str) -> bool:
+    """Whether any tool call of this session named the other agent's container (an attempt;
+    the deny rules refuse it, and the flag records that it was tried)."""
+    return any(TREE[other] in json.dumps(t.get("input")) for t in tools)
+
+
 class Harness(micro.Experiment):
     """Reuses the micro-experiment's guard, Ceiling and the e2e Runner's environment and
     event parsing; adds the instance, the scoring and the scheduling."""
@@ -543,11 +574,14 @@ class Harness(micro.Experiment):
             s.usage = dict(ev.get("usage") or {})
             s.model_usage = dict(ev.get("modelUsage") or {})
 
-    def command(self, arm: str, proj: Path, shared: Path) -> list[str]:
+    def command(self, arm: str, proj: Path, shared: Path,
+                deny: tuple[str, ...] = ()) -> list[str]:
         cmd = self.base_cmd(tools="Bash,Read,Edit,Write", allowed=(), max_turns=self.args.max_turns)
         cmd[cmd.index("--effort") + 1] = self.args.effort
         if arm in ("N2", "N1"):
             cmd += ["--add-dir", str(shared)]
+        if deny:
+            cmd += ["--disallowedTools", *deny]
         return cmd + ["--allowedTools", *allowed(arm, proj)]
 
     def one_session(self, spec: Spec, tag_dir: str) -> tuple[XSession, dict[str, Any]]:
@@ -586,17 +620,19 @@ class Harness(micro.Experiment):
                "seconds": round(secs, 1), "cost_usd": s.cost_usd, "turns": s.num_turns,
                "rc": s.rc, "timed_out": s.timed_out, "is_error": s.is_error,
                "rate_limited": s.rate_limited, "infra": infra, "denials": len(s.denials),
+               "channel_denials": channel_denials(s.denials),
                "model": s.model, "usage": s.usage, "model_usage": s.model_usage,
                "raw_events": str(raw_path), "prompt_chars": len(spec.prompt),
                "result": s.result[:400], "tools": [t["name"] for t in s.tools],
                "reads_notes": reads_notes(s.tools), "runs_show": runs_show(s.tools),
+               "cross_checkout": crossed(s.tools, A if spec.who == B else B),
                "mentions_mailbox": "agent_mail" in raw.stdout or "tools/agent-postbox" in raw.stdout,
                "hook_stdout": s.hook_stdout()[:2000]}
         return s, rec
 
     # ---- one run (one arm on one instance) ---------------------------------------------
     def build(self, inst: Instance, arm: str, root: Path) -> tuple[Path, Path, Path, dict[str, str]]:
-        a, b, shared = root / "a", root / "b", root / "shared"
+        a, b, shared = root / TREE[A] / "a", root / TREE[B] / "b", root / "shared"
         for d in (a, b, shared):
             d.mkdir(parents=True)
         files = inst.base_files()
@@ -619,9 +655,10 @@ class Harness(micro.Experiment):
             for tree in (a, b):
                 assert_mailbox_omitted(tree)
         if arm in ("N2", "N1"):
+            # a real file in the shared directory, reached by the relative path in the arm
+            # paragraph: the host's Edit tool refuses a symlink, and shell redirects (`>>`) are
+            # refused in this permission mode (both found by the smoke stage)
             (shared / NOTES_REL).write_text("# Team notes\n", encoding="utf-8")
-            for tree in (a, b):
-                (tree / NOTES_REL).symlink_to(shared / NOTES_REL)
         write_tree(a, {"vendor/sample_export.csv": inst.sample})
         assert_no_leak(b, inst.token)
         return a, b, shared, extra
@@ -650,9 +687,12 @@ class Harness(micro.Experiment):
             plan = ([("o", B)] if arm == "O" else [("s1", B), ("s2", A), ("s3", B)])
 
             def go(stage: str, who: str, proj: Path) -> XSession:
+                other = A if who == B else B
                 spec = Spec(stage, arm, who, "s1" if stage == "o" else stage, proj,
                             session_prompt(arm, who, "s1" if stage == "o" else stage, inst),
-                            self.env(who, extra), self.command(arm, proj, shared), inst, shared)
+                            self.env(who, extra),
+                            self.command(arm, proj, shared, isolation_rules(root, other)), inst,
+                            shared)
                 s, srec = self.one_session(spec, tag_dir)
                 rec["sessions"].append(srec)
                 if srec["infra"] and not rec["infra_failure"]:
@@ -680,6 +720,8 @@ class Harness(micro.Experiment):
         rec["seconds"] = round(time.monotonic() - t0, 1)
         rec["cost_usd"] = round(sum(s["cost_usd"] or 0.0 for s in rec["sessions"]), 6)
         rec["denials"] = sum(s["denials"] for s in rec["sessions"])
+        rec["channel_denials"] = sum(s["channel_denials"] for s in rec["sessions"])
+        rec["cross_checkout"] = any(s["cross_checkout"] for s in rec["sessions"])
         rec["mailbox_mention"] = arm != "P" and any(s["mentions_mailbox"] for s in rec["sessions"])
         runs = self.out / "runs"
         runs.mkdir(parents=True, exist_ok=True)
@@ -817,6 +859,8 @@ def smoke_gate(records: list[dict[str, Any]], spent: float, args: argparse.Names
         "N0 reaches b_ok in at most 1 of 3": len(n0) >= 1 and sum(r["b_ok"] for r in n0) <= 1,
         "no mailbox mention in any non-P run": not any(r["mailbox_mention"] for r in recs),
         "P and N2 paragraphs within 10%": lengths_within(),
+        "no call to a communication channel (mail command, notes file) was refused": not any(
+            r.get("channel_denials", 0) for r in recs),
         "denials average at most 1 per run in every arm": all(
             sum(v) / len(v) <= 1 for v in by_arm.values() if v),
         f"cost gate: mean per session <= ${GATE_MEAN_USD}": mean <= GATE_MEAN_USD,
@@ -938,7 +982,7 @@ class FakeDriver:
                                 "vendor facts", "--body", fact], cwd=proj, env=spec.env,
                                capture_output=True, check=True)
             elif spec.arm in ("N2", "N1"):
-                self.use(events, "Bash", command=f"echo 'agent-a: {fact}' >> NOTES.md")
+                self.use(events, "Edit", file_path=NOTES_PATH)
                 with (spec.shared / NOTES_REL).open("a", encoding="utf-8") as fh:
                     fh.write(f"agent-a: {fact}\n")
             return
@@ -966,7 +1010,7 @@ class FakeDriver:
                     [sys.executable, "-I", str(proj / DEST / "agent_mail.py"), "show", m["id"]],
                     cwd=proj, env=spec.env, capture_output=True, text=True).stdout
         elif spec.arm in ("N2", "N1"):
-            self.use(events, "Read", file_path=str(proj / NOTES_REL))
+            self.use(events, "Read", file_path=NOTES_PATH)
             text = (spec.shared / NOTES_REL).read_text(encoding="utf-8")
         got = self.facts(text)
         if got:

@@ -344,6 +344,87 @@ in the hidden suites; a token guess such as `startswith("VOID")` would pass the 
 discriminating fact. Character counts are recorded for the arm paragraphs; token counts are
 not (the host reports usage per session, and no tokenizer is invented).
 
+**Amendment 2026-10-14, after the first live smoke run (still before any measured run).** The
+first smoke run (3 instances, 48 sessions, USD 0.24 of the 4 ceiling, mean USD 0.005 per session,
+projected main cost USD 7.50) passed every check except "denials average at most 1 per run in
+every arm": N0 3.3, N1 5.7, N2 4.3, P 3.3 (O 1.0). The denied calls were of two kinds, in all arms:
+chained shell commands (`for` loops, `cd ... &&`, `;`) that the plain-command allow-rules reject,
+and the Edit tool on `NOTES.md`, which the host refuses because the file is a symlink to the
+shared directory (checked directly: an explicit `Edit(<real path>/**)` rule does not change it;
+the agent falls back to a shell `echo >>`). Two prompt changes follow, both before any measured
+run, so the smoke stage is repeated (the prompt hash restarts it): every agent's intro gains "Run
+each shell command as its own Bash call (no `cd`, `;`, `&&`, loops or pipes) and use Read to
+read files"; the notes arms say to append with a shell command "(the Edit tool cannot write this
+file)" and the mail arm says to send mail "never through the Edit tool", which keeps the P and N2
+paragraphs within 10% (346 and 363 characters). The first smoke run's data is kept outside the
+repository and is not part of any result. The O arm also showed `a_ok` false by design (it has a
+single session for agent-b).
+
+**Amendment 2026-10-14, after the second live smoke run (still before any measured run).** The
+repeat smoke (USD 0.23) failed two checks. Denials were still above 1 per run in the non-oracle
+arms (N0 4.0, N1 5.3, N2 6.7, P 2.3), and **N0, which has no channel at all, reached `b_ok` in 2
+of 3 instances (gate: at most 1)**. The raw events show why: agent-b ran `find` on its parent
+directory (allowed by `Bash(find *)`), saw agent-a's checkout beside it, and used the Read tool
+on `a/vendor/sample_export.csv` (instance 9001); in instance 9002 it listed that file. The hidden
+fact was reachable through the filesystem layout, so the task could not separate any channel from
+none, which is what the N0 floor gate exists to catch. Fix: each checkout now sits in its own
+container directory (`checkout_of_agent_a`, `checkout_of_agent_b`), so listing a parent shows only
+one's own tree; every session gets deny rules for the Read, Edit and Write tools and for any Bash
+command that names the other agent's container (tested live: the file tools and `cat` and `find`
+naming it are refused); and every session record carries `cross_checkout`, true if any tool call
+named the other container, so an attempt is reported even though it is refused. The denial count
+still includes refused attempts, so the gate "denials at most 1 per run" stays and now also
+measures leakage attempts. The data of both earlier smoke runs is kept outside the repository and
+is not part of any result.
+
+**Amendment 2026-10-14, after the third live smoke run (still before any measured run).** With the
+leak closed, the no-channel arm passed 0 of 3 and the oracle 9 of 9, but denials stayed high in the
+notes arms (8.0 per run). The reason was worse than noise: **all 36 notes appends in the notes
+arms were refused and none succeeded**, so in those arms nobody could write a note while the mail
+arm worked. Direct tests (single sessions, about USD 0.03 in all) showed that no allow rule lets
+the host's `dontAsk` mode run a shell command containing a `>>` redirect (`Bash(echo *)`,
+`Bash(echo * >> NOTES.md)`, `Bash(echo:*)` and a redirect rule all refused it, even on a plain
+file in the working directory), and that the Edit tool refuses a symlink. What works, with zero
+denials: a real file in the shared directory, added with `--add-dir`, edited with the Edit or Write
+tool by relative path. The amendments above that told the notes arms to append with `echo >>` are
+therefore **superseded**. Now: the notes file is a real file `../../shared/NOTES.md`, reached by
+that path from either checkout (no symlink); the notes arms are told to add a line to it with the
+Edit or Write tool and to leave its heading alone (N1 is also told to read it at the start of a
+session; N2 is not); the mail arm's wording drops "never through the Edit tool"; the P and N2
+paragraphs are 317 and 308 characters, inside the 10% gate. Had the main stage been run on the
+earlier design, the notes arms would have measured the harness, not the notes file, and the result
+would have favoured Postbox. The data of all smoke runs is kept outside the repository and is not
+part of any result.
+
+**Amendment 2026-10-14, after the fourth live smoke run (still before any measured run).** The notes
+arms now wrote notes (3 to 5 lines per run), the no-channel arm passed 0 of 3 and the oracle 9 of 9.
+One check still failed: denials averaged 1.7 to 2.3 per run in the non-oracle arms (limit 1). The
+denied calls were 12 ad-hoc `python3 -c` self-checks, spread across the arms (P 4, N0 3, N1 3, N2 2),
+and about 11 attempts to list the work root or the other agent's checkout, which the isolation
+rules refuse. None was a use of a channel. The limit of 1 is kept, not loosened. Instead the
+common intro of every arm adds "work only inside your checkout, and check your code with the unit
+tests, not `python3 -c`" (the same words for every arm, so it cannot favour one), and the smoke
+gate gains a direct check, **no call to the mail command or the notes file was ever refused**,
+which is what the denial count was standing in for. A refused channel call is recorded per run as
+`channel_denials`. The smoke stage is repeated again.
+
+**Freeze 2026-10-14, before the first measured run.** The fifth smoke run passed every gate check
+(48 sessions, USD 0.23, mean USD 0.0048 per session, projected main cost USD 7.1, the original
+limit of 1 denial per run kept). The main stage is run from exactly these files, and the analysis
+is run only from the frozen script:
+
+| What | SHA-256 |
+|---|---|
+| `scripts/analyze_v2.py` | `f73eaa2020433b9317477822fec0754d3f0689530ff816a27e4db38e06f9ac0c` |
+| `scripts/experiment_micro.py` (its Wilson interval is imported) | `082d269a32a2e98f415378798e99fbe207153e59233e9e0f45d51a557887ea7c` |
+| arm prompts (`prompts_hash()`, also in the smoke gate) | `c9b4536b485074e13677edb0fe51f40fa4521c5b199dd30603e496f9bbd44c8a` |
+| `scripts/experiment_v2.py` (the smoke gate records it) | `9370ffbe7a8caedcf67cecc4f0ad926df75e68a88725bf3bb915ab6ec0858629` |
+
+Main stage: 60 paired instances (seeds 3001 to 3060), model haiku, effort medium, hard ceiling
+USD 30, `POSTBOX_EXPERIMENT_LIVE=1 python3 scripts/experiment_v2.py --stage main --live --gate
+<smoke gate>`. The decision rule in section 7 is unchanged. If any of the files above changes, smoke
+is repeated and this table gets a new dated entry; nothing here is edited.
+
 ## 14. What the project will say
 
 This experiment may again show **no advantage**, and a null result is the likeliest single

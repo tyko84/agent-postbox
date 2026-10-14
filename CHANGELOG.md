@@ -124,6 +124,20 @@ behaviour).
   directory. Informational, never a FAIL.
 - The README and PROTOCOL section 7 now say plainly that the hook runs once per prompt, so mail
   that arrives during a long autonomous turn is seen at the next prompt.
+- `scripts/experiment_v2.py`: after the first live smoke run (USD 0.24) the arm prompts say to run one
+  shell command per call and not to use the Edit tool on the shared notes file or for mail, which the
+  host refuses through a symlink; recorded as a dated amendment in `docs/experiment-v2.md`.
+- `scripts/experiment_v2.py`: the second live smoke run showed the hidden fact was reachable: agent-b listed
+  its parent directory and read agent-a's sample (the no-channel arm passed 2 of 3, gate at most 1).
+  Each checkout now sits in its own container, sessions get deny rules for the other container, and
+  runs record `cross_checkout`. Recorded as a dated amendment.
+- `scripts/experiment_v2.py`: the third live smoke run showed every shell append to the shared notes file
+  was refused (36 of 36; no allow rule permits a `>>` redirect in this permission mode), so the notes arms
+  could not write at all. The notes file is now a real shared file edited with the Edit/Write tool by
+  relative path (tested live), replacing the earlier symlink and `echo >>` design. Dated amendment.
+- `scripts/experiment_v2.py`: the smoke gate gains a direct check that no call to the mail command or the notes
+  file was refused (recorded per run as `channel_denials`), and every arm's intro says to stay in its checkout and
+  to test with the unit tests, not `python3 -c`; the denial limit of 1 per run is kept. Dated amendment.
 
 ## [0.5.0] - 2026-10-12
 

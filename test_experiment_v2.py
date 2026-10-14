@@ -202,9 +202,17 @@ class Arms(Base):
     def test_notes_arms_share_one_file(self) -> None:
         for arm in ("N2", "N1"):
             a, b, shared, _, _ = self.build(arm)
-            self.assertIn("team notes: NOTES.md", (b / "README.md").read_text())
-            (a / "NOTES.md").write_text((a / "NOTES.md").read_text() + "x\n")
-            self.assertEqual((b / "NOTES.md").read_text(), (shared / "NOTES.md").read_text())
+            self.assertIn("team notes: ../../shared/NOTES.md", (b / "README.md").read_text())
+            # a real file in the shared directory, reached by the same relative path from
+            # either checkout (the Edit tool refuses a symlink; shell redirects are refused)
+            for tree in (a, b):
+                self.assertFalse((tree / "NOTES.md").exists(), arm)
+                self.assertEqual((tree / self.v.NOTES_PATH).resolve(),
+                                 (shared / "NOTES.md").resolve(), arm)
+            (a / self.v.NOTES_PATH).write_text((a / self.v.NOTES_PATH).read_text() + "x\n")
+            self.assertEqual((b / self.v.NOTES_PATH).read_text(),
+                             (shared / "NOTES.md").read_text())
+            self.assertFalse((shared / "NOTES.md").is_symlink())
         a, b, shared, _, _ = self.build("N0")
         self.assertNotIn("NOTES.md", (b / "README.md").read_text())
         self.assertFalse((shared / "NOTES.md").exists())
@@ -228,8 +236,10 @@ class Arms(Base):
         s3 = self.v.session_prompt("N2", "agent-b", "s3", inst)
         self.assertIn("Continue your ticket and finish it.", s3)
         self.assertIn(self.v.SHARED_LINE, s3)
-        self.assertNotIn("read NOTES.md", s3)        # N2 is told how to write, not to read
-        self.assertIn("read NOTES.md", self.v.session_prompt("N1", "agent-b", "s3", inst))
+        self.assertNotIn("read it", s3)               # N2 is told how to write, not to read
+        self.assertNotIn("Bash", s3.split(self.v.SHARED_LINE)[1])   # no shell append: redirects are refused
+        self.assertIn("../../shared/NOTES.md", s3)
+        self.assertIn("read it", self.v.session_prompt("N1", "agent-b", "s3", inst))
         for arm in ("P", "N2", "N1", "N0"):
             self.assertNotIn(inst.token, self.v.session_prompt(arm, "agent-b", "s1", inst))
             self.assertNotIn("do not guess", self.v.session_prompt(arm, "agent-b", "s1",
@@ -257,6 +267,40 @@ class Arms(Base):
         self.assertNotIn("--dangerously-skip-permissions", cmd)
         self.assertLess(cmd.index("--add-dir"), cmd.index("--allowedTools"))
         self.assertNotIn("--add-dir", h.command("P", self.root / "a", self.root / "s"))
+
+    def test_the_two_checkouts_cannot_see_each_other_by_listing_a_parent(self) -> None:
+        # the first live smoke run: agent-b ran `find` on its parent and read agent-a's sample
+        for arm in ("N0", "P"):
+            a, b, shared, extra, inst = self.build(arm)
+            self.assertNotEqual(a.parent, b.parent)
+            for mine, other in ((a, b), (b, a)):
+                listing = {str(p) for p in mine.parent.rglob("*")}
+                self.assertFalse(any(str(other) in x for x in listing), arm)
+            self.assertTrue((a / "vendor" / "sample_export.csv").is_file())
+            self.assertFalse(any(b.parent.rglob("sample_export.csv")))
+
+    def test_isolation_rules_deny_the_file_tools_and_bash_on_the_other_container(self) -> None:
+        root = self.root / "iso"
+        (root / self.v.TREE["agent-a"]).mkdir(parents=True)
+        rules = self.v.isolation_rules(root, "agent-a")
+        c = (root / self.v.TREE["agent-a"]).resolve()
+        self.assertEqual(rules, (f"Read(/{c}/**)", f"Edit(/{c}/**)", f"Write(/{c}/**)",
+                                 f"Bash(*{self.v.TREE['agent-a']}*)"))
+        self.assertNotIn(self.v.TREE["agent-b"], " ".join(rules))
+        h = self.harness()
+        cmd = h.command("N0", self.root / "b", self.root / "shared", rules)
+        self.assertEqual(cmd[cmd.index("--disallowedTools") + 1:cmd.index("--allowedTools")],
+                         list(rules))
+        self.assertNotIn("--disallowedTools", h.command("N0", self.root / "b", self.root / "s"))
+
+    def test_a_tool_call_naming_the_other_container_is_flagged(self) -> None:
+        tool = lambda **i: {"name": "Read", "input": i}   # noqa: E731
+        other = self.v.TREE["agent-a"]
+        self.assertTrue(self.v.crossed([tool(file_path=f"/t/{other}/a/vendor/x.csv")], "agent-a"))
+        self.assertTrue(self.v.crossed([{"name": "Bash", "input": {"command": f"find ../../{other}"}}],
+                                       "agent-a"))
+        self.assertFalse(self.v.crossed([tool(file_path="/t/checkout_of_agent_b/b/x.py")], "agent-a"))
+        self.assertFalse(self.v.crossed([], "agent-a"))
 
     def test_event_detectors(self) -> None:
         r = self.v.reads_notes
@@ -503,6 +547,23 @@ class Stages(Base):
         bad = self.v.smoke_gate(leaky.run_block(self.v.SEEDS["smoke"]), 1.0, ns,
                                 self.v.offline_checks())
         self.assertFalse(bad["checks"]["no mailbox mention in any non-P run"])
+        # a refused call to a channel (the mail command or the notes file) fails the gate: the
+        # third live smoke run had every notes append refused and only the denial count showed it
+        key = "no call to a communication channel (mail command, notes file) was refused"
+        self.assertTrue(gate["checks"][key])
+        refused = [dict(r, channel_denials=2) if r["arm"] == "N2" else r for r in recs]
+        blocked = self.v.smoke_gate(refused, h.spent, ns, self.v.offline_checks())
+        self.assertFalse(blocked["checks"][key])
+        self.assertFalse(blocked["passed"])
+
+    def test_channel_denials_count_only_uses_of_a_channel(self) -> None:
+        cd = self.v.channel_denials
+        mail = {"tool_name": "Bash", "tool_input": {"command": "python3 tools/agent-postbox/agent_mail.py send x"}}
+        notes = {"tool_name": "Edit", "tool_input": {"file_path": "../../shared/NOTES.md"}}
+        other = {"tool_name": "Bash", "tool_input": {"command": "python3 -c 'print(1)'"}}
+        self.assertEqual(cd([mail, notes, other]), 2)
+        self.assertEqual(cd([other, "not a dict", {"tool_input": None}]), 0)
+        self.assertEqual(cd([]), 0)
 
     def test_dry_run_runs_the_pipeline_offline_and_the_gate_is_marked(self) -> None:
         def boom(self: Any, spec: Any) -> Any:
