@@ -68,6 +68,9 @@ GATE_FACTOR = 1.5
 DS = (250, 400, 640, 800, 1250, 2000)
 LIVE_ENV = "POSTBOX_EXPERIMENT_LIVE"
 NOTES_REL = "NOTES.md"
+# Each agent's checkout sits in its own container directory, so a `find ..` shows only its own
+# tree; the first live smoke run showed agent-b listing its parent and reading agent-a's sample.
+TREE = {"agent-a": "checkout_of_agent_a", "agent-b": "checkout_of_agent_b"}
 COST_SCENARIOS = {"low": 0.0075, "likely": 0.020, "high": 0.060}   # USD per session (doc 11)
 S4_PER_INSTANCE = 2                                                  # assumed average (doc 11)
 BACKOFF = (60, 180)                                                  # seconds, per rate limit
@@ -514,6 +517,20 @@ def runs_show(tools: list[dict[str, Any]]) -> bool:
                for t in tools)
 
 
+def isolation_rules(root: Path, other: str) -> tuple[str, ...]:
+    """Deny rules that keep a session out of the OTHER agent's checkout: the Read, Edit and
+    Write tools on its container directory, and any Bash command that names it. Checked live
+    (2026-10-14): the file tools and `cat`/`find` naming the container are refused."""
+    c = (root / TREE[other]).resolve()
+    return (f"Read(/{c}/**)", f"Edit(/{c}/**)", f"Write(/{c}/**)", f"Bash(*{TREE[other]}*)")
+
+
+def crossed(tools: list[dict[str, Any]], other: str) -> bool:
+    """Whether any tool call of this session named the other agent's container (an attempt;
+    the deny rules refuse it, and the flag records that it was tried)."""
+    return any(TREE[other] in json.dumps(t.get("input")) for t in tools)
+
+
 class Harness(micro.Experiment):
     """Reuses the micro-experiment's guard, Ceiling and the e2e Runner's environment and
     event parsing; adds the instance, the scoring and the scheduling."""
@@ -547,11 +564,14 @@ class Harness(micro.Experiment):
             s.usage = dict(ev.get("usage") or {})
             s.model_usage = dict(ev.get("modelUsage") or {})
 
-    def command(self, arm: str, proj: Path, shared: Path) -> list[str]:
+    def command(self, arm: str, proj: Path, shared: Path,
+                deny: tuple[str, ...] = ()) -> list[str]:
         cmd = self.base_cmd(tools="Bash,Read,Edit,Write", allowed=(), max_turns=self.args.max_turns)
         cmd[cmd.index("--effort") + 1] = self.args.effort
         if arm in ("N2", "N1"):
             cmd += ["--add-dir", str(shared)]
+        if deny:
+            cmd += ["--disallowedTools", *deny]
         return cmd + ["--allowedTools", *allowed(arm, proj)]
 
     def one_session(self, spec: Spec, tag_dir: str) -> tuple[XSession, dict[str, Any]]:
@@ -594,13 +614,14 @@ class Harness(micro.Experiment):
                "raw_events": str(raw_path), "prompt_chars": len(spec.prompt),
                "result": s.result[:400], "tools": [t["name"] for t in s.tools],
                "reads_notes": reads_notes(s.tools), "runs_show": runs_show(s.tools),
+               "cross_checkout": crossed(s.tools, A if spec.who == B else B),
                "mentions_mailbox": "agent_mail" in raw.stdout or "tools/agent-postbox" in raw.stdout,
                "hook_stdout": s.hook_stdout()[:2000]}
         return s, rec
 
     # ---- one run (one arm on one instance) ---------------------------------------------
     def build(self, inst: Instance, arm: str, root: Path) -> tuple[Path, Path, Path, dict[str, str]]:
-        a, b, shared = root / "a", root / "b", root / "shared"
+        a, b, shared = root / TREE[A] / "a", root / TREE[B] / "b", root / "shared"
         for d in (a, b, shared):
             d.mkdir(parents=True)
         files = inst.base_files()
@@ -654,9 +675,12 @@ class Harness(micro.Experiment):
             plan = ([("o", B)] if arm == "O" else [("s1", B), ("s2", A), ("s3", B)])
 
             def go(stage: str, who: str, proj: Path) -> XSession:
+                other = A if who == B else B
                 spec = Spec(stage, arm, who, "s1" if stage == "o" else stage, proj,
                             session_prompt(arm, who, "s1" if stage == "o" else stage, inst),
-                            self.env(who, extra), self.command(arm, proj, shared), inst, shared)
+                            self.env(who, extra),
+                            self.command(arm, proj, shared, isolation_rules(root, other)), inst,
+                            shared)
                 s, srec = self.one_session(spec, tag_dir)
                 rec["sessions"].append(srec)
                 if srec["infra"] and not rec["infra_failure"]:
@@ -684,6 +708,7 @@ class Harness(micro.Experiment):
         rec["seconds"] = round(time.monotonic() - t0, 1)
         rec["cost_usd"] = round(sum(s["cost_usd"] or 0.0 for s in rec["sessions"]), 6)
         rec["denials"] = sum(s["denials"] for s in rec["sessions"])
+        rec["cross_checkout"] = any(s["cross_checkout"] for s in rec["sessions"])
         rec["mailbox_mention"] = arm != "P" and any(s["mentions_mailbox"] for s in rec["sessions"])
         runs = self.out / "runs"
         runs.mkdir(parents=True, exist_ok=True)

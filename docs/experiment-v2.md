@@ -360,6 +360,23 @@ paragraphs within 10% (346 and 363 characters). The first smoke run's data is ke
 repository and is not part of any result. The O arm also showed `a_ok` false by design (it has a
 single session for agent-b).
 
+**Amendment 2026-10-14, after the second live smoke run (still before any measured run).** The
+repeat smoke (USD 0.23) failed two checks. Denials were still above 1 per run in the non-oracle
+arms (N0 4.0, N1 5.3, N2 6.7, P 2.3), and **N0, which has no channel at all, reached `b_ok` in 2
+of 3 instances (gate: at most 1)**. The raw events show why: agent-b ran `find` on its parent
+directory (allowed by `Bash(find *)`), saw agent-a's checkout beside it, and used the Read tool
+on `a/vendor/sample_export.csv` (instance 9001); in instance 9002 it listed that file. The hidden
+fact was reachable through the filesystem layout, so the task could not separate any channel from
+none, which is what the N0 floor gate exists to catch. Fix: each checkout now sits in its own
+container directory (`checkout_of_agent_a`, `checkout_of_agent_b`), so listing a parent shows only
+one's own tree; every session gets deny rules for the Read, Edit and Write tools and for any Bash
+command that names the other agent's container (tested live: the file tools and `cat` and `find`
+naming it are refused); and every session record carries `cross_checkout`, true if any tool call
+named the other container, so an attempt is reported even though it is refused. The denial count
+still includes refused attempts, so the gate "denials at most 1 per run" stays and now also
+measures leakage attempts. The data of both earlier smoke runs is kept outside the repository and
+is not part of any result.
+
 ## 14. What the project will say
 
 This experiment may again show **no advantage**, and a null result is the likeliest single

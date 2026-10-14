@@ -258,6 +258,40 @@ class Arms(Base):
         self.assertLess(cmd.index("--add-dir"), cmd.index("--allowedTools"))
         self.assertNotIn("--add-dir", h.command("P", self.root / "a", self.root / "s"))
 
+    def test_the_two_checkouts_cannot_see_each_other_by_listing_a_parent(self) -> None:
+        # the first live smoke run: agent-b ran `find` on its parent and read agent-a's sample
+        for arm in ("N0", "P"):
+            a, b, shared, extra, inst = self.build(arm)
+            self.assertNotEqual(a.parent, b.parent)
+            for mine, other in ((a, b), (b, a)):
+                listing = {str(p) for p in mine.parent.rglob("*")}
+                self.assertFalse(any(str(other) in x for x in listing), arm)
+            self.assertTrue((a / "vendor" / "sample_export.csv").is_file())
+            self.assertFalse(any(b.parent.rglob("sample_export.csv")))
+
+    def test_isolation_rules_deny_the_file_tools_and_bash_on_the_other_container(self) -> None:
+        root = self.root / "iso"
+        (root / self.v.TREE["agent-a"]).mkdir(parents=True)
+        rules = self.v.isolation_rules(root, "agent-a")
+        c = (root / self.v.TREE["agent-a"]).resolve()
+        self.assertEqual(rules, (f"Read(/{c}/**)", f"Edit(/{c}/**)", f"Write(/{c}/**)",
+                                 f"Bash(*{self.v.TREE['agent-a']}*)"))
+        self.assertNotIn(self.v.TREE["agent-b"], " ".join(rules))
+        h = self.harness()
+        cmd = h.command("N0", self.root / "b", self.root / "shared", rules)
+        self.assertEqual(cmd[cmd.index("--disallowedTools") + 1:cmd.index("--allowedTools")],
+                         list(rules))
+        self.assertNotIn("--disallowedTools", h.command("N0", self.root / "b", self.root / "s"))
+
+    def test_a_tool_call_naming_the_other_container_is_flagged(self) -> None:
+        tool = lambda **i: {"name": "Read", "input": i}   # noqa: E731
+        other = self.v.TREE["agent-a"]
+        self.assertTrue(self.v.crossed([tool(file_path=f"/t/{other}/a/vendor/x.csv")], "agent-a"))
+        self.assertTrue(self.v.crossed([{"name": "Bash", "input": {"command": f"find ../../{other}"}}],
+                                       "agent-a"))
+        self.assertFalse(self.v.crossed([tool(file_path="/t/checkout_of_agent_b/b/x.py")], "agent-a"))
+        self.assertFalse(self.v.crossed([], "agent-a"))
+
     def test_event_detectors(self) -> None:
         r = self.v.reads_notes
         self.assertTrue(r([{"name": "Read", "input": {"file_path": "/x/NOTES.md"}}]))

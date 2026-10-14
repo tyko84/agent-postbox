@@ -127,6 +127,10 @@ behaviour).
 - `scripts/experiment_v2.py`: after the first live smoke run (USD 0.24) the arm prompts say to run one
   shell command per call and not to use the Edit tool on the shared notes file or for mail, which the
   host refuses through a symlink; recorded as a dated amendment in `docs/experiment-v2.md`.
+- `scripts/experiment_v2.py`: the second live smoke run showed the hidden fact was reachable: agent-b listed
+  its parent directory and read agent-a's sample (the no-channel arm passed 2 of 3, gate at most 1).
+  Each checkout now sits in its own container, sessions get deny rules for the other container, and
+  runs record `cross_checkout`. Recorded as a dated amendment.
 
 ## [0.5.0] - 2026-10-12
 
