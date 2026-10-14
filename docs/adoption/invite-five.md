@@ -3,35 +3,39 @@
 Purpose: learn whether five people other than the author can get from clone to a message
 picked up by a second session, and where they stall. This is a private ask, not a launch.
 
-## Verdict as of 2026-10-13
+## Verdict as of 2026-10-14
 
-Inviting five people by direct message is reasonable once the must-fix items below are done.
-A public Show HN or Reddit post is not: it needs the demo recording and the trial results.
+Inviting five people by direct message is reasonable once the one remaining owner-edited item
+below is done. A public Show HN or Reddit post is not: it needs the demo recording and the
+trial results.
 
 ## Blockers
 
-Must fix before any invitation (owner-edited files):
+Done since the first review (2026-10-13): the README's Quickstart now says what the installer
+changes, the mailbox-writer risk, how to remove it and that the evidence is thin; the verify
+example names v0.5.0; the Quickstart has a first exchange you can paste; a `Tried it` issue form
+and [trial-log.md](trial-log.md) exist.
 
-1. The v0.5.0 release page is a raw changelog with checksums. It has no opening that says
-   what the project is or what to try, and the README's install section still shows
-   `verify_release.py v0.4.0`. A visitor arriving from the Releases page learns nothing to do.
-2. The README's first screen does not mention what the hook risks. The edit to
-   `.claude/settings.json`, and "anyone who can write a file into the mailbox can put text in
-   front of your agent", are in SECURITY.md and why-postbox.md but not where a skeptical
-   reader looks first. One sentence and a link in the Quickstart is enough.
-3. Invitees must be told that Codex has never run in the real host and that real-host
-   evidence is headless Claude Code on one small model. The message below does.
+Must fix before any invitation (owner action):
+
+1. The v0.5.0 release page is a raw changelog with checksums and no opening that says what the
+   project is or what to try. Add a short summary on top that links
+   `docs/onboarding-first-exchange.md`. (Release notes are edited on GitHub by the owner; the
+   release itself is immutable but its notes are not.)
+
+The invitation text below already tells invitees that Codex has never run in the real host and
+that real-host evidence is headless Claude Code on one small model.
 
 Must fix before any public post:
 
-4. The demo recording does not exist. Both drafts depend on it.
-5. No trial reports yet. Five is the minimum for a post to say what others found.
+2. The demo recording does not exist. Both drafts depend on it.
+3. No trial reports yet. Five is the minimum for a post to say what others found.
 
-Should fix: no pinned "start here / tried it" issue; blank issues are enabled, so "Tried it"
-reports arrive unstructured (acceptable); no repository homepage; no CODE_OF_CONDUCT (GitHub
-community health 85 percent); Discussions off.
+Should fix: no pinned "start here / tried it" issue (the form now exists); blank issues are
+enabled; no repository homepage; no CODE_OF_CONDUCT (GitHub community health 85 percent);
+Discussions off.
 
-Nice: a "Tried it" issue form; a short GIF in the README.
+Nice: a short GIF in the README.
 
 ## Who to ask (types, not names)
 
@@ -77,9 +81,9 @@ that matters.
 ## Collecting feedback
 
 Use the four questions in [feedback-process.md](feedback-process.md). A message that failed to
-arrive or was ignored goes in as a **field report** issue; everything else as a `Tried it:`
-issue, or a private reply the owner transcribes into a table (who, host, OS, furthest step
-reached, minutes, stuck point). Record the table in `docs/`, not in chat.
+arrive or was ignored goes in as a **field report** issue; everything else as a `Tried it`
+issue form, or a private reply the owner transcribes into [trial-log.md](trial-log.md). Record
+the table in `docs/`, not in chat.
 
 ## Success and failure after five trials
 

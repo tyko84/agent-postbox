@@ -1,0 +1,39 @@
+name: Tried it
+description: You tried agent-postbox (even if it just worked, or you got stuck early). Not a bug.
+labels: [tried-it]
+body:
+  - type: input
+    id: setup
+    attributes:
+      label: Host, OS, Python
+      placeholder: "Claude Code, macOS 15, Python 3.13"
+    validations: {required: true}
+  - type: dropdown
+    id: furthest
+    attributes:
+      label: Furthest step you reached
+      options:
+        - Cloned it
+        - Ran examples/two-agents/run.py
+        - Installed it into a project
+        - Sent a first message
+        - A second session picked it up
+        - Used it for real work
+        - Removed it
+    validations: {required: true}
+  - type: input
+    id: minutes
+    attributes:
+      label: Minutes from clone to that step
+    validations: {required: false}
+  - type: textarea
+    id: stuck
+    attributes:
+      label: Where you got stuck or confused
+      description: The exact command and output if you have it. "Nothing" is a fine answer. Do not paste real mailbox contents.
+    validations: {required: false}
+  - type: textarea
+    id: use
+    attributes:
+      label: Would you use it on parallel agents next week, and why or why not?
+    validations: {required: false}
