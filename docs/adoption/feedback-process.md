@@ -12,6 +12,9 @@ works for people other than its author and where it breaks.
   first-use report that says where you got stuck is worth more than a feature request.
 * **Security**: privately, through the repository's security advisory link, never as an issue.
 
+The field-report template asks for a pickup mechanism and evidence. Someone who only tried
+it and got stuck is not a field report; use the questions below for them.
+
 ## What to ask someone who tried it
 
 Copy this into a reply or a new issue:
@@ -38,7 +41,7 @@ Please do not paste real mailbox contents.
 4. **Requests for new behaviour.** Only when at least two people hit the same gap, or one
    person shows a failure that cannot be worked around, and only if it fits the constraints
    (standard library, no daemon, files first, backward compatible). Otherwise label
-   `wontfix-for-now` and say why.
+   `wontfix` and say why.
 
 ## Rhythm
 
