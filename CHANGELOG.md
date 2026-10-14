@@ -65,6 +65,10 @@ behaviour).
   literally from a fresh project; post-install steps are a numbered list; the informational
   `doctor` lines (`AGENT_MAIL_IDENTITY: UNSET`, `authorship: CANNOT_VERIFY`) are explained.
   From a cold read by a fresh agent, which found the first exchange missing from the Quickstart.
+- README reordered for a first-time reader: Quickstart, 30-second demo and CLI usage come first;
+  the problem argument, hosts table, install options and the evidence (simulation and null pilot)
+  follow. The simulation results table and the release-verification steps moved to
+  `docs/benchmarks-summary.md` and `docs/install-reference.md`; the runnable examples keep their order.
 
 ### Fixed
 

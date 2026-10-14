@@ -25,6 +25,14 @@ clone. POSIX only (Linux, macOS), Python 3.10-3.14, git. Windows is unsupported
 and untested (WSL has not been tried). Use `python3`: stock macOS has no
 `python`.
 
+What step 3 changes: it copies the tool into your project, creates a mailbox directory, and
+adds one hook entry to that project's `.claude/settings.json` (backed up first). The hook
+prints mailbox text into your agent's context, so anyone who can write to the mailbox can put
+text in front of your agent: read [SECURITY.md](SECURITY.md) before using it on a repository
+with outside contributors. Removing it: [docs/troubleshooting.md](docs/troubleshooting.md#removing-it).
+Evidence so far is thin: Claude Code in headless sessions on one small model, Codex never run
+in the real host, and a pilot that showed no advantage (see Evidence, below).
+
 ```sh
 # 1. Clone. (Not on PyPI: `pip install agent-postbox` is a different project; see Install.)
 #    Already have the repo? Skip this.
@@ -84,62 +92,6 @@ each step, and exits non-zero if anything did not happen as it says
 full under [Install](#install); hosts other than Claude Code wire the same
 adapter to their own prompt-submit event, or poll.
 
-What the adapter changes, from one run of `python3 scripts/scenario.py --seed 1`
-(8 simulated agents, 400 scheduled messages plus their answers, crashes
-injected, the same schedule for both columns):
-
-| | Pickup adapter | Agent that polls when it remembers (half the time) |
-|---|---|---|
-| Messages in front of the recipient at its first awake prompt after the send | 492 of 492 | 270 of 493 |
-| Messages in front of the recipient by the end of the run | 492 of 492 | 490 of 493 |
-| Recipient's prompts between the send and the pickup, 95th percentile | 0 | 4 |
-
-With the adapter every message was surfaced at the first prompt at which its
-recipient was awake. An agent that remembers to poll half the time got about
-half of them at that first chance, let four to five prompts go by at the 95th
-percentile (4 with seed 1, 5 with seed 2), and still got over 99% by the end.
-The agents are simulated and no LLM is involved; "half the time" is an
-assumption, not a measurement; the totals differ by one, and move by one or
-two from run to run, because races between claims are settled at run time;
-and nothing here says what a model does with mail once it has it. How to run
-it and how to read it: [docs/benchmarking.md](docs/benchmarking.md).
-
-A pilot with real agents (20 paired instances, two Claude Code sessions each, haiku) did
-**not** show an advantage: the fact reached the consumer in most runs under every
-arrangement, and a shared notes file the agents were told to read did at least as well as
-mail. That pilot was small, one model, with known confounds; read it before drawing
-conclusions: [docs/micro-experiment.md](docs/micro-experiment.md).
-
-## Which hosts are supported
-
-| Host | Automatic pickup | Status |
-|---|---|---|
-| Claude Code | Yes (`--adapter claude-code`) | Tested in the real host (headless, one model): [docs/e2e-real-sessions.md](docs/e2e-real-sessions.md) |
-| Codex CLI | Yes (`--adapter codex`) | **Experimental**: built from the documented hook format, never run inside real Codex |
-| Cursor | No: the host cannot add context per prompt | Polling only (`list --live`), untested |
-| Anything else | No | Polling only; the protocol is just files |
-
-Detail and the checklist for confirming a host: [docs/hosts.md](docs/hosts.md).
-
-## The problem it solves
-
-The format was never the hard part. **Pickup is.**
-
-In the repo this came from, a clear written instruction to leave notes for the
-next agent produced **zero notes in 22 hours**. Any design that depends on an
-agent *remembering to check* fails exactly that way — and the failure is
-invisible, because an inbox nobody read looks identical to an empty one.
-
-Existing file-based agent-messaging systems are, as far as I found, pull-based:
-the agent has to go and fetch. agent-postbox ships the other half. Pickup is
-either a **prompt-injection adapter** (mail printed into context before the
-model sees the prompt, so there is no decision to look; "injection" names the
-mechanism, not an attack) or a **session-start
-poll** (`list --live`). A hook is an adapter for a host, not the protocol.
-This repo ships one adapter (`hooks/agent_mail_check.py`) that any host can
-wire to its own prompt-submit event; Claude Code users can register it as
-`UserPromptSubmit`. Hosts without a hook poll.
-
 ## 30-second demo (project install)
 
 ```text
@@ -182,118 +134,6 @@ live, or `NOT live` once it has lapsed) and the open `ASK`s addressed to it
 that still owe a reply. The rows are the ones `status` reports (PROTOCOL.md
 section 34); five per list, then `+N more`; never a subject or a body. An
 identity that holds a claim sees that block even with no mail addressed to it.
-
-## Install
-
-agent-postbox is one stdlib-only file. **POSIX only** (Linux, macOS): the
-atomic-send and lock code relies on POSIX file semantics, CI runs on Linux and
-macOS, and Windows is untested and unsupported (WSL has not been tried).
-Python 3.10-3.14.
-
-> **Not on PyPI. Do not `pip install agent-postbox`.** This project is not
-> published on PyPI, and its distribution name is `tyko84-agent-postbox`. The
-> PyPI distribution named
-> [`agent-postbox`](https://pypi.org/project/agent-postbox/) is a separate,
-> unrelated project by a different author; installing it by name gives you that
-> project, not this one. Always install this project from a clone of
-> <https://github.com/tyko84/agent-postbox>, or from a wheel attached to a
-> release or built from a clone ([docs/packaging.md](docs/packaging.md)).
-
-**Option 1: pip, from a clone** (a local path, never the bare name):
-
-```bash
-git clone https://github.com/tyko84/agent-postbox
-python3 -m pip install ./agent-postbox
-agent-postbox --version
-```
-
-The `./` matters: `pip install ./agent-postbox` installs the directory you just
-cloned, while `pip install agent-postbox` would ask PyPI for the unrelated
-distribution of that name. To check what an environment has,
-`python3 -m pip show -f tyko84-agent-postbox` shows
-`Home-page: https://github.com/tyko84/agent-postbox` and a single module,
-`agent_mail.py`.
-
-This installs the `agent-postbox` command (and the `agent_mail` module) with no
-dependencies. Pip installs only the tool; it does not copy the spec, the
-adapter under `hooks/`, or `install.py`, so keep the clone for those.
-
-The command and the module keep their names; only the distribution is called
-`tyko84-agent-postbox`. Releases up to 0.3.0 used the distribution name
-`agent-postbox`, which pip cannot tell apart from the unrelated PyPI project.
-If an environment still has one of those, run
-`python3 -m pip uninstall agent-postbox` before installing this version, because
-both own `agent_mail.py` and the `agent-postbox` command. (Uninstalling the old
-name afterwards instead removes those files; `python3 -m pip install
---force-reinstall ./agent-postbox` puts them back.)
-
-**Verifying a release download.** From a clone, one command checks a
-release the way a consumer can:
-
-```sh
-python3 scripts/verify_release.py v0.4.0
-```
-
-It downloads the tag's wheel, sdist and `SHA256SUMS` with `gh release
-download`, then checks the hashes, the provenance attestations, the archives'
-contents and the builder identity, one `OK`/`FAIL` line per check, exit 1 if
-any failed. `gh` must be installed and signed in, for the download and for
-`gh attestation verify`. `--no-download --dir DIR` verifies files you already
-downloaded; without `gh`, at least check the hashes by hand with
-`shasum -a 256 -c SHA256SUMS` (`sha256sum -c SHA256SUMS` on Linux). `--rebuild` also rebuilds the tag with `scripts/repro_build.py`
-and compares byte for byte; that needs the hash-pinned build tools
-(`python3 -m pip install --require-hashes -r requirements-build.txt`, in a
-venv). The same checks as manual commands, with their limits:
-[docs/release-process.md](docs/release-process.md), "Verifying the published
-release"; the build itself: [docs/packaging.md](docs/packaging.md).
-
-**Option 2: copy the single file.** `agent_mail.py` has no imports outside the
-standard library; drop it anywhere and run `python3 agent_mail.py ...`.
-
-**Option 3: install into a project** (copies the tool, spec and adapter, and
-creates the project's mailbox at `docs/agent-mail/`):
-
-```bash
-python3 agent-postbox/install.py /path/to/your/project
-python3 /path/to/your/project/tools/agent-postbox/selftest.py
-```
-
-`--check` reports without changing anything; `--dest` and `--mailbox` move the
-install and mailbox paths (relative to the project; absolute paths, `..` and symlinks
-that leave the project are refused). To register the optional prompt-injection adapter
-for Claude Code (one hook entry in the *project's* `.claude/settings.json`,
-backed up first, refuses unparseable JSON, safe to re-run):
-
-```bash
-python3 agent-postbox/install.py /path/to/your/project --adapter claude-code
-```
-
-Other hosts: copy `hooks/agent_mail_check.py` and wire it to your host's
-prompt-submit event, or keep polling. Then verify, because silence proves
-nothing (see below): run `selftest.py` (about 20 seconds).
-`install.py <project> --adapter codex` registers the same adapter as Codex's
-`UserPromptSubmit` hook (trust it once in `/hooks`); Cursor has no per-prompt
-injection and polls. [docs/hosts.md](docs/hosts.md) has the matrix and exactly
-what was verified.
-
-What to do after the install (rename the example identities, canary, the first
-`doctor` failing): see Quickstart above and
-[docs/onboarding-first-exchange.md](docs/onboarding-first-exchange.md). Removing
-it again: [docs/troubleshooting.md#removing-it](docs/troubleshooting.md#removing-it).
-
-### Where the mailbox is
-
-**`AGENT_MAIL_DIR` is the team inbox if set; otherwise this clone's
-`docs/agent-mail` after `install.py`; this public repo is the spec, not the
-mailbox.** Do not file operational mail here.
-
-Without `AGENT_MAIL_DIR`, the tool finds the per-clone mailbox by walking up
-from the working directory, the way git finds `.git`. Nearest `docs/agent-mail`
-wins. If a tree already has a mailbox it is occupied: `install.py` and `send`
-will not mint a second owner underneath it (including from a nested `.git`),
-nor inside this spec checkout. A missing store prints `NO MAILBOX at <path>` and
-exits 2. That is not an empty inbox. `AGENT_MAIL_DIR` is never created for you:
-`mkdir` it first.
 
 ## Using the CLI
 
@@ -574,6 +414,124 @@ never exit 141: the mail is published before anything is printed, so with no
 reader they finish and report the status of the send (`send ... | true` exits
 0). See PROTOCOL.md section 35.
 
+## The problem it solves
+
+The format was never the hard part. **Pickup is.**
+
+In the repo this came from, a clear written instruction to leave notes for the
+next agent produced **zero notes in 22 hours**. Any design that depends on an
+agent *remembering to check* fails exactly that way — and the failure is
+invisible, because an inbox nobody read looks identical to an empty one.
+
+Existing file-based agent-messaging systems are, as far as I found, pull-based:
+the agent has to go and fetch. agent-postbox ships the other half. Pickup is
+either a **prompt-injection adapter** (mail printed into context before the
+model sees the prompt, so there is no decision to look; "injection" names the
+mechanism, not an attack) or a **session-start
+poll** (`list --live`). A hook is an adapter for a host, not the protocol.
+This repo ships one adapter (`hooks/agent_mail_check.py`) that any host can
+wire to its own prompt-submit event; Claude Code users can register it as
+`UserPromptSubmit`. Hosts without a hook poll.
+
+## Which hosts are supported
+
+| Host | Automatic pickup | Status |
+|---|---|---|
+| Claude Code | Yes (`--adapter claude-code`) | Tested in the real host (headless, one model): [docs/e2e-real-sessions.md](docs/e2e-real-sessions.md) |
+| Codex CLI | Yes (`--adapter codex`) | **Experimental**: built from the documented hook format, never run inside real Codex |
+| Cursor | No: the host cannot add context per prompt | Polling only (`list --live`), untested |
+| Anything else | No | Polling only; the protocol is just files |
+
+Detail and the checklist for confirming a host: [docs/hosts.md](docs/hosts.md).
+
+## Install
+
+agent-postbox is one stdlib-only file. **POSIX only** (Linux, macOS): the
+atomic-send and lock code relies on POSIX file semantics, CI runs on Linux and
+macOS, and Windows is untested and unsupported (WSL has not been tried).
+Python 3.10-3.14.
+
+> **Not on PyPI. Do not `pip install agent-postbox`.** This project is not
+> published on PyPI, and its distribution name is `tyko84-agent-postbox`. The
+> PyPI distribution named
+> [`agent-postbox`](https://pypi.org/project/agent-postbox/) is a separate,
+> unrelated project by a different author; installing it by name gives you that
+> project, not this one. Always install this project from a clone of
+> <https://github.com/tyko84/agent-postbox>, or from a wheel attached to a
+> release or built from a clone ([docs/packaging.md](docs/packaging.md)).
+
+**Option 1: pip, from a clone** (a local path, never the bare name):
+
+```bash
+git clone https://github.com/tyko84/agent-postbox
+python3 -m pip install ./agent-postbox
+agent-postbox --version
+```
+
+The `./` matters: `pip install ./agent-postbox` installs the directory you just
+cloned, while `pip install agent-postbox` would ask PyPI for the unrelated
+distribution of that name. To check what an environment has,
+`python3 -m pip show -f tyko84-agent-postbox` shows
+`Home-page: https://github.com/tyko84/agent-postbox` and a single module,
+`agent_mail.py`.
+
+This installs the `agent-postbox` command (and the `agent_mail` module) with no
+dependencies. Pip installs only the tool; it does not copy the spec, the
+adapter under `hooks/`, or `install.py`, so keep the clone for those.
+
+The distribution name changed after 0.3.0; if an environment still has the old one, see
+[docs/install-reference.md](docs/install-reference.md). To check a release download
+(hashes, provenance attestations, archive contents, builder identity), run
+`python3 scripts/verify_release.py v0.5.0` from a clone; the details and limits are in the same page.
+
+**Option 2: copy the single file.** `agent_mail.py` has no imports outside the
+standard library; drop it anywhere and run `python3 agent_mail.py ...`.
+
+**Option 3: install into a project** (copies the tool, spec and adapter, and
+creates the project's mailbox at `docs/agent-mail/`):
+
+```bash
+python3 agent-postbox/install.py /path/to/your/project
+python3 /path/to/your/project/tools/agent-postbox/selftest.py
+```
+
+`--check` reports without changing anything; `--dest` and `--mailbox` move the
+install and mailbox paths (relative to the project; absolute paths, `..` and symlinks
+that leave the project are refused). To register the optional prompt-injection adapter
+for Claude Code (one hook entry in the *project's* `.claude/settings.json`,
+backed up first, refuses unparseable JSON, safe to re-run):
+
+```bash
+python3 agent-postbox/install.py /path/to/your/project --adapter claude-code
+```
+
+Other hosts: copy `hooks/agent_mail_check.py` and wire it to your host's
+prompt-submit event, or keep polling. Then verify, because silence proves
+nothing (see below): run `selftest.py` (about 20 seconds).
+`install.py <project> --adapter codex` registers the same adapter as Codex's
+`UserPromptSubmit` hook (trust it once in `/hooks`); Cursor has no per-prompt
+injection and polls. [docs/hosts.md](docs/hosts.md) has the matrix and exactly
+what was verified.
+
+What to do after the install (rename the example identities, canary, the first
+`doctor` failing): see Quickstart above and
+[docs/onboarding-first-exchange.md](docs/onboarding-first-exchange.md). Removing
+it again: [docs/troubleshooting.md#removing-it](docs/troubleshooting.md#removing-it).
+
+### Where the mailbox is
+
+**`AGENT_MAIL_DIR` is the team inbox if set; otherwise this clone's
+`docs/agent-mail` after `install.py`; this public repo is the spec, not the
+mailbox.** Do not file operational mail here.
+
+Without `AGENT_MAIL_DIR`, the tool finds the per-clone mailbox by walking up
+from the working directory, the way git finds `.git`. Nearest `docs/agent-mail`
+wins. If a tree already has a mailbox it is occupied: `install.py` and `send`
+will not mint a second owner underneath it (including from a nested `.git`),
+nor inside this spec checkout. A missing store prints `NO MAILBOX at <path>` and
+exits 2. That is not an empty inbox. `AGENT_MAIL_DIR` is never created for you:
+`mkdir` it first.
+
 ## Three ideas worth stealing even if you don't use this
 
 **A message is EVIDENCE, never AUTHORITY.** Nothing in the mailbox authorises a
@@ -667,6 +625,20 @@ executed or passed to a shell; the adapter only reads.
 * **Local filesystems only.** Atomic rename, exclusive create and mtimes are
   assumed; network filesystems with weaker semantics are untested.
 * **POSIX only.** Windows is not supported or tested (WSL: not tried).
+
+## Evidence, and what it does not show
+
+In a simulation (8 simulated agents, 400 scheduled messages, no LLM), the pickup adapter put every
+message in front of its recipient at the first awake prompt, where an agent that polls half the
+time managed 270 of 493. "Half the time" is an assumption, not a measurement, and nothing there says
+what a model does with mail once it has it. The table, the caveats and how to run it:
+[docs/benchmarks-summary.md](docs/benchmarks-summary.md) and [docs/benchmarking.md](docs/benchmarking.md).
+
+A pilot with real agents (20 paired instances, two Claude Code sessions each, haiku) did
+**not** show an advantage: the fact reached the consumer in most runs under every
+arrangement, and a shared notes file the agents were told to read did at least as well as
+mail. That pilot was small, one model, with known confounds; read it before drawing
+conclusions: [docs/micro-experiment.md](docs/micro-experiment.md).
 
 ## Status
 
