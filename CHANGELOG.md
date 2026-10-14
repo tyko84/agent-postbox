@@ -55,6 +55,11 @@ behaviour).
 - `docs/reliability-evidence.md`: the twelve realistic reliability scenarios mapped to what covers each
   (deterministic test, simulated, observed in a real headless session, or not covered), with the
   gaps stated. One real-host check was added (USD 0.002): mail sent mid-turn is not seen by that turn.
+- `scripts/experiment_v2.py`, `scripts/analyze_v2.py` and `test_experiment_v2.py`: the harness and the
+  separately hashed analysis for `docs/experiment-v2.md`. Built and tested offline with a fake
+  driver; nothing is run in CI. A live run needs `--live` and `POSTBOX_EXPERIMENT_LIVE=1`, the
+  main stage refuses without a passing, live smoke gate, and a hard spend ceiling is enforced from
+  the host-reported cost (smoke 4, main 30 USD).
 
 ### Changed
 
