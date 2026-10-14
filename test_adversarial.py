@@ -109,6 +109,7 @@ def hand(box: Path, mid_: str, extra: str = "", body: str = "hand body\n",
 # "-c" entry below is that path, available in every CI cell without a build.
 GONE = 128 + signal.SIGPIPE
 PIPE_NOW = "2099-01-01T12:00:00Z"      # hand() dates its messages 2099-01-01T00:00:00Z
+BIG_HOOK = 70_000                      # the hook lists at most 20 messages
 BIG = 150_000                          # bytes; more than any pipe buffer holds
 ENTRIES: dict[str, list[str]] = {
     "python agent_mail.py": [sys.executable, "-I", TOOL],
@@ -178,6 +179,10 @@ def reader_goes_away(root: Path) -> None:
         hand(pbox, f"01ARZ3NDEKTSV4RRFFQ8{i:06d}", name=f"01ARZ3NDEKTSV4RRFFQ8{i:06d}-a.md",
              head=f"id: 01ARZ3NDEKTSV4RRFFQ8{i:06d}\ntype: ASK\nfrom: alice\nto: bob\n"
                   f"date: 2099-01-01T00:00:00Z\nsubject: ask {i}\n")
+    for i in range(20):     # the hook lists the newest 20 live messages: long hand-written subjects
+        hand(pbox, f"01ARZ3NDEKTSV4RRFFQA{i:06d}", name=f"01ARZ3NDEKTSV4RRFFQA{i:06d}-s.md",
+             head=f"id: 01ARZ3NDEKTSV4RRFFQA{i:06d}\ntype: NOTICE\nfrom: eve\nto: bob\n"
+                  f"date: 2099-01-01T00:00:00Z\nsubject: {'w' * 4000}\n")
     big_id = "01ARZ3NDEKTSV4RRFFQ9000000"
     hand(pbox, big_id, name=f"{big_id}-b.md",
          body="".join(f"line {i} of a large body\n" for i in range(12000)))
@@ -380,7 +385,7 @@ def reader_goes_away(root: Path) -> None:
         rc, err, full = piped(hook, box, "full", env_extra=who)
         check(f"control: the hook delivers {label} to a reader that stays",
               rc == 0 and not err and b"live message(s) addressed to 'bob'" in full
-              and (box is hbox or len(full) >= BIG), f"rc={rc} {len(full)} {err[-120:]!r}")
+              and (box is hbox or len(full) >= BIG_HOOK), f"rc={rc} {len(full)} {err[-120:]!r}")
         for extra in ([], ["-u"]):
             for how in ("closed", "line", "kill"):
                 rc, err, got = piped([hook[0], *extra, hook[1]], box, how, env_extra=who)

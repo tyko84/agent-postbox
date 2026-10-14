@@ -23,6 +23,13 @@ if [ -z "${POSTBOX_FORBIDDEN:-}" ]; then
     fi
 fi
 
+# The tests and the scanner call git. On macOS an unaccepted Xcode license, or a git that is
+# only a stub, makes every one of them fail with a confusing exit status; say so up front.
+if ! git --version >/dev/null 2>&1; then
+    echo "preflight: git does not run (macOS: accept the Xcode license, or put a working git first on PATH)" >&2
+    exit 2
+fi
+
 DIST="$(mktemp -d)"
 trap 'rm -rf "$DIST"' EXIT INT TERM
 
