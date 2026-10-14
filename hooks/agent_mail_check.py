@@ -8,6 +8,11 @@ Code's UserPromptSubmit is one such event; others have their own) means there
 is no decision to look. Hosts without that event poll
 `agent_mail.py list --to <you> --live`.
 
+When it runs: once per prompt the host submits. Mail filed while one long autonomous turn
+is running is not in that turn's context; it appears at the next prompt (PROTOCOL.md section 7).
+There is no read state, so every run prints the same live mail again until it is answered or
+ages out.
+
 Identity comes from AGENT_MAIL_IDENTITY. There is no default: if it is unset,
 this adapter is silent. That is unreachable, not a vendor default.
 

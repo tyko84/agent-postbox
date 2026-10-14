@@ -959,5 +959,121 @@ class ReliabilityProbes(unittest.TestCase):
         self.assertEqual(install(project, "--adapter", "claude-code").returncode, 0)  # re-run heals
 
 
+
+@unittest.skipUnless(os.name == "posix", "POSIX permissions and shell")
+class DeliveryTimeline(unittest.TestCase):
+    """What each party can and cannot tell, in time order, with the real CLI and the real
+    hook. Deterministic and scripted (no model): these pin the seams that
+    docs/reliability-evidence.md describes, including the limits."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory(prefix="test-adapters-")
+        self.addCleanup(tmp.cleanup)
+        self.tmp = Path(tmp.name).resolve()
+        self.box = self.tmp / "mail"
+        self.box.mkdir()
+        (self.box / "PARTICIPANTS.md").write_text(TABLE, encoding="utf-8")
+
+    def cli(self, *argv: str, **env: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run([sys.executable, "-I", str(TOOL), *argv], capture_output=True,
+                              text=True, timeout=TIMEOUT, cwd=self.tmp,
+                              env=clean_env(AGENT_MAIL_DIR=str(self.box), **env))
+
+    def hook(self, who: str) -> str:
+        cp = as_codex(HOOK, PAYLOAD, self.tmp, AGENT_MAIL_DIR=str(self.box),
+                      AGENT_MAIL_IDENTITY=who)
+        self.assertEqual(cp.returncode, 0, cp.stderr)
+        return cp.stdout.decode()
+
+    def snapshot(self) -> dict[str, tuple[int, int]]:
+        return {p.name: (p.stat().st_size, p.stat().st_mtime_ns) for p in self.box.iterdir()}
+
+    def test_mail_filed_after_the_hook_ran_is_seen_by_a_poll_now_and_by_the_hook_next_time(self) -> None:
+        # Scenario 3. The host runs the hook once per prompt; a long turn has no second run.
+        before = self.hook("bob")
+        self.assertEqual(before, "")                       # the hook ran at the prompt: nothing yet
+        send(self.box, type="ASK", **{"from": "alice"}, to="bob", subject="mid-turn-question")
+        # The agent is still inside the same turn. Nothing re-runs the hook, so `before` (what
+        # the model was given) cannot change. What it can do is look:
+        polled = self.cli("inbox", "--to", "bob")
+        self.assertEqual(polled.returncode, 0, polled.stderr)
+        self.assertIn("mid-turn-question", polled.stdout)  # a poll sees it at once
+        live = self.cli("list", "--to", "bob", "--live")
+        self.assertIn("mid-turn-question", live.stdout)
+        # The next prompt runs the hook again and the ASK is in front of the model.
+        after = self.hook("bob")
+        self.assertIn("mid-turn-question", after)
+        self.assertIn("[awaiting your reply]", after)
+
+    def test_delivered_seen_acknowledged_done_are_not_all_visible_to_the_sender(self) -> None:
+        # Scenario 11. Delivered = a file exists. Seen = recorded nowhere. Answered, and the
+        # result the answerer claims, are durable.
+        asked = send(self.box, type="ASK", **{"from": "alice"}, to="bob", subject="please-do-x")
+        mine = self.cli("list", "--from", "alice", "--type", "ASK", "--status", "open")
+        self.assertIn(asked, mine.stdout)                  # delivered, and still owed
+        before = self.snapshot()
+        status_before = self.cli("status", "--json", "--now", "2099-01-01T00:00:00Z").stdout
+        seen_once = self.hook("bob")
+        seen_twice = self.hook("bob")
+        self.assertIn("please-do-x", seen_once)
+        self.assertEqual(seen_once, seen_twice)
+        self.assertEqual(self.snapshot(), before)          # the hook wrote nothing: no read receipt
+        self.assertEqual(self.cli("status", "--json", "--now", "2099-01-01T00:00:00Z").stdout,
+                         status_before)                    # so the sender's view cannot differ
+        send(self.box, type="ANSWER", **{"from": "bob"}, to="alice", subject="did-x",
+             reply_to=asked, result="partial")
+        listed = json.loads(self.cli("list", "--json", "--type", "ASK").stdout)
+        row = next(r for r in listed["messages"] if r["id"] == asked)
+        self.assertEqual(row["status"], "answered")
+        self.assertEqual(row["result"], "PARTIAL")         # claimed, not proven (section 39)
+        self.assertNotIn(asked, self.hook("bob"))          # no longer owed
+        self.assertIn("did-x", self.hook("alice"))         # the sender's pickup shows the outcome
+
+    def test_an_ask_nobody_has_read_is_visible_as_open_and_old_but_not_as_unread(self) -> None:
+        # Scenarios 4 and 12. The recipient's session is gone for good.
+        asked = send(self.box, type="ASK", **{"from": "alice"}, to="bob", subject="anyone-there")
+        now = "2099-01-01T00:00:00Z"
+        cp = self.cli("status", "--now", now)
+        self.assertEqual(cp.returncode, 0, cp.stderr)      # status never fails on this
+        self.assertIn("asks: open=1", cp.stdout)
+        self.assertIn(f"({asked})", cp.stdout)
+        # Documented limit, pinned so a change is noticed: a recipient that has never written
+        # is not in the agents table, so nothing names bob as silent.
+        self.assertNotIn("  bob ", cp.stdout)
+
+    def test_a_lapsed_claim_frees_the_scope_for_a_second_agent_and_the_status_shows_the_handover(self) -> None:
+        # Scenario 6, with the real clock.
+        import datetime as dt
+        import time
+        now = dt.datetime.now(dt.timezone.utc)
+        soon = (now + dt.timedelta(seconds=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        later = (now + dt.timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        base = ["send", "--type", "CLAIM", "--to", "alice", "--scope", "src/x", "--body", "b"]
+        first = self.cli(*base, "--from", "alice", "--subject", "mine", "--expires", soon)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        rival = self.cli(*base, "--from", "bob", "--subject", "rival", "--expires", later)
+        self.assertEqual(rival.returncode, 3, rival.stderr)    # a live holder: refused, told who
+        self.assertIn("already held by alice", rival.stderr)
+        self.assertIn(soon, rival.stderr)
+        time.sleep(4)                                           # the holder never renews or releases
+        self.assertIn("NOT live (EXPIRED)", self.hook("alice"))  # and its own pickup says so
+        takeover = self.cli(*base, "--from", "bob", "--subject", "rival", "--expires", later)
+        self.assertEqual(takeover.returncode, 0, takeover.stderr)
+        held = json.loads(self.cli("status", "--json").stdout)["claims_held"]
+        self.assertEqual([(r["scope"], r["sender"]) for r in held], [("src/x", "bob")])
+
+    def test_an_ask_to_a_name_nobody_has_stays_listed_for_its_sender(self) -> None:
+        # Scenario 7: the warning is printed once at send time; afterwards the sender's own
+        # open list is where the typo remains discoverable.
+        cp = self.cli("send", "--type", "ASK", "--from", "alice", "--to", "bobb", "--subject",
+                      "typo", "--body", "b")
+        self.assertEqual(cp.returncode, 0, cp.stderr)
+        self.assertIn("Did you mean 'bob'", cp.stderr)
+        listing = self.cli("list", "--from", "alice", "--type", "ASK", "--status", "open").stdout
+        self.assertIn("alice -> bobb", listing)
+        self.assertEqual(self.hook("bob"), "")             # nobody by that name reads it
+        self.assertEqual(self.hook("bobb").count("ASK from alice"), 1)   # only the typo'd name does
+
+
 if __name__ == "__main__":
     unittest.main()
