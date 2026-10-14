@@ -2102,6 +2102,13 @@ directory with `.git` at or above the working directory, or `AGENT_MAIL_PROJECT`
 * `AGENT_MAIL_IDENTITY: 'name'`, or `AGENT_MAIL_IDENTITY: UNSET in this shell`, because
   the adapter prints nothing without it, which looks exactly like an empty inbox.
 
+* `worktree: this checkout is a linked git worktree, ...` when the mailbox was found by
+  walking up (`AGENT_MAIL_DIR` unset) and `.git` at the project root is a file, which is what
+  `git worktree add` leaves in the new directory. Each worktree has its own checkout of the
+  default mailbox directory, so mail filed in one is not in another, and each one's `doctor`
+  can PASS on its own canary. Agents that must talk across worktrees or clones set
+  `AGENT_MAIL_DIR` to one shared directory.
+
 None of these lines adds a reason for `doctor` to FAIL.
 
 **Invariant a test must pin.** (a) `send --to <typo>` exits 0, files the message, leaves
@@ -2109,5 +2116,6 @@ stdout as it was and writes one stderr warning naming the near match; a name wit
 (in any case) and a mailbox without a table write nothing to stderr, while `all` (and the
 other broadcast words) writes the one broadcast-word line. (b)
 `doctor` reports a registered hook with its script present, with it MISSING, none
-registered, and an unparseable settings file; reports the identity set and unset; and
+registered, and an unparseable settings file; names a linked worktree (and only when the
+mailbox was found by walking up); reports the identity set and unset; and
 exits as it did without any of the lines. `test_cli.py` pins both.

@@ -3355,6 +3355,21 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def linked_worktree_line(root: Path) -> str | None:
+    """PROTOCOL.md section 41: a linked `git worktree` has its own checkout of the default
+    mailbox directory, so agents in two worktrees (or two clones) of one repository do not
+    share mail unless AGENT_MAIL_DIR names one directory for all. Said by `doctor` only when
+    the mailbox was found by walking up (not named) and `.git` here is the file a linked
+    worktree has, never the directory a main checkout has. Reported, never a FAIL."""
+    if os.environ.get("AGENT_MAIL_DIR"):
+        return None
+    if not _is_file(root / ".git"):
+        return None
+    return ("worktree: this checkout is a linked git worktree, so the mailbox above is this "
+            "worktree's own copy: agents in other worktrees or clones of the repository do not "
+            "see it. Point every agent's AGENT_MAIL_DIR at one shared directory to talk across them")
+
+
 def pickup_hook_lines(root: Path) -> list[str]:
     """PROTOCOL.md section 41: where a prompt-submit hook for the pickup adapter is
     registered under `root`, and whether the script it names is there. Read only and
@@ -3513,6 +3528,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     print(f"AGENT_MAIL_IDENTITY: {who.lower()!r}" if who else
           "AGENT_MAIL_IDENTITY: UNSET in this shell: the pickup adapter prints "
           "nothing without it, which looks exactly like an empty inbox")
+
+    if (wt := linked_worktree_line(project_root())) is not None:
+        print(wt)
 
     canary = find_live_canary(everything, now=now)
     if canary is None:
