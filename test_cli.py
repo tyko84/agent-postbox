@@ -1656,7 +1656,20 @@ def test_visibility(root: Path) -> None:
     check("control: the row is matched case-insensitively", r.returncode == 0 and r.stderr == "",
           r.stderr)
     r = send("all")
-    check("control: `all` is not a typo", r.returncode == 0 and r.stderr == "", r.stderr)
+    check("`all` is not a typo, but it is not an identity either: exit 0, filed, and one stderr line "
+          "says no pickup shows it to anyone (a broadcast word reaches nobody)",
+          r.returncode == 0 and r.stdout.startswith("wrote ") and len(r.stderr.splitlines()) == 1
+          and r.stderr.startswith("warning: --to 'all' is a broadcast word") and "Did you mean" not in r.stderr,
+          r.stderr)
+    every = send("everything")
+    hook_out = subprocess.run(
+        [sys.executable, "-I", str(HERE / "hooks" / "agent_mail_check.py")], capture_output=True,
+        text=True, env={**os.environ, "AGENT_MAIL_DIR": str(box), "AGENT_MAIL_IDENTITY": "agent-b"},
+        timeout=60)
+    check("control: the warning is true: agent-b's pickup hook shows the two messages addressed to "
+          "its name and nothing for the ones sent to `all` and `everything`",
+          every.stderr.startswith("warning: --to 'everything' is a broadcast word")
+          and hook_out.stdout.count("NOTICE from agent-a") == 2, hook_out.stdout)
     bare = root / "visibility-bare"
     bare.mkdir()
     r = send("anyone-at-all", bare)

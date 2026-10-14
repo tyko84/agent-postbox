@@ -2126,6 +2126,13 @@ def unknown_recipient_note(to: str) -> str | None:
     The message is filed regardless and the exit status is unchanged: a name need not
     have a row to be legitimate, but a typo looks exactly like that. Reads only
     PARTICIPANTS.md; never scans the mailbox."""
+    if to in _SOFT_CAN_TOKENS:
+        # `all`, `any`, `*`, `everything` are not identities: the pickup adapter and
+        # `list --to <name>` match a message's `to` against one name exactly, so mail
+        # addressed to a broadcast word is filed but reaches no agent's context.
+        return (f"warning: --to {to!r} is a broadcast word, not an identity: the message is filed "
+                "but no pickup adapter or `list --to <name>` shows it to anyone. Address each "
+                "reader by name, or declare an alias for them in PARTICIPANTS.md.")
     table = next((p for p in (mail_dir() / "PARTICIPANTS.md", mail_dir().parent / "PARTICIPANTS.md")
                   if _is_file(p)), None)
     if table is None:   # the table next to the tool or in the cwd is not this mailbox's

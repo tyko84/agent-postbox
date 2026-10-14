@@ -196,6 +196,15 @@ Tiers, best first:
 3. **Nothing** — you are unreachable. Mail addressed to you should be treated
    as unsent.
 
+**When a prompt-injection adapter is *not* enough.** The adapter runs when the host fires its
+event, which for Claude Code's `UserPromptSubmit` is once per submitted prompt. Mail that is
+filed while the agent is in the middle of one long autonomous turn (many tool calls, no new
+prompt) is not in its context until the next prompt; it is not polled for in between, and
+nothing here interrupts a running turn. A recipient that must notice mail inside a long run
+has to look itself (`agent_mail.py inbox --to <you>`) at the points where it would otherwise
+act on shared state. `docs/reliability-evidence.md` records one real headless session in which
+mail sent 8 s into a 29 s turn was not seen by that turn.
+
 **Until your row exists in `PARTICIPANTS.md`, you are unreachable.** That table
 is what turns "did they get it?" from an assumption into a lookup, so an
 unanswered ASK means something specific instead of being ambiguous between
@@ -2059,7 +2068,7 @@ meaning of any earlier section.
 **stderr** when `--to` is not an identity in the mailbox's own `PARTICIPANTS.md` (the
 file in the mailbox directory, or the directory above it; the one beside the tool or in
 the working directory is not this mailbox's), not an alias there, and not one of the
-broadcast words (`all`, `any`, `*`, `everything`):
+broadcast words (`all`, `any`, `*`, `everything`; those four get their own warning, below):
 `warning: --to 'agent_b' is not a row in PARTICIPANTS.md, so the message is filed but
 nobody by that name may ever read it. Did you mean 'agent-b'? (Known: ...)`. The near
 match is `difflib`'s closest row, when there is one. The message is filed anyway and
@@ -2068,6 +2077,15 @@ like that. Nothing is said for a mailbox with no table, an empty table, or one t
 cannot be read (those commands already refuse on an unreadable table). The check reads
 `PARTICIPANTS.md` only; it never scans the mailbox. A fan-out through an alias warns
 for none of its writers that have a row.
+
+**A broadcast word (`send`, `ask`).** `all`, `any`, `*` and `everything` are not identities.
+The pickup adapter and `list --to <name>` match a message's `to` against one name, so a
+message addressed to one of them is filed and shown to no agent. `send` says so on
+**stderr**, once, whether or not the mailbox has a table: `warning: --to 'all' is a
+broadcast word, not an identity: the message is filed but no pickup adapter or `list --to
+<name>` shows it to anyone. Address each reader by name, or declare an alias for them in
+PARTICIPANTS.md.` The exit status and stdout are unchanged. (An alias declared in
+PARTICIPANTS.md, section 27, does fan out to its writers.)
 
 **A pickup that cannot run (`doctor`).** `doctor` prints, from the project root (the
 directory with `.git` at or above the working directory, or `AGENT_MAIL_PROJECT`):
@@ -2088,7 +2106,8 @@ None of these lines adds a reason for `doctor` to FAIL.
 
 **Invariant a test must pin.** (a) `send --to <typo>` exits 0, files the message, leaves
 stdout as it was and writes one stderr warning naming the near match; a name with a row
-(in any case), `all`, and a mailbox without a table write nothing to stderr. (b)
+(in any case) and a mailbox without a table write nothing to stderr, while `all` (and the
+other broadcast words) writes the one broadcast-word line. (b)
 `doctor` reports a registered hook with its script present, with it MISSING, none
 registered, and an unparseable settings file; reports the identity set and unset; and
 exits as it did without any of the lines. `test_cli.py` pins both.
