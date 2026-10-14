@@ -46,6 +46,10 @@ behaviour).
   since there is no uninstall command).
 - `docs/adoption/`: why Postbox exists (with what has and has not been shown), launch drafts for
   Reddit and Show HN (not posted), where to share it, and a feedback and triage process.
+- `docs/experiment-v2.md`: a pre-registration for a better second experiment, not run: a realistic
+  two-agent task with hidden tests, a control that is not told to read the notes, no mailbox tool
+  in controls, length-matched prompts, 60 paired instances, a decision rule fixed in advance, and
+  a staged hard budget. It states that the likeliest result is again no measurable advantage.
 
 ### Changed
 
