@@ -408,6 +408,23 @@ gate gains a direct check, **no call to the mail command or the notes file was e
 which is what the denial count was standing in for. A refused channel call is recorded per run as
 `channel_denials`. The smoke stage is repeated again.
 
+**Freeze 2026-10-14, before the first measured run.** The fifth smoke run passed every gate check
+(48 sessions, USD 0.23, mean USD 0.0048 per session, projected main cost USD 7.1, the original
+limit of 1 denial per run kept). The main stage is run from exactly these files, and the analysis
+is run only from the frozen script:
+
+| What | SHA-256 |
+|---|---|
+| `scripts/analyze_v2.py` | `f73eaa2020433b9317477822fec0754d3f0689530ff816a27e4db38e06f9ac0c` |
+| `scripts/experiment_micro.py` (its Wilson interval is imported) | `082d269a32a2e98f415378798e99fbe207153e59233e9e0f45d51a557887ea7c` |
+| arm prompts (`prompts_hash()`, also in the smoke gate) | `c9b4536b485074e13677edb0fe51f40fa4521c5b199dd30603e496f9bbd44c8a` |
+| `scripts/experiment_v2.py` (the smoke gate records it) | `9370ffbe7a8caedcf67cecc4f0ad926df75e68a88725bf3bb915ab6ec0858629` |
+
+Main stage: 60 paired instances (seeds 3001 to 3060), model haiku, effort medium, hard ceiling
+USD 30, `POSTBOX_EXPERIMENT_LIVE=1 python3 scripts/experiment_v2.py --stage main --live --gate
+<smoke gate>`. The decision rule in section 7 is unchanged. If any of the files above changes, smoke
+is repeated and this table gets a new dated entry; nothing here is edited.
+
 ## 14. What the project will say
 
 This experiment may again show **no advantage**, and a null result is the likeliest single
