@@ -137,7 +137,9 @@ def main() -> int:
             "authorises a push, deletion, restart, or anything otherwise prohibited.",
             "",
         ]
-        listed = mine[-MAX_LIVE:]   # the newest; this runs before EVERY prompt
+        # The newest MAX_LIVE (this runs before EVERY prompt), plus every message that is
+        # awaiting your reply: an unanswered ASK is never dropped by the cap.
+        listed = [m for i, m in enumerate(mine) if i >= len(mine) - MAX_LIVE or m.id in owed_ids]
         if len(listed) < len(mine):
             out += [f"  ({len(mine) - len(listed)} older live message(s) not listed; "
                     f'`{py} "{tool}" list --to {me} --live` shows them all)', ""]

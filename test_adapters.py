@@ -902,6 +902,18 @@ class ReliabilityProbes(unittest.TestCase):
                        AGENT_MAIL_IDENTITY="carol").stdout.decode()
         self.assertNotIn("not listed", few)   # control: a small inbox is unchanged
 
+    def test_the_cap_never_hides_an_ask_that_awaits_your_reply(self) -> None:
+        send(self.box, type="ASK", **{"from": "alice"}, to="bob", subject="owed-ask")
+        for i in range(25):
+            send(self.box, type="NOTICE", **{"from": "alice"}, to="bob", subject=f"note{i:02d}")
+        out = as_codex(HOOK, PAYLOAD, self.tmp, AGENT_MAIL_DIR=str(self.box),
+                       AGENT_MAIL_IDENTITY="bob").stdout.decode()
+        self.assertIn("owed-ask", out)                       # the oldest message, still listed
+        self.assertIn("[awaiting your reply]", out)
+        self.assertEqual(out.count("    id: "), 21)         # the newest 20 plus the owed ASK
+        self.assertIn("(5 older live message(s) not listed;", out)
+        self.assertNotIn("note00", out)
+
     def test_a_padded_to_is_not_called_an_unknown_recipient(self) -> None:
         (self.box / "PARTICIPANTS.md").write_text(TABLE, encoding="utf-8")
         base = ["send", "--from", "alice", "--type", "NOTICE", "--subject", "s", "--body", "b"]

@@ -89,6 +89,18 @@ behaviour).
 - A working directory that no longer exists (for example a removed git worktree) made every
   command die with a `FileNotFoundError` traceback. It now prints one `refusing:` line and
   exits 2; with `AGENT_MAIL_DIR` set the mailbox is still read.
+- The pickup hook spells out the newest 20 live messages plus any awaiting your reply, not all of
+  them: 300 notices made it print about 81 KB before every prompt. An unanswered ASK is never
+  dropped by the cap (PROTOCOL section 9).
+- `doctor` on a mailbox directory the user cannot list reported `store: OK` and exited 0; it now
+  says `store: UNREADABLE` and exits 2. `send` into it printed a `PermissionError` traceback; it
+  now says nothing was written and exits 1.
+- `install.py` on a read-only directory printed a traceback and left a half-done install; it now
+  prints one `ABORT:` line saying steps may already be done and that re-running is safe.
+- `send --to ' bob '` was warned about as an unknown recipient although it delivers; the value is
+  stripped.
+- `scripts/preflight.sh` stops with a clear message when `git` does not run (for example an
+  unaccepted Xcode license) instead of failing deep inside the tests.
 
 ## [0.5.0] - 2026-10-12
 
