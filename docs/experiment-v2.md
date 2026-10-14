@@ -396,6 +396,18 @@ earlier design, the notes arms would have measured the harness, not the notes fi
 would have favoured Postbox. The data of all smoke runs is kept outside the repository and is not
 part of any result.
 
+**Amendment 2026-10-14, after the fourth live smoke run (still before any measured run).** The notes
+arms now wrote notes (3 to 5 lines per run), the no-channel arm passed 0 of 3 and the oracle 9 of 9.
+One check still failed: denials averaged 1.7 to 2.3 per run in the non-oracle arms (limit 1). The
+denied calls were 12 ad-hoc `python3 -c` self-checks, spread across the arms (P 4, N0 3, N1 3, N2 2),
+and about 11 attempts to list the work root or the other agent's checkout, which the isolation
+rules refuse. None was a use of a channel. The limit of 1 is kept, not loosened. Instead the
+common intro of every arm adds "work only inside your checkout, and check your code with the unit
+tests, not `python3 -c`" (the same words for every arm, so it cannot favour one), and the smoke
+gate gains a direct check, **no call to the mail command or the notes file was ever refused**,
+which is what the denial count was standing in for. A refused channel call is recorded per run as
+`channel_denials`. The smoke stage is repeated again.
+
 ## 14. What the project will say
 
 This experiment may again show **no advantage**, and a null result is the likeliest single

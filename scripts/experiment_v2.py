@@ -81,11 +81,13 @@ SHARED_LINE = ("You and the other agent are building this together. Tell a teamm
 INTRO = {A: "You are agent-a on a two-agent team building a ledger toolkit. Your checkout is "
             "your current directory; TICKETS.md lists both tickets and you do Ticket A. "
             "Run tests with `python3 -m unittest discover tests`. Run each shell command as its own "
-            "Bash call (no `cd`, `;`, `&&`, loops or pipes) and use Read to read files.",
+            "Bash call (no `cd`, `;`, `&&`, loops or pipes), use Read to read files, work only inside "
+            "your checkout, and check your code with the unit tests, not `python3 -c`.",
          B: "You are agent-b on a two-agent team building a ledger toolkit. Your checkout is "
             "your current directory; TICKETS.md lists both tickets and you do Ticket B. "
             "Run tests with `python3 -m unittest discover tests`. Run each shell command as its own "
-            "Bash call (no `cd`, `;`, `&&`, loops or pipes) and use Read to read files."}
+            "Bash call (no `cd`, `;`, `&&`, loops or pipes), use Read to read files, work only inside "
+            "your checkout, and check your code with the unit tests, not `python3 -c`."}
 TASK = {"s1": "Do your ticket now; stop when you have done what you can in this session.",
         "s2": "Do your ticket now; stop when you have done what you can in this session.",
         "s3": "Continue your ticket and finish it.",
@@ -525,6 +527,14 @@ def isolation_rules(root: Path, other: str) -> tuple[str, ...]:
     return (f"Read(/{c}/**)", f"Edit(/{c}/**)", f"Write(/{c}/**)", f"Bash(*{TREE[other]}*)")
 
 
+def channel_denials(denials: list[Any]) -> int:
+    """Refused calls that were a use of a communication channel: the mail command, or the shared
+    notes file. A channel that is refused is a harness defect, not an arm's behaviour."""
+    return sum(1 for d in denials
+               if isinstance(d, dict) and ("agent_mail.py" in json.dumps(d.get("tool_input"))
+                                           or NOTES_REL in json.dumps(d.get("tool_input"))))
+
+
 def crossed(tools: list[dict[str, Any]], other: str) -> bool:
     """Whether any tool call of this session named the other agent's container (an attempt;
     the deny rules refuse it, and the flag records that it was tried)."""
@@ -610,6 +620,7 @@ class Harness(micro.Experiment):
                "seconds": round(secs, 1), "cost_usd": s.cost_usd, "turns": s.num_turns,
                "rc": s.rc, "timed_out": s.timed_out, "is_error": s.is_error,
                "rate_limited": s.rate_limited, "infra": infra, "denials": len(s.denials),
+               "channel_denials": channel_denials(s.denials),
                "model": s.model, "usage": s.usage, "model_usage": s.model_usage,
                "raw_events": str(raw_path), "prompt_chars": len(spec.prompt),
                "result": s.result[:400], "tools": [t["name"] for t in s.tools],
@@ -709,6 +720,7 @@ class Harness(micro.Experiment):
         rec["seconds"] = round(time.monotonic() - t0, 1)
         rec["cost_usd"] = round(sum(s["cost_usd"] or 0.0 for s in rec["sessions"]), 6)
         rec["denials"] = sum(s["denials"] for s in rec["sessions"])
+        rec["channel_denials"] = sum(s["channel_denials"] for s in rec["sessions"])
         rec["cross_checkout"] = any(s["cross_checkout"] for s in rec["sessions"])
         rec["mailbox_mention"] = arm != "P" and any(s["mentions_mailbox"] for s in rec["sessions"])
         runs = self.out / "runs"
@@ -847,6 +859,8 @@ def smoke_gate(records: list[dict[str, Any]], spent: float, args: argparse.Names
         "N0 reaches b_ok in at most 1 of 3": len(n0) >= 1 and sum(r["b_ok"] for r in n0) <= 1,
         "no mailbox mention in any non-P run": not any(r["mailbox_mention"] for r in recs),
         "P and N2 paragraphs within 10%": lengths_within(),
+        "no call to a communication channel (mail command, notes file) was refused": not any(
+            r.get("channel_denials", 0) for r in recs),
         "denials average at most 1 per run in every arm": all(
             sum(v) / len(v) <= 1 for v in by_arm.values() if v),
         f"cost gate: mean per session <= ${GATE_MEAN_USD}": mean <= GATE_MEAN_USD,

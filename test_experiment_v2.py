@@ -547,6 +547,23 @@ class Stages(Base):
         bad = self.v.smoke_gate(leaky.run_block(self.v.SEEDS["smoke"]), 1.0, ns,
                                 self.v.offline_checks())
         self.assertFalse(bad["checks"]["no mailbox mention in any non-P run"])
+        # a refused call to a channel (the mail command or the notes file) fails the gate: the
+        # third live smoke run had every notes append refused and only the denial count showed it
+        key = "no call to a communication channel (mail command, notes file) was refused"
+        self.assertTrue(gate["checks"][key])
+        refused = [dict(r, channel_denials=2) if r["arm"] == "N2" else r for r in recs]
+        blocked = self.v.smoke_gate(refused, h.spent, ns, self.v.offline_checks())
+        self.assertFalse(blocked["checks"][key])
+        self.assertFalse(blocked["passed"])
+
+    def test_channel_denials_count_only_uses_of_a_channel(self) -> None:
+        cd = self.v.channel_denials
+        mail = {"tool_name": "Bash", "tool_input": {"command": "python3 tools/agent-postbox/agent_mail.py send x"}}
+        notes = {"tool_name": "Edit", "tool_input": {"file_path": "../../shared/NOTES.md"}}
+        other = {"tool_name": "Bash", "tool_input": {"command": "python3 -c 'print(1)'"}}
+        self.assertEqual(cd([mail, notes, other]), 2)
+        self.assertEqual(cd([other, "not a dict", {"tool_input": None}]), 0)
+        self.assertEqual(cd([]), 0)
 
     def test_dry_run_runs_the_pipeline_offline_and_the_gate_is_marked(self) -> None:
         def boom(self: Any, spec: Any) -> Any:
