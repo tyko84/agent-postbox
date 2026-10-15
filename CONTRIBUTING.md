@@ -92,3 +92,25 @@ Code changes:
   secret in CI; the list itself is never committed) are described in
   `docs/publication-safety.md`; the release steps are in
   `docs/release-process.md`.
+
+## Reviews, labels and good first issues
+
+* **Windows.** The tests need a POSIX system (`test_publication.py` imports `grp`, the
+  README examples need `bash`). Contributors on Windows can still send documentation fixes:
+  say in the pull request which checks you could not run and CI will run them (a first
+  contribution needs a maintainer to approve the CI run).
+* **What to expect.** This is a one-maintainer project with no response-time promise. Small,
+  single-purpose pull requests are reviewed fastest. The review
+  checks the list above, that a behaviour change is a numbered `PROTOCOL.md` section with a
+  check that asserts on content that must appear, and that nothing private is in the diff.
+* **Labels.** `good first issue` marks a task with a named file and a named check;
+  `help wanted` marks something the maintainers would like but are not doing; `field-report`
+  is a message that did not arrive; `documentation`, `bug`, `enhancement`, `question`
+  and `wontfix` mean what they say; `tried-it` marks a first-use report.
+* **Good first issues.** [docs/issues-to-open.md](docs/issues-to-open.md) drafts the starter
+  issues with the file, the acceptance criteria and the traps (for example, a new `.py` file
+  must be on the one `mypy` line of `ci.yml`). A new check or a clearer error message in
+  `agent_mail.py` is a good first change; a new protocol feature is not.
+* **No claim of benefit.** The experiments did not show that Postbox improves agents' work
+  ([docs/experiment-v2-results.md](docs/experiment-v2-results.md)). Documentation changes
+  must not add one; say what was measured, with the model, host and permission mode.

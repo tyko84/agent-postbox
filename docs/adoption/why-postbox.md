@@ -3,7 +3,7 @@
 Postbox is a small communication layer for coding agents that run as separate sessions in one
 repository. It is not an orchestration framework: it does not plan, assign, schedule or
 supervise anything. It carries messages between agents that someone else is already running,
-and it makes sure the receiver actually sees them.
+and, with a hook installed, puts them in front of the receiver at its next prompt.
 
 ## The problem
 
@@ -64,7 +64,7 @@ Shown, by tests that run in CI and by sessions with a real host:
 * Messages are written atomically, and the stress and adversarial tests found no silent loss
   or overwrite under concurrent sends and claims. Tests passing is not a proof of absence.
 * The hook delivers mail into real headless Claude Code sessions (`claude -p`, one small
-  model, one run on 2026-10-12), the receiver answered an ASK correctly 3 of 3 times, and
+  model, runs on 2026-10-12 and again on Claude Code 2.1.300 on 2026-10-15), the receiver answered an ASK correctly 3 of 3 times, and
   the mailbox records it ([e2e-real-sessions.md](../e2e-real-sessions.md)). Interactive
   mode was not run.
 
@@ -73,8 +73,13 @@ Not shown:
 * That Postbox improves a team's outcome. A pilot with real agents (20 paired instances, one
   small model) found **no advantage** over a shared notes file the agents were told to read,
   and the controls were confounded
-  ([micro-experiment.md](../micro-experiment.md)). The case Postbox is built for, an agent
-  that does not read a shared file unprompted over a long session, was not tested.
+  ([micro-experiment.md](../micro-experiment.md)). A larger pre-registered run (60 paired
+  instances) went **against** Postbox on its task, 51 of 60 completed against 60 of 60 for a
+  notes file, because the host refused the agent's `send` command in 9 runs; the cause was a
+  `#` line inside a quoted `--body`, which Claude Code refuses even when an allow rule
+  matches ([experiment-v2-results.md](../experiment-v2-results.md)). The case Postbox is
+  built for, an agent that does not read a shared file unprompted over a long session, was
+  not tested. No performance advantage has been demonstrated.
 * Anything about Codex, Cursor or other hosts beyond what [hosts.md](../hosts.md) says was
   and was not verified.
 

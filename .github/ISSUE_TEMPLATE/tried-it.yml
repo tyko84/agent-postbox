@@ -24,7 +24,23 @@ body:
   - type: input
     id: minutes
     attributes:
-      label: Minutes from clone to that step
+      label: Minutes from clone to your first message (your own clock)
+    validations: {required: false}
+  - type: dropdown
+    id: pickup
+    attributes:
+      label: Did the other agent show the mail without being told to look?
+      options:
+        - Not tried with a host
+        - Yes
+        - No
+        - Only after I told it to look
+    validations: {required: false}
+  - type: textarea
+    id: permissions
+    attributes:
+      label: Permission prompts or denials on mail commands
+      description: How many, the command, what happened next, and the `send_permission:` line of `doctor` if you have it. "None" is a fine answer.
     validations: {required: false}
   - type: textarea
     id: stuck

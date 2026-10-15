@@ -1,61 +1,47 @@
 # Documentation
 
-* [../README.md](../README.md): what this is, quickstart, CLI usage, then install and reference.
-* [../PROTOCOL.md](../PROTOCOL.md): the whole spec.
-* [../SECURITY.md](../SECURITY.md): threat model.
-* [identity.md](identity.md): optional Unix-user identity binding (PROTOCOL.md
-  section 40): what a message file's owner proves, what it does not, and the
-  attacks it was checked against.
-* [hosts.md](hosts.md): which hosts can run the pickup adapter (Claude Code,
-  Codex), which cannot (Cursor: polling only), what each mechanism guarantees,
-  and exactly what was verified and what was not.
-* [e2e-real-sessions.md](e2e-real-sessions.md): the first run inside a real
-  host (Claude Code, headless `claude -p`, 2026-10-12) with real model
-  sessions: delivery, no cross-talk, next-prompt and recovery checks, two
-  behavioural observations, and what a missing hook script does (it blocks the
-  prompt). `scripts/e2e_claude.py` re-runs it; it spends usage and is not in CI.
-* [reliability-evidence.md](reliability-evidence.md): twelve realistic failure scenarios (concurrency, restarts, busy or vanished recipients, claim holders, bad recipients, interrupted sends, duplicates, contention, acknowledgement, visibility to the human), each with its mechanism, the test or run that covers it (deterministic, simulated or observed), the gaps and the signal a person gets.
-* [packaging.md](packaging.md): building and checking the wheel and sdist.
-* [benchmarks-summary.md](benchmarks-summary.md): the pickup-versus-polling results table from one
-  `scripts/scenario.py` run, with its caveats (moved from the README).
-* [install-reference.md](install-reference.md): the pre-0.3.0 distribution-name note and
-  verifying a release download (moved from the README).
-* [benchmarking.md](benchmarking.md): `scripts/scenario.py`, the reproducible
-  benchmark and reliability harness (hook pickup versus a polling baseline
-  under injected faults): what is simulated, how to run it, how to read it.
-* [coordination-experiment.md](coordination-experiment.md): the design of a
-  repeatable experiment on whether Postbox improves team outcomes (task
-  completion, conflicting edits, missed facts, recovery, false success) against
-  two control arms, with its statistics, cost and limits, and the results of
-  `scripts/team_sim.py`, the offline simulation of the mechanism (simulated
-  agents; says nothing about real models).
-* [../examples/two-agents/](../examples/two-agents/README.md): a runnable
-  demo, two scripted sessions exchanging mail through the real tool
-  (`python examples/two-agents/run.py`; tested by `test_examples.py`).
-* [experiment-v2.md](experiment-v2.md): pre-registration of a second real-agent experiment: arms, power, decision rule, budget.
-* [experiment-v2-results.md](experiment-v2-results.md): its main-stage results (against Postbox on this task, with the cause).
-* [experiment-v3-proposal.md](experiment-v3-proposal.md): a proposal, not approved and not run: why v2 could not show an advantage (control at ceiling, a confounded arm) and one design that could.
-* [install-audit.md](install-audit.md): the installer lifecycle audit: every case run, with its result and the defects found.
-* [performance.md](performance.md): measured latency and memory against mailbox size (linear; the prompt hook passes 200 ms near 4,000 messages), concurrency, and what was not measured.
-* [issues-to-open.md](issues-to-open.md): five starter issues drafted for the
-  tracker (known gaps, each with what was observed, acceptance criteria,
-  files to touch and how to test).
-* [handoff-example.md](handoff-example.md): a filled-in handoff packet
-  (validated by `test_handoff.py`).
-* [threat-model.md](threat-model.md): assets, adversaries, trust assumptions
-* [coordination-audit.md](coordination-audit.md): a defect hunt over claims, ASK/ANSWER, delivery and the five status views: what was probed, two defects fixed, what was not found.
-  (each cited to code), the phase 6 findings and the accepted risks.
-* [publication-safety.md](publication-safety.md): the pre-publication scanner and how to configure it.
-* [release-process.md](release-process.md): how a release is cut (version,
-* [test-inventory.md](test-inventory.md): every test and CI job with its time, flake findings (a SIGINT-ignored-in-background-jobs hang, fixed), CI critical path, and ranked recommendations.
-  changelog, tag, GitHub release, privacy preflight), how the published
-  release is verified, immutable releases, rollback.
-* [onboarding-first-exchange.md](onboarding-first-exchange.md): the tested path from a clone to a
-  first exchange, with timings.
+Start with [../README.md](../README.md) (what this is, quickstart, CLI usage), then
+[onboarding-first-exchange.md](onboarding-first-exchange.md). Nothing here claims a measured
+benefit: see [Evidence](#evidence) for what was and was not shown.
+
+## Using it
+
+* [onboarding-first-exchange.md](onboarding-first-exchange.md): the tested path from a clone to a first exchange, with timings.
+* [troubleshooting.md](troubleshooting.md): symptoms and fixes (including a denied `send`), and removing the install.
+* [hosts.md](hosts.md): which hosts can run the pickup adapter (Claude Code; Codex, never run in the real host; Cursor, polling only), what each mechanism guarantees, and exactly what was verified.
+* [install-reference.md](install-reference.md): the pre-0.3.0 distribution-name note and verifying a release download.
+* [identity.md](identity.md): optional Unix-user identity binding (PROTOCOL.md section 40): what a file's owner proves, what it does not.
+* [handoff-example.md](handoff-example.md): a filled-in handoff packet (validated by `test_handoff.py`).
+* [../examples/two-agents/](../examples/two-agents/README.md): a runnable demo of two scripted sessions exchanging mail through the real tool.
 * [demo-narration.md](demo-narration.md): narration for the recorded two-agent demo.
-* [troubleshooting.md](troubleshooting.md): symptoms and fixes, and removing the install.
-* [adoption/](adoption/): why Postbox exists, launch drafts (not posted), where to share it, and
-  how feedback is collected and prioritised.
-* [pypi-publishing.md](pypi-publishing.md): the project is **not on PyPI**;
-  this is the prepared plan for publishing there (checks done, the upload job,
-  the owner's checklist). Nothing in it has been carried out.
+* [../PROTOCOL.md](../PROTOCOL.md): the whole spec. [../SECURITY.md](../SECURITY.md): the threat model.
+
+## Evidence
+
+* [micro-experiment.md](micro-experiment.md): the pilot (20 paired instances, one small model): null.
+* [experiment-v2.md](experiment-v2.md) and [experiment-v2-results.md](experiment-v2-results.md): the pre-registered second experiment and its result, against Postbox on that task, with the corrected cause (a host refusal of a `#` line in a quoted `--body`).
+* [experiment-v3-proposal.md](experiment-v3-proposal.md): a proposal, not approved and not run.
+* [e2e-real-sessions.md](e2e-real-sessions.md): runs inside a real host (Claude Code, headless `claude -p`) with real model sessions. `scripts/e2e_claude.py` re-runs it; it spends usage and is not in CI.
+* [reliability-evidence.md](reliability-evidence.md): twelve failure scenarios, each with its mechanism, the test or run that covers it, the gaps and the signal a person gets.
+* [benchmarks-summary.md](benchmarks-summary.md) and [benchmarking.md](benchmarking.md): the simulated pickup-versus-polling benchmark (no model) and how to run it.
+* [coordination-experiment.md](coordination-experiment.md): the design of a team-outcome experiment and the offline simulation `scripts/team_sim.py` (simulated agents; says nothing about real models).
+* [performance.md](performance.md): latency and memory against mailbox size.
+* [coordination-audit.md](coordination-audit.md), [install-audit.md](install-audit.md), [first-use-audit.md](first-use-audit.md): defect hunts and what they found.
+* [test-inventory.md](test-inventory.md): every test and CI job with its time and flake findings.
+
+## Security and publication
+
+* [threat-model.md](threat-model.md): assets, adversaries, trust assumptions, accepted risks.
+* [publication-safety.md](publication-safety.md): the pre-publication scanner and how to configure it.
+
+## Releasing and distribution
+
+* [packaging.md](packaging.md): building and checking the wheel and sdist.
+* [release-process.md](release-process.md): how a release is cut and verified, immutable releases, rollback.
+* [pypi-publishing.md](pypi-publishing.md): the project is **not on PyPI**; the checks done, the blockers and the owner's numbered checklist. Nothing in it has been carried out.
+
+## Adoption and contributing
+
+* [adoption/](adoption/why-postbox.md): [why-postbox.md](adoption/why-postbox.md) (what it is and is not), [invite-five.md](adoption/invite-five.md) (the private five-tester beta), [trial-log.md](adoption/trial-log.md), [feedback-process.md](adoption/feedback-process.md), [launch-drafts.md](adoption/launch-drafts.md) (not posted), [communities.md](adoption/communities.md).
+* [issues-to-open.md](issues-to-open.md): starter issues drafted for the tracker.
+* [../CONTRIBUTING.md](../CONTRIBUTING.md): field-report walkthrough and the checks a change must pass.
