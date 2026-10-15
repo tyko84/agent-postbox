@@ -1468,6 +1468,40 @@ def main() -> int:
                       and cp.stderr.startswith("refusing: the working directory cannot be read")
                       and len(cp.stderr.strip().splitlines()) == 1, cp.stdout + cp.stderr)
 
+        print("17. a renewed claim is not an orphan, and a claim sent to an alias is renewed whole "
+              "(PROTOCOL.md sections 5, 27, 32, 34)")
+        r17 = Path(td) / "rec17"
+        r17.mkdir()
+        (r17 / "PARTICIPANTS.md").write_text(
+            "## Aliases\n\n| Alias | Writers |\n|---|---|\n| `team` | `bob`, `carol` |\n")
+        old17 = (r17 / "01ARZ3NDEKTSV4RRFFQ69G5F17-old.md")
+        old17.write_text("---\nid: 01ARZ3NDEKTSV4RRFFQ69G5F17\ntype: CLAIM\nfrom: zed\nto: bob\n"
+                         "date: 2026-01-01T00:00:00Z\nsubject: old\nexpires: 2026-01-02T00:00:00Z\n"
+                         "scope: s17\n---\n\nbody\n")
+        d17 = run(r17, "doctor").stdout
+        check("control: an expired claim nobody renewed is an orphan",
+              "orphan_claims: 1" in d17 and "(EXPIRED)" in d17, d17)
+        renew17 = send(r17, "zed", "--expires", soon(1), "--scope", "s17",
+                       "--supersedes", "01ARZ3NDEKTSV4RRFFQ69G5F17", kind="CLAIM")
+        d17 = run(r17, "doctor").stdout
+        check("once renewed, the expired original is not an orphan (status says superseded, "
+              "not expired)", renew17.returncode == 0 and "orphan_claims: 0" in d17, d17 + renew17.stderr)
+        TEAM17 = ["send", "--type", "CLAIM", "--from", "zed", "--to", "team", "--subject", "hold",
+                  "--body", "b", "--scope", "t17", "--expires", soon(1)]
+        first17 = run(r17, *TEAM17)
+        ids17 = [x.split(": ", 1)[1] for x in first17.stdout.splitlines() if x.startswith("id: ")]
+        check("control: a claim to an alias of two files two claims", len(ids17) == 2, first17.stdout)
+        rel17 = run(r17, "send", "--type", "CLAIM", "--from", "zed", "--to", "team", "--subject", "release",
+                    "--body", "b", "--scope", "u17", "--expires", soon(2), "--supersedes", ids17[0])
+        rival17 = run(r17, "send", "--type", "CLAIM", "--from", "yan", "--to", "bob", "--subject", "mine",
+                      "--body", "b", "--scope", "t17", "--expires", soon(1))
+        check("releasing the scope through one id of the fan-out releases every copy: a rival "
+              "may claim it", rel17.returncode == 0 and rival17.returncode == 0,
+              rel17.stderr + rival17.stderr)
+        st17 = json.loads(run(r17, "status", "--json").stdout)
+        check("no sibling copy keeps holding the released scope",
+              sum(1 for r in st17["claims_held"] if r["scope"] == "t17") == 1, str(st17["claims_held"]))
+
     faulthandler.cancel_dump_traceback_later()
     if FAILS:
         print("\nFAILED:")

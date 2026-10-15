@@ -515,6 +515,9 @@ Checks (minimum):
    alone if at least one good message or an empty store is intentional).
 3. Orphan CLAIMs past `expires` are listed (still fail-closed for health if any
    unbounded CLAIM somehow exists — CLAIM without expires is refused at send).
+   A CLAIM its own sender renewed or released (§32) is superseded, not an orphan:
+   `doctor` lists the same unsuperseded claims `status` counts as `expired`,
+   `malformed_expiry` or `TOO_LONG` (§34).
 4. **Pickup canary freshness** — a recent self-NOTICE with subject prefix
    `PICKUP-CANARY` and an unexpired `expires` must be present. Missing or stale
    canary ⇒ doctor fails (exit 2). That proves the pickup loop, not only that
@@ -716,6 +719,11 @@ Declare aliases in an **Aliases** table (separate from Identity rows):
 - Alias tokens must not collide with an Identity row id.
 - Writers must be Identity ids declared in the same file.
 - Undeclared alias ⇒ no expansion (treat as a normal identity string).
+- A CLAIM sent `--to <alias>` is filed once per writer, and each copy holds
+  its scope. A renewal or release that cites one copy in `--supersedes` (§5,
+  §32) and is itself sent to the alias supersedes every sibling copy (same
+  sender, scope and expiry, addressed to a writer, filed within a minute), so
+  one release frees the scope.
 
 **Falsifier (Ledger).** `to=alias` ASK shows unanswered / 0 replies while
 ANSWERs exist under mapped writer tokens.

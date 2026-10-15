@@ -2169,6 +2169,36 @@ def unknown_recipient_note(to: str, msg_type: str = "") -> str | None:
             + ", ".join(sorted(rows - _SOFT_CAN_TOKENS)[:12]) + ".)")
 
 
+def _fanout_claim_siblings(args: argparse.Namespace, writers: list[str]) -> dict[str, str]:
+    """Renewing or releasing a CLAIM that was sent to an alias: writer -> the id of the
+    copy of that claim addressed to the writer. A fan-out (section 27) files one CLAIM per
+    writer and each holds the scope, so a renewal that supersedes only the id it was given
+    leaves the sibling copies holding the scope: a release would not release (section 32).
+    A sibling is a CLAIM from the same sender naming the same scope and expiry, addressed
+    to one of `writers`, filed within a minute of the target. Empty when nothing applies."""
+    supersedes = (getattr(args, "supersedes", "") or "").strip()
+    if not supersedes:
+        return {}
+    existing, _ = load_messages()
+    sender = args.sender.lower()
+    target = next((m for m in existing if m.id.upper() == supersedes.upper()), None)
+    if target is None or target.type != "CLAIM" or target.sender != sender:
+        return {}
+    idx = _Index(existing)
+    out: dict[str, str] = {}
+    for m in existing:
+        if (m.type == "CLAIM" and m.sender == sender and m.to in writers
+                and m.meta.get("scope") == target.meta.get("scope")
+                and m.meta.get("expires") == target.meta.get("expires")
+                and m.sent_at is not None and target.sent_at is not None
+                and abs((m.sent_at - target.sent_at).total_seconds()) <= 60
+                and not idx.is_superseded(m.id)):
+            out.setdefault(m.to, m.id)
+    if target.to in writers:
+        out[target.to] = target.id
+    return out
+
+
 def cmd_send(args: argparse.Namespace) -> int:
     _Stdout.optional = True  # section 35: the mail matters more than the confirmation
     mtype = args.type.upper()
@@ -2239,9 +2269,12 @@ def cmd_send(args: argparse.Namespace) -> int:
         # PROTOCOL.md section 36: the body is read once, every writer is
         # checked before any message is written, an interruption ends it.
         fanout: list[argparse.Namespace] = []
+        siblings = _fanout_claim_siblings(args, aliases[dest]) if mtype == "CLAIM" else {}
         for w in aliases[dest]:
             a = argparse.Namespace(**{k: getattr(args, k) for k in vars(args)})
             a.to = w
+            if w in siblings:
+                a.supersedes = siblings[w]   # each copy renews its own sibling (section 5)
             a._alias_fanout_done = True
             a._body = body
             err = _send_input_error(a, body)
@@ -3540,9 +3573,10 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
     now = _now()
     orphans = []
+    claim_idx = _Index(everything)
     for m in everything:
-        if m.type != "CLAIM":
-            continue
+        if m.type != "CLAIM" or claim_idx.is_superseded(m.id):
+            continue   # a renewed or released lease is not an orphan (section 34)
         exp = m.expires_at
         raw = (m.meta.get("expires") or "").strip()
         if exp is None and raw:
