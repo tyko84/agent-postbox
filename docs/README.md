@@ -9,6 +9,8 @@ benefit: see [Evidence](#evidence) for what was and was not shown.
 * [onboarding-first-exchange.md](onboarding-first-exchange.md): the tested path from a clone to a first exchange, with timings.
 * [troubleshooting.md](troubleshooting.md): symptoms and fixes (including a denied `send`), and removing the install.
 * [hosts.md](hosts.md): which hosts can run the pickup adapter (Claude Code; Codex, never run in the real host; Cursor, polling only), what each mechanism guarantees, and exactly what was verified.
+* [codex-investigation.md](codex-investigation.md): what the Codex documentation says about hooks, trust, sandbox and sessions versus what the Codex adapter assumes; documentation read only, Codex never run; an 8-step validation plan for issue #21.
+* [first-use-findings.md](first-use-findings.md): a timed README Quickstart run (machine time only) and the friction it found.
 * [install-reference.md](install-reference.md): the pre-0.3.0 distribution-name note and verifying a release download.
 * [identity.md](identity.md): optional Unix-user identity binding (PROTOCOL.md section 40): what a file's owner proves, what it does not.
 * [handoff-example.md](handoff-example.md): a filled-in handoff packet (validated by `test_handoff.py`).
