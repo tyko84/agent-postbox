@@ -1,5 +1,5 @@
 {
-  "claude_version": "2.1.296 (Claude Code)",
+  "claude_version": "2.1.300 (Claude Code)",
   "model": "haiku",
   "permission_mode": "dontAsk",
   "cases": {
@@ -37,9 +37,21 @@
       "allow_rules": 3,
       "denied": 0,
       "message_written": 1,
-      "cost_usd": 0.003
+      "cost_usd": 0.0026
     },
     "heredoc_stdin_with_hash": {
+      "allow_rules": 3,
+      "denied": 0,
+      "message_written": 1,
+      "cost_usd": 0.0026
+    },
+    "heredoc_stdin_with_braces": {
+      "allow_rules": 3,
+      "denied": 1,
+      "message_written": 0,
+      "cost_usd": 0.0026
+    },
+    "heredoc_stdin_with_backticks": {
       "allow_rules": 3,
       "denied": 0,
       "message_written": 1,
@@ -49,7 +61,7 @@
       "allow_rules": 3,
       "denied": 0,
       "message_written": 1,
-      "cost_usd": 0.0025
+      "cost_usd": 0.0026
     },
     "abs_quoted_oneline": {
       "allow_rules": 3,
@@ -79,25 +91,25 @@
       "allow_rules": 1,
       "denied": 1,
       "message_written": 0,
-      "cost_usd": 0.0008
+      "cost_usd": 0.0025
     },
     "only_relative_rule__relative": {
       "allow_rules": 1,
       "denied": 0,
       "message_written": 1,
-      "cost_usd": 0.0006
+      "cost_usd": 0.0025
     },
     "no_rule__relative": {
       "allow_rules": 0,
       "denied": 1,
       "message_written": 0,
-      "cost_usd": 0.0007
+      "cost_usd": 0.0012
     },
     "broad_rule__abs_quoted": {
       "allow_rules": 1,
       "denied": 1,
       "message_written": 0,
-      "cost_usd": 0.0007
+      "cost_usd": 0.0013
     },
     "broad_rule__other_script_same_name": {
       "allow_rules": 1,

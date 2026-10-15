@@ -113,3 +113,12 @@ evidence about that arm, not about the protocol. It is still the pre-registered 
 re-running until the result is favourable; a corrected arm (heredoc/`--body-file` form,
 rule covering the spelling) would be a new pre-registered experiment, reported next to this
 one, and needs approval before spending.
+
+**Re-check on 2.1.300 (2026-10-15).** The probe above was first run on Claude Code 2.1.296;
+Claude Code updated to 2.1.300 the same day. The full probe was repeated there (19 cases, one
+run each): the `#`-line refusal, the chained-command refusal and the path-spelling results are
+unchanged (`docs/data/permission-probe/results.json` is the 2.1.300 run;
+`results-2.1.296.json` is the first). One additional refusal appeared in experiment v3's
+readiness runs and reproduced in the probe: a heredoc body containing a dict-like
+`{'count': 3, 'total': 7}` is refused although the allow rule matches. That is a second
+host check on the command text, found after v2 ran; it was not known to be a factor in v2.
