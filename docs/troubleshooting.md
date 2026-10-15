@@ -49,7 +49,7 @@ message and claim.**
 ```sh
 # 1. The tool and the adapter script. Nothing else lives there by default.
 rm -rf tools/agent-postbox
-rmdir tools 2>/dev/null          # only removes it if now empty
+rmdir tools 2>/dev/null || true   # only removes it if now empty
 
 # 2. The hook registrations. Removes only entries whose command mentions
 #    agent_mail_check.py, keeps every other key and every other hook, and
@@ -98,7 +98,7 @@ EOF
 # 3. OPTIONAL AND DESTRUCTIVE: the mailbox, which is every message and claim.
 #    Skip it, or `git add` it somewhere first, if anyone might want the history.
 rm -rf docs/agent-mail
-rmdir docs 2>/dev/null
+rmdir docs 2>/dev/null || true
 
 # 4. The numbered backups (.bak.1, .bak.2, ...). The unnumbered .bak is
 #    consumed by step 2 when it matches; if step 2 said "left for you to

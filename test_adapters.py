@@ -280,6 +280,22 @@ class CodexInstall(unittest.TestCase):
         self.assertEqual(tree(self.project), before)
         self.assertEqual(len(self.handlers()), 1)
 
+    def test_a_different_dest_on_reinstall_is_reported_not_silently_ignored(self) -> None:
+        """docs/install-audit.md: the registered command keeps pointing at the first
+        --dest, and the output used to say only "already registered (no change)"."""
+        for adapter, config in (("codex", self.config),
+                                ("claude-code", self.project / ".claude" / "settings.json")):
+            with self.subTest(adapter=adapter):
+                install(self.project, "--adapter", adapter)
+                before = config.read_bytes()
+                cp = install(self.project, "--adapter", adapter, "--dest", "vendor/pb")
+                self.assertEqual(cp.returncode, 0, cp.stderr)
+                self.assertIn(f"{adapter} adapter already registered (no change)", cp.stdout)
+                self.assertIn("does not point at vendor/pb/", cp.stdout)
+                self.assertEqual(config.read_bytes(), before)       # still never rewritten
+                again = install(self.project, "--adapter", adapter)  # same dest: no note
+                self.assertNotIn("NOTE", again.stdout)
+
     def test_an_existing_config_is_merged_and_backed_up(self) -> None:
         theirs: dict[str, Any] = {
             "description": "ours",
