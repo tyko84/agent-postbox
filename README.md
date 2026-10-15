@@ -602,6 +602,10 @@ No performance advantage has been demonstrated. What exists, most important firs
   refuses even when an allow rule matches (the arm's own prompt steered agents to that form).
   It is a result about that arm, not a measured benefit, and not a finding about normal
   permission settings: [docs/experiment-v2-results.md](docs/experiment-v2-results.md).
+* **Pre-registered experiment v3** (multi-prompt consumer, same host and model): **uninformative**.
+  The shared notes file completed 20 of 20, so the run stopped at its ceiling gate; Postbox also
+  completed 20 of 20, delivered by the hook every time, at about 45% more cost per run. It does not
+  show an advantage or a disadvantage: [docs/experiment-v3-results.md](docs/experiment-v3-results.md).
 * **Micro-experiment** (20 paired instances, haiku): **null**. The fact reached the consumer in
   most runs under every arrangement, and a notes file the agents were told to read did at
   least as well: [docs/micro-experiment.md](docs/micro-experiment.md).
