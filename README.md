@@ -644,6 +644,12 @@ arrangement, and a shared notes file the agents were told to read did at least a
 mail. That pilot was small, one model, with known confounds; read it before drawing
 conclusions: [docs/micro-experiment.md](docs/micro-experiment.md).
 
+A larger pre-registered run (60 paired instances, same model, strict permission mode) went
+**against** Postbox: 51 of 60 completed against 60 of 60 for a shared notes file, because
+the host denied the agent's `send` command in 9 runs. It says nothing for or against mail
+under a normal permission setup, and it is not a measured benefit:
+[docs/experiment-v2-results.md](docs/experiment-v2-results.md).
+
 ## Status
 
 Early (v0.x), extracted from a working multi-agent setup. Python 3.10-3.14,
