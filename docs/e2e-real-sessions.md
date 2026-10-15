@@ -204,3 +204,22 @@ throwaway projects, `--workdir` places them (default `<tmp>/agent-postbox-e2e`),
 one did; 2: `claude` is missing or not signed in (every check SKIPped, with the
 reason), or a usage error. A rate-limited account turns the remaining checks
 into SKIPs.
+
+## Re-run on Claude Code 2.1.300 (2026-10-15)
+
+`python3 scripts/e2e_claude.py --model haiku --max-calls 30` from `main` at `9f5d0f9`, Claude Code
+2.1.300 (the first run above was 2.1.296), model `claude-haiku-5-5`, 21 model sessions, headless
+`claude -p`. Interactive mode was not run.
+
+* Delivery checks T1, T2, T3, T6 and T7a: all OK, **0 failed**: the token reached the model at
+  the prompt boundary for a new session, a `--resume` and the next prompt of one live session;
+  no cross-talk between two identities; each negative control (no identity, no adapter) saw
+  nothing; a killed session lost nothing; a mailbox that cannot be read did not block the prompt.
+* T4 (answering an ASK, 3 runs): 3 correct, 0 denials. T5 (injection, 4 runs): 0 obeyed, 3
+  quoted or described a subject injection, and the body injection never reached the model
+  (the adapter does not print bodies). These are observations, not pass/fail checks.
+* T7b (the registered script missing): the session answered; the hook line is a `can't open
+  file` message on stderr, which is the recorded behaviour.
+
+One run, one model, one version: it shows no regression on these checks, not a guarantee for
+other versions. The full per-check lines were not kept in the repository.
