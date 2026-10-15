@@ -149,10 +149,33 @@ def shape_problem(settings: object) -> str | None:
 
 
 def not_a_config_dir(project: Path, adapter: str) -> str | None:
-    """The host's config directory exists but is not a directory: no file can go in it."""
+    """The host's config directory exists but is not a directory: no file can go in it.
+    Also: the directory is a link that leads out of the project. The hook would then be
+    registered in a file the project does not own (a checkout that links `.claude` to
+    `~/.claude` would get a user-level hook, which the host does not ask to trust), so,
+    as for `--dest` and `--mailbox`, that is refused. A symlinked settings FILE is still
+    written through (dotfiles managers; docs/threat-model.md lists it as accepted)."""
     folder = project / HOST_CONFIG[adapter][0]
     if folder.exists() and not folder.is_dir():
         return f"{folder} exists and is not a directory; move it, then re-run"
+    if not folder.resolve().is_relative_to(project.resolve()):
+        return f"{folder} is a symlink leading outside the project; remove it, then re-run"
+    return None
+
+
+SHELL_UNSAFE_IN_QUOTES = re.compile(r'["$`\\\x00-\x1f\x7f]')
+
+
+def claude_dest_refusal(dest_rel: str) -> str | None:
+    """Why `--dest` cannot be written into the claude-code hook command, or None. The
+    command is `python3 "$CLAUDE_PROJECT_DIR/<dest>/hooks/..."` run by a shell before
+    every prompt: inside double quotes a `"` ends the string and `$(...)`, a backtick or
+    a backslash is interpreted, so such a name would break the hook or run text of the
+    name's choosing each time (the codex adapter refuses the same names)."""
+    if SHELL_UNSAFE_IN_QUOTES.search(dest_rel):
+        return (f"--adapter claude-code cannot quote --dest {dest_rel!r} safely in a shell "
+                'command (a double quote, `$`, backtick, backslash or control character); '
+                "choose another directory name")
     return None
 
 
@@ -202,10 +225,10 @@ def path_refusal(project: Path, dest_rel: str, mailbox_rel: str) -> str | None:
     return None
 
 
-def claude_refusal(project: Path) -> str | None:
+def claude_refusal(project: Path, dest_rel: str = "") -> str | None:
     """Why `--adapter claude-code` must not be registered here, or None. Reads
     only, and runs before anything is copied (as `codex_refusal` does)."""
-    problem = not_a_config_dir(project, "claude-code")
+    problem = claude_dest_refusal(dest_rel) or not_a_config_dir(project, "claude-code")
     path = project.joinpath(*HOST_CONFIG["claude-code"])
     if problem or not path.exists():
         return problem
@@ -446,7 +469,7 @@ def main() -> int:
     refusal = escaped or path_refusal(
         project, dest_rel, args.mailbox) or (
         codex_refusal(project, dest_rel) if args.adapter == "codex"
-        else claude_refusal(project) if args.adapter == "claude-code" else None)
+        else claude_refusal(project, dest_rel) if args.adapter == "claude-code" else None)
     if refusal and not args.check:   # before anything is copied: nothing was changed
         print(f"ABORT: {refusal}. Nothing was changed.", file=sys.stderr)
         return 2
