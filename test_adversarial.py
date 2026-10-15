@@ -816,11 +816,9 @@ def hostile_output(root: Path) -> None:
     hk = subprocess.run([sys.executable, "-I", hook_py], capture_output=True, text=True, timeout=120,
                         env=dict(os.environ, AGENT_MAIL_DIR=str(hb), AGENT_MAIL_IDENTITY="me"))
     check("control: the hook delivers the short message and the oversized ones are listed",
-          # The CLAIM's 3 MB fractional `expires` parses on Python 3.11+ but not on 3.10
-          # (fromisoformat takes at most 6 digits there), where it is not a live hold: the
-          # NOTICE and the ASK must always be listed, the CLAIM wherever it parses.
-          "visible-short" in hk.stdout and hk.stdout.count("id: 01ARZ3NDEKTSV4RRFFQ69GB00")
-          == (3 if sys.version_info >= (3, 11) else 2),
+          # The CLAIM's 3 MB fractional `expires` is read the same on every Python (the
+          # fraction is truncated to microseconds), so all three are listed everywhere.
+          "visible-short" in hk.stdout and hk.stdout.count("id: 01ARZ3NDEKTSV4RRFFQ69GB00") == 3,
           hk.stdout[:300] + hk.stderr)
     check("three megabyte-sized fields: the hook prints under 20 kB, with the cut marked",
           len(hk.stdout) < 20_000 and "characters)" in hk.stdout, str(len(hk.stdout)))

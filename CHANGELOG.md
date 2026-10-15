@@ -7,6 +7,16 @@ behaviour).
 
 ## [Unreleased]
 
+### Fixed
+
+- Timestamps (`date`, `expires`, `--now`, `--since`) are read by Postbox's own parser instead of
+  `datetime.fromisoformat`, so a lease `send` accepted (a fraction longer than 6 places, a zone
+  written `+0000`) no longer reads back as malformed on Python 3.10, where `fromisoformat` is
+  stricter than on 3.11+. Fractions are truncated to microseconds on every version. Forms only
+  3.11+ happened to accept (basic `20300101T120000`, week dates, an arbitrary separator character,
+  an offset with 60 minutes) now read as unparseable everywhere, as 3.10 already did. PROTOCOL.md
+  section 5 states the accepted form. The adversarial test no longer expects one fewer CLAIM on 3.10.
+
 ### Added
 
 - `doctor` prints `send_permission:` for projects with a `.claude/` directory (PROTOCOL.md
