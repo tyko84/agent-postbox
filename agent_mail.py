@@ -653,14 +653,40 @@ def load_messages() -> tuple[list[Message], list[str]]:
 
 
 
+# One timestamp grammar for every supported Python. `datetime.fromisoformat` is not
+# one: 3.10 refuses a fraction longer than 6 digits (or of 1, 2, 4 or 5 digits) and a
+# zone written `+0000`, which 3.11+ accept, so a lease `send` took could read back as
+# malformed on an older interpreter. The text is parsed here instead and the instant
+# built directly, so a value means the same thing on 3.10 through 3.14.
+_ISO_RE = re.compile(
+    r"([0-9]{4})-([0-9]{2})-([0-9]{2})"
+    r"(?:[Tt ]([0-9]{2})(?::([0-9]{2})(?::([0-9]{2})(?:[.,]([0-9]+))?)?)?)?"
+    r"(?:(Z)|([+-])([0-9]{2})(?::?([0-9]{2})(?::?([0-9]{2}))?)?)?",
+    re.ASCII,
+)
+
+
 def _parse_iso(value: str | None) -> dt.datetime | None:
+    """An ISO-8601 instant (date, optional time, optional zone) or None. A zone-less
+    value reads as UTC. A fraction of any length is accepted and truncated, not rounded,
+    to microseconds, which is what Python 3.11+ does with it."""
     if not value:
         return None
+    m = _ISO_RE.fullmatch(value.strip())
+    if m is None:
+        return None
+    y, mo, d, h, mi, sec, frac, z, sign, oh, om, os_ = m.groups()
     try:
-        parsed = dt.datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+        tz = dt.timezone.utc
+        if sign:
+            if int(om or 0) > 59 or int(os_ or 0) > 59:
+                return None
+            off = dt.timedelta(hours=int(oh), minutes=int(om or 0), seconds=int(os_ or 0))
+            tz = dt.timezone(-off if sign == "-" else off)
+        return dt.datetime(int(y), int(mo), int(d), int(h or 0), int(mi or 0), int(sec or 0),
+                           int((frac or "0")[:6].ljust(6, "0")), tzinfo=tz)
     except ValueError:
         return None
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=dt.timezone.utc)
 
 
 class Message:
@@ -1741,13 +1767,15 @@ def _publish(final: Path, text: str) -> None:
 
 
 MAX_CLAIM_HOURS = 168  # a lease is a promise to come back; a week is already generous
-_EXPIRY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})$")
+_EXPIRY_RE = re.compile(
+    r"[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9]{2}:[0-9]{2}(:[0-9]{2}(\.[0-9]+)?)?(Z|[+-][0-9]{2}:?[0-9]{2})",
+    re.ASCII)
 
 
 def _expiry_error(value: str, now: dt.datetime) -> str:
     """Why a NEW --expires is unacceptable, or "" when fine. Reading stays lenient
     (old mail), writing is strict: explicit time and zone, in the future, bounded."""
-    if not _EXPIRY_RE.match(value.strip()):
+    if not _EXPIRY_RE.fullmatch(value.strip()):
         return "must be ISO-8601 with a time and an explicit zone, e.g. 2030-01-01T12:00:00Z"
     exp = _parse_iso(value)
     if exp is None:

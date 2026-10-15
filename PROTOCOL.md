@@ -124,6 +124,17 @@ overwrite you. It is not a permission grant (see §0).
 * `--expires` must be ISO-8601 with a time and an explicit zone
   (`2030-01-01T12:00:00Z`). Past, zone-less, date-only and unparseable values
   are refused, because a zone-less lease shifts by the reader's offset.
+* **One reading on every Python.** A timestamp (`date`, `expires`, `--now`,
+  `--since`) is read by Postbox's own parser, not by the interpreter's, so a
+  value means the same instant on Python 3.10 through 3.14. The accepted form is
+  `YYYY-MM-DD`, optionally followed by `T` or a space and `HH[:MM[:SS[.f]]]`,
+  optionally followed by `Z` or `+HH[:MM[:SS]]` / `-HH[:MM[:SS]]` (a colon in the
+  offset is optional). The fraction may have any number of places (`.` or `,`):
+  places past the sixth are **truncated**, not rounded, to microseconds. A
+  zone-less value reads as UTC. Anything else (basic form `20300101T120000`,
+  week dates, a lower-case `z`, an offset of 24 hours or more, minutes or
+  seconds of 60 or more) reads as unparseable on every version. `send` is
+  stricter than the reader and keeps the rule above (time and explicit zone).
 * A lease may not run longer than 168 hours. Renew a short lease instead of
   taking a long one; `doctor` flags anything longer as `TOO_LONG`.
 * A claim whose expiry is missing or unreadable is **not a hold**. It is also

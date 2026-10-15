@@ -30,6 +30,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -1852,6 +1853,140 @@ def test_linked_worktree(root: Path) -> None:
           "across" in shared.stdout, shared.stdout)
 
 
+def _py310_fromisoformat(text: str) -> dt.datetime:
+    """What Python 3.10's `datetime.fromisoformat` accepts, in outline: a fraction of
+    exactly 3 or 6 digits, a zone only as +HH:MM[:SS], no comma. Used to emulate 3.10 on
+    an interpreter that is not 3.10 (and to prove the fix does not depend on it)."""
+    if re.search(r"[.,]", text) and not re.search(r"\.(\d{3}|\d{6})(?!\d)", text):
+        raise ValueError(f"Invalid isoformat string: {text!r}")
+    if "," in text or re.search(r"[+-]\d{4}$", text) or re.search(r"[+-]\d{2}$", text[10:]):
+        raise ValueError(f"Invalid isoformat string: {text!r}")
+    return dt.datetime.fromisoformat(text)
+
+
+def test_timestamps(root: Path) -> None:
+    """One timestamp grammar on every Python (3.10's fromisoformat is stricter than
+    3.11+'s): a lease `send` accepts must read back as the same instant everywhere."""
+    print("\ntimestamps parse identically on every supported Python (PROTOCOL.md section 5)")
+    sys.path.insert(0, str(HERE))
+    import types
+
+    import agent_mail
+
+    def utc(text: str | None) -> str | None:
+        got = agent_mail._parse_iso(text)
+        return None if got is None else got.astimezone(dt.timezone.utc).isoformat(timespec="microseconds")
+
+    base = "2030-01-01T12:00:00"
+    cases: list[tuple[str, str | None]] = [
+        # fractional precision: 0, 1, 3, 6, 7, 9 and very long digits (truncated, never rounded)
+        (base + "Z", "2030-01-01T12:00:00.000000+00:00"),
+        (base + ".5Z", "2030-01-01T12:00:00.500000+00:00"),
+        (base + ".123Z", "2030-01-01T12:00:00.123000+00:00"),
+        (base + ".123456Z", "2030-01-01T12:00:00.123456+00:00"),
+        (base + ".1234567Z", "2030-01-01T12:00:00.123456+00:00"),
+        (base + ".1234569Z", "2030-01-01T12:00:00.123456+00:00"),
+        (base + ".123456789Z", "2030-01-01T12:00:00.123456+00:00"),
+        (base + "." + "9" * 5000 + "Z", "2030-01-01T12:00:00.999999+00:00"),
+        (base + ".12Z", "2030-01-01T12:00:00.120000+00:00"),
+        (base + ".12345Z", "2030-01-01T12:00:00.123450+00:00"),
+        (base + ",5Z", "2030-01-01T12:00:00.500000+00:00"),
+        # zone designators
+        (base + "+00:00", "2030-01-01T12:00:00.000000+00:00"),
+        (base + "+0000", "2030-01-01T12:00:00.000000+00:00"),
+        (base + "+02:00", "2030-01-01T10:00:00.000000+00:00"),
+        (base + "+0200", "2030-01-01T10:00:00.000000+00:00"),
+        (base + "+02", "2030-01-01T10:00:00.000000+00:00"),
+        (base + "-0530", "2030-01-01T17:30:00.000000+00:00"),
+        (base + "-05:30:15", "2030-01-01T17:30:15.000000+00:00"),
+        (base + ".1234567+0200", "2030-01-01T10:00:00.123456+00:00"),
+        (base, "2030-01-01T12:00:00.000000+00:00"),                 # zone-less reads as UTC
+        ("2030-01-01 12:00:00Z", "2030-01-01T12:00:00.000000+00:00"),
+        ("2030-01-01T12:00Z", "2030-01-01T12:00:00.000000+00:00"),
+        ("2030-01-01", "2030-01-01T00:00:00.000000+00:00"),
+        ("  " + base + "Z\n", "2030-01-01T12:00:00.000000+00:00"),
+        # malformed: never an exception, always None
+        ("", None), ("tomorrow", None), ("2030-13-01T00:00:00Z", None),
+        ("2030-02-30T00:00:00Z", None), ("2030-01-01T24:00:00Z", None),
+        ("2030-01-01T12:60:00Z", None), (base + "z", None), (base + ".Z", None),
+        (base + "+24:00", None), (base + "+02:60", None), (base + "+0", None),
+        (base + "Z junk", None), ("20300101T120000Z", None), ("2030-01-01T12:00:00.1.2Z", None),
+        ("2030-W01-1", None), ("0000-01-01T00:00:00Z", None), ("-2030-01-01", None),
+        ("\u0662030-01-01T12:00:00Z", None),                         # non-ASCII digits
+    ]
+    for text, want in cases:
+        got = utc(text)
+        check(f"parse {text[:44]!r} -> {want}", got == want, str(got))
+    check("a missing value is None", agent_mail._parse_iso(None) is None)
+
+    # The parse must not depend on the interpreter's fromisoformat: swap in 3.10's
+    # restrictions and every answer stays the same (this fails on the old implementation).
+    class Old(dt.datetime):
+        @classmethod
+        def fromisoformat(cls, text: str) -> dt.datetime:  # type: ignore[override]
+            return _py310_fromisoformat(text)
+
+    real = agent_mail.dt
+    shim = types.SimpleNamespace(**{k: getattr(dt, k) for k in dir(dt) if not k.startswith("_")})
+    shim.datetime = Old
+    setattr(agent_mail, "dt", shim)  # noqa: B010
+    try:
+        drift = [t for t, w in cases if utc(t) != w]
+    finally:
+        setattr(agent_mail, "dt", real)  # noqa: B010
+    check("the results are the same when fromisoformat is limited the way 3.10's is",
+          not drift, str(drift[:3]))
+    check("(emulation sanity) 3.10's rules do reject a 7-digit fraction and +0000",
+          all(_raises(_py310_fromisoformat, t) for t in (base + ".1234567+00:00", base + "+0000",
+                                                         base + ".5+00:00")))
+
+    print("send takes, and every reader sees, the same lease")
+    box = root / "ts"
+    box.mkdir()
+    hour = dt.datetime.now(dt.timezone.utc).replace(microsecond=0) + dt.timedelta(hours=2)
+    stem = hour.strftime("%Y-%m-%dT%H:%M:%S")
+    for n, tail in enumerate((".5Z", ".123Z", ".123456Z", ".1234567Z", ".123456789Z", "Z", "+0000", ".1234567+0000")):
+        sent = run(box, "send", "--type", "CLAIM", "--from", "ann", "--to", "bob", "--subject", f"h{n}",
+                   "--body", "b", "--scope", f"s{n}", "--expires", stem + tail)
+        check(f"send --expires {tail!r} is accepted", sent.returncode == 0, sent.stderr)
+    held = {r["scope"]: r for r in doc(run(box, "status", "--json")).get("claims_held", [])}
+    check("all eight leases are held and none reads as malformed", len(held) == 8, str(sorted(held)))
+    check("each is reported as the same UTC second (fractions dropped from the text)",
+          {r["expires"] for r in held.values()} == {hour.strftime("%Y-%m-%dT%H:%M:%SZ")},
+          str({r["expires"] for r in held.values()}))
+    check("a malformed lease is still refused at send with the one message",
+          "ISO-8601" in run(box, "send", "--type", "CLAIM", "--from", "ann", "--to", "bob",
+                            "--subject", "x", "--body", "b", "--scope", "z", "--expires",
+                            stem + ".Z").stderr)
+
+    print("expiry arithmetic keeps the fraction")
+    arith = root / "ts-arith"
+    arith.mkdir()
+    hand(arith, "A1", "CLAIM", "ann", "bob", "2030-01-01T11:00:00.1234567Z", "frac", scope="a",
+         expires="2030-01-01T12:00:00.9999999+0000")
+    hand(arith, "A2", "CLAIM", "cat", "bob", "2030-01-01T11:00:00Z", "edge", scope="b",
+         expires="2030-01-01T12:00:00.000001Z")
+    hand(arith, "A3", "CLAIM", "dan", "bob", "2030-01-01T11:00:00Z", "gone", scope="c",
+         expires="2030-01-01T11:59:59.9999999Z")
+    rows = {r["scope"]: r for r in doc(run(arith, "status", "--json", "--now",
+                                           "2030-01-01T11:59:00.5Z")).get("claims_held", [])}
+    check("the 7-digit +0000 lease is held with 60 whole seconds left (60.49, rounded down)",
+          rows.get("a", {}).get("seconds_left") == 60, str(rows.get("a")))
+    check("a lease 1 microsecond past the hour is held; one just short of it is held too "
+          "until the moment passes", set(rows) == {"a", "b", "c"}, str(sorted(rows)))
+    after = doc(run(arith, "status", "--json", "--now", "2030-01-01T12:00:00Z")).get("claims_held", [])
+    check("at 12:00:00 the one expiring 1 microsecond later is still held, the others are not",
+          sorted(r["scope"] for r in after) == ["a", "b"], str([r["scope"] for r in after]))
+
+
+def _raises(fn: Callable[[str], object], *args: str) -> bool:
+    try:
+        fn(*args)
+    except ValueError:
+        return True
+    return False
+
+
 def main() -> int:
     faulthandler.dump_traceback_later(WATCHDOG, exit=True)
     with tempfile.TemporaryDirectory() as td:
@@ -1863,6 +1998,7 @@ def main() -> int:
         test_results(root)
         test_reader_gone(root)
         test_fuzz(root)
+        test_timestamps(root)
         test_participants_not_utf8(root)
         test_visibility(root)
         test_linked_worktree(root)
