@@ -10,7 +10,7 @@ behaviour).
 ### Added
 
 - `doctor` prints `send_permission:` for projects with a `.claude/` directory (PROTOCOL.md
-  section 41a): which `permissions.allow` rules it can see, whether each spelling Postbox
+  section 41): which `permissions.allow` rules it can see, whether each spelling Postbox
   prints has an identical rule, the exact rules to add if none does, and that a `#` line
   inside a quoted `--body` is refused by Claude Code even with a rule (use `--body-file -`).
   Informational; never writes settings and never changes the exit status.

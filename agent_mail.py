@@ -3375,7 +3375,7 @@ def linked_worktree_line(root: Path) -> str | None:
 def send_permission_lines(root: Path, tool: Path | None = None) -> list[str]:
     """Claude Code only: does `.claude/settings*.json` allow the `send` command?
 
-    Read only and informational (PROTOCOL.md section 41a). Interactive sessions ask
+    Read only and informational (PROTOCOL.md section 41). Interactive sessions ask
     the user, so no rule is not a fault; an unattended session (`--permission-mode
     dontAsk`) refuses every command no rule allows, and the agent sees a bare "denied".
     Nothing here emulates the host's matcher: it reports which rules it can see, and

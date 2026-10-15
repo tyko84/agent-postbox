@@ -109,7 +109,7 @@ measured a prompt that steered to a fragile form as well as Postbox, and the res
 evidence about that arm, not about the protocol. It is still the pre-registered result.
 
 **What was done:** `doctor` now prints `send_permission:` with the exact rules and the
-`#` warning (PROTOCOL.md section 41a). **What was not done:** no re-run. Section 14 forbids
+`#` warning (PROTOCOL.md section 41). **What was not done:** no re-run. Section 14 forbids
 re-running until the result is favourable; a corrected arm (heredoc/`--body-file` form,
 rule covering the spelling) would be a new pre-registered experiment, reported next to this
 one, and needs approval before spending.

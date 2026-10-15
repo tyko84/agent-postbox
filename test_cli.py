@@ -1731,7 +1731,7 @@ def test_visibility(root: Path) -> None:
 
 def test_send_permission_line(root: Path) -> None:
     """`doctor` says whether Claude Code's allow rules cover `send` (PROTOCOL.md section
-    41a). Informational only: it never changes the exit status and never writes a rule."""
+    41). Informational only: it never changes the exit status and never writes a rule."""
     head = "send_permission: claude-code"
 
     def project(name: str, settings: str | None) -> Path:

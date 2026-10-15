@@ -2111,7 +2111,7 @@ directory with `.git` at or above the working directory, or `AGENT_MAIL_PROJECT`
   can PASS on its own canary. Agents that must talk across worktrees or clones set
   `AGENT_MAIL_DIR` to one shared directory.
 
-* **41a. `send_permission: claude-code ...`** (only when `.claude/` exists under the project).
+* **`send_permission: claude-code ...`** (only when `.claude/` exists under the project).
   Reads `permissions.allow` and `permissions.defaultMode` from `.claude/settings.json` and
   `.claude/settings.local.json` and reports which rules it can see and whether each spelling
   Postbox prints (`python3 tools/agent-postbox/agent_mail.py` relative, and the absolute quoted
@@ -2132,6 +2132,6 @@ other broadcast words) writes the one broadcast-word line. (b)
 `doctor` reports a registered hook with its script present, with it MISSING, none
 registered, and an unparseable settings file; names a linked worktree (and only when the
 mailbox was found by walking up); reports the identity set and unset; and
-exits as it did without any of the lines. `test_cli.py` pins both, and the 41a line (no
+exits as it did without any of the lines. `test_cli.py` pins both, and the `send_permission` line (no
 `.claude/`, no rule, an identical rule, a different rule, `Bash(*)`, unreadable settings, files
 never written).
