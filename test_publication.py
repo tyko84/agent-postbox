@@ -27,6 +27,8 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
+import types
 import unicodedata
 import unittest
 import warnings
@@ -1544,10 +1546,8 @@ class Workflows(unittest.TestCase):
         # scripts/scenario.py (docs/benchmarking.md): the quick profile is a step of the
         # required selftest job, after stress_test.py, and its focused test is on both lists
         ci = self.jobs("ci.yml")["selftest"]
-        steps = [ln.strip() for ln in ci.splitlines() if ln.strip().startswith("- run: ")]
+        steps = self.selftest_steps(ci)
         self.assertIn("- run: python scripts/scenario.py --quick --seed 1", steps)
-        self.assertLess(steps.index("- run: python stress_test.py"),
-                        steps.index("- run: python scripts/scenario.py --quick --seed 1"))
         self.assertIn("- run: python test_scenario.py", steps)
         self.assertIn("test_scenario.py", self.jobs("release.yml")["test"])
         for f in ("scripts/scenario.py", "test_scenario.py"):
@@ -1557,7 +1557,7 @@ class Workflows(unittest.TestCase):
         # scripts/team_sim.py (docs/coordination-experiment.md): the quick profile is a step of
         # the required selftest job, its test is on every test list and both files are type-checked
         ci = self.jobs("ci.yml")["selftest"]
-        steps = [ln.strip() for ln in ci.splitlines() if ln.strip().startswith("- run: ")]
+        steps = self.selftest_steps(ci)
         self.assertIn("- run: python scripts/team_sim.py --quick --seed 1", steps)
         self.assertIn("- run: python test_team_sim.py", steps)
         self.assertIn("test_team_sim.py", self.jobs("release.yml")["test"])
@@ -1572,7 +1572,7 @@ class Workflows(unittest.TestCase):
         # test_adapters.py (docs/hosts.md): a step of the required selftest job, on the
         # release gate's list, on preflight's list, named in the PR template, type-checked
         ci = self.jobs("ci.yml")["selftest"]
-        steps = [ln.strip() for ln in ci.splitlines() if ln.strip().startswith("- run: ")]
+        steps = self.selftest_steps(ci)
         self.assertIn("- run: python test_adapters.py", steps)
         self.assertIn("test_adapters.py", self.jobs("release.yml")["test"])
         self.assertIn("test_adapters.py", self.mypy_files())
@@ -1585,7 +1585,7 @@ class Workflows(unittest.TestCase):
         # examples/two-agents/run.py is the first thing a visitor runs (README, Quickstart):
         # its test is a step of the required selftest job and on every other test list
         ci = self.jobs("ci.yml")["selftest"]
-        steps = [ln.strip() for ln in ci.splitlines() if ln.strip().startswith("- run: ")]
+        steps = self.selftest_steps(ci)
         self.assertIn("- run: python test_examples.py", steps)
         self.assertIn("test_examples.py", self.jobs("release.yml")["test"])
         root = Path(__file__).resolve().parent
@@ -1603,7 +1603,7 @@ class Workflows(unittest.TestCase):
         # spends the signed-in account's usage, so no workflow runs it. Its offline test
         # is a step of the required selftest job and on every other test list.
         ci = self.jobs("ci.yml")["selftest"]
-        steps = [ln.strip() for ln in ci.splitlines() if ln.strip().startswith("- run: ")]
+        steps = self.selftest_steps(ci)
         self.assertIn("- run: python test_e2e_script.py", steps)
         self.assertIn("test_e2e_script.py", self.jobs("release.yml")["test"])
         for wf in sorted(p.name for p in self.WF.glob("*.yml")):
@@ -1627,7 +1627,7 @@ class Workflows(unittest.TestCase):
         # sessions (docs/micro-experiment.md): no workflow runs them; their offline tests are
         # steps of the required selftest job and on every other test list
         ci = self.jobs("ci.yml")["selftest"]
-        steps = [ln.strip() for ln in ci.splitlines() if ln.strip().startswith("- run: ")]
+        steps = self.selftest_steps(ci)
         root = Path(__file__).resolve().parent
         template = (root / ".github" / "pull_request_template.md").read_text(encoding="utf-8")
         for test, tool in (("test_live_demo.py", "examples/two-agents/live_demo.py"),
@@ -1649,6 +1649,79 @@ class Workflows(unittest.TestCase):
                 self.assertIn(f" {f}", template)
         self.assertIn("scripts/analyze_v2.py", self.mypy_files())   # the hashed analysis
         self.assertIn(" scripts/analyze_v2.py", template)
+
+    RUNNER = Path(__file__).resolve().parent / "scripts" / "ci_run.py"
+
+    def runner(self) -> types.ModuleType:
+        """scripts/ci_run.py, imported: it names the scripts a selftest cell runs."""
+        if not self.RUNNER.is_file():
+            self.skipTest("scripts/ci_run.py is not shipped here (e.g. unpacked sdist)")
+        spec = importlib.util.spec_from_file_location("ci_run_under_test", self.RUNNER)
+        assert spec is not None and spec.loader is not None
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = mod  # dataclasses looks its module up here
+        try:
+            spec.loader.exec_module(mod)
+        finally:
+            sys.modules.pop(spec.name, None)
+        return mod
+
+    def selftest_steps(self, job_text: str) -> list[str]:
+        """What the selftest job runs, as the `- run: python ...` lines it used to be written
+        as: the job must call scripts/ci_run.py exactly once, and that script names the list."""
+        calls = [ln.strip() for ln in job_text.splitlines()
+                 if ln.strip().startswith("- run: python scripts/ci_run.py")]
+        self.assertEqual(len(calls), 1, "selftest must run its list through scripts/ci_run.py, once")
+        return [f"- run: python {t.name}" for t in self.runner().TESTS]
+
+    def test_the_selftest_runner_has_every_test_script_and_the_others_agree(self) -> None:
+        mod = self.runner()
+        root = self.RUNNER.parent.parent
+        names = {t.argv[0] for t in mod.TESTS if "/" not in t.argv[0]}   # the test scripts
+        for t in mod.TESTS:
+            self.assertTrue((root / t.argv[0]).is_file(), f"ci_run.py names {t.argv[0]}, which is gone")
+        on_disk = {p.name for p in root.glob("test_*.py")} | {"selftest.py", "stress_test.py"}
+        self.assertEqual(sorted(on_disk - names - set(mod.ELSEWHERE)), [],
+                         "a test script at the root that no selftest cell runs")
+        for script, job in mod.ELSEWHERE.items():
+            self.assertIn(f"python {script}", self.jobs("ci.yml")[job], f"{script} must run in {job}")
+        # the release gate and preflight run the same set (sequentially), nothing more or less
+        every = names | set(mod.ELSEWHERE)
+        gate = self.jobs("release.yml")["test"]
+        for t in sorted(every):
+            self.assertIn(t, gate, f"release.yml gate lacks {t}")
+        pre = root / "scripts" / "preflight.sh"
+        if pre.is_file():
+            body = pre.read_text(encoding="utf-8")
+            for t in sorted(every):
+                self.assertRegex(body, r"(^|\s)" + re.escape(t) + r"(\s|;|$)", f"preflight lacks {t}")
+        # only platform- and version-independent scripts may run once; the two CLI-entry
+        # profiles and everything that drives agent_mail.py stay in every cell
+        self.assertEqual(sorted(t.argv[0] for t in mod.TESTS if t.once), ["test_publication.py"])
+
+    def test_the_selftest_job_keeps_every_cell_and_gives_the_once_scripts_to_3_12(self) -> None:
+        job = self.jobs("ci.yml")["selftest"]
+        self.assertIn("matrix.python == '3.12' && '--with-once'", job)
+        self.assertNotIn("--jobs", job)  # the default (3) is the tested one
+        self.assertEqual(job.count("- run:"), 1)
+
+    def test_the_runner_runs_all_scripts_in_parallel_and_fails_if_any_does(self) -> None:
+        mod = self.runner()
+        py = sys.executable
+        ok = mod.Test(("-c", "import time; time.sleep(0.4); print('fine')"), 5)
+        bad = mod.Test(("-c", "import sys; print('boom'); sys.exit(3)"), 9)
+        late = mod.Test(("-c", "print('still ran after the failure')"), 1)
+        buf = io.StringIO()
+        started = time.monotonic()
+        self.assertEqual(mod.run([ok, ok, ok, bad, late], 3, py, buf), 1)
+        text = buf.getvalue()
+        self.assertLess(time.monotonic() - started, 1.2, "three 0.4 s scripts did not overlap")
+        self.assertIn("still ran after the failure", text)       # a failure does not stop the rest
+        self.assertIn("::error::-c import sys; print('boom'); sys.exit(3) exited 3", text)
+        self.assertIn("1 failed", text)
+        self.assertEqual(mod.run([ok, late], 1, py, io.StringIO()), 0)
+        # a script that cannot be started is a failure, not a pass
+        self.assertEqual(mod.run([mod.Test(("-c", "pass"), 1)], 1, "/nonexistent/python", io.StringIO()), 1)
 
     def test_required_check_names_are_unchanged(self) -> None:
         ci = self.jobs("ci.yml")
