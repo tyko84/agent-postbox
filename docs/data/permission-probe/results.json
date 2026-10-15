@@ -1,0 +1,109 @@
+{
+  "claude_version": "2.1.296 (Claude Code)",
+  "model": "haiku",
+  "permission_mode": "dontAsk",
+  "cases": {
+    "relative_oneline": {
+      "allow_rules": 3,
+      "denied": 0,
+      "message_written": 1,
+      "cost_usd": 0.003
+    },
+    "relative_multiline_nohash": {
+      "allow_rules": 3,
+      "denied": 0,
+      "message_written": 0,
+      "cost_usd": 0.0026
+    },
+    "relative_multiline_hash": {
+      "allow_rules": 3,
+      "denied": 1,
+      "message_written": 0,
+      "cost_usd": 0.0026
+    },
+    "relative_multiline_indented_hash": {
+      "allow_rules": 3,
+      "denied": 1,
+      "message_written": 0,
+      "cost_usd": 0.0026
+    },
+    "relative_multiline_hash_doublequoted": {
+      "allow_rules": 3,
+      "denied": 1,
+      "message_written": 0,
+      "cost_usd": 0.0026
+    },
+    "relative_hash_midline": {
+      "allow_rules": 3,
+      "denied": 0,
+      "message_written": 1,
+      "cost_usd": 0.003
+    },
+    "heredoc_stdin_with_hash": {
+      "allow_rules": 3,
+      "denied": 0,
+      "message_written": 1,
+      "cost_usd": 0.0026
+    },
+    "body_file_path": {
+      "allow_rules": 3,
+      "denied": 0,
+      "message_written": 1,
+      "cost_usd": 0.0025
+    },
+    "abs_quoted_oneline": {
+      "allow_rules": 3,
+      "denied": 0,
+      "message_written": 1,
+      "cost_usd": 0.0026
+    },
+    "abs_plain_oneline": {
+      "allow_rules": 3,
+      "denied": 0,
+      "message_written": 1,
+      "cost_usd": 0.0026
+    },
+    "chain_echo": {
+      "allow_rules": 3,
+      "denied": 0,
+      "message_written": 1,
+      "cost_usd": 0.0025
+    },
+    "chain_unallowed_second_command": {
+      "allow_rules": 3,
+      "denied": 1,
+      "message_written": 0,
+      "cost_usd": 0.0026
+    },
+    "only_relative_rule__abs_quoted": {
+      "allow_rules": 1,
+      "denied": 1,
+      "message_written": 0,
+      "cost_usd": 0.0008
+    },
+    "only_relative_rule__relative": {
+      "allow_rules": 1,
+      "denied": 0,
+      "message_written": 1,
+      "cost_usd": 0.0006
+    },
+    "no_rule__relative": {
+      "allow_rules": 0,
+      "denied": 1,
+      "message_written": 0,
+      "cost_usd": 0.0007
+    },
+    "broad_rule__abs_quoted": {
+      "allow_rules": 1,
+      "denied": 1,
+      "message_written": 0,
+      "cost_usd": 0.0007
+    },
+    "broad_rule__other_script_same_name": {
+      "allow_rules": 1,
+      "denied": 0,
+      "message_written": 0,
+      "cost_usd": 0.0026
+    }
+  }
+}

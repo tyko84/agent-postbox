@@ -2111,6 +2111,18 @@ directory with `.git` at or above the working directory, or `AGENT_MAIL_PROJECT`
   can PASS on its own canary. Agents that must talk across worktrees or clones set
   `AGENT_MAIL_DIR` to one shared directory.
 
+* **41a. `send_permission: claude-code ...`** (only when `.claude/` exists under the project).
+  Reads `permissions.allow` and `permissions.defaultMode` from `.claude/settings.json` and
+  `.claude/settings.local.json` and reports which rules it can see and whether each spelling
+  Postbox prints (`python3 tools/agent-postbox/agent_mail.py` relative, and the absolute quoted
+  path the pickup hook's Reply line uses) has an **identical** rule. It does not emulate the
+  host's matcher: a different rule that names `agent_mail` is listed as "not compared". With no
+  rule it prints the exact rule(s) to add and that Postbox never adds one; `Bash`/`Bash(*)` is
+  reported as broader than needed; an unparseable file is `UNREADABLE`. It also says that a
+  line starting with `#` inside a quoted `--body` is refused by Claude Code even when a rule
+  allows the command, so multi-line bodies use `--body-file -` with a heredoc (measured:
+  `docs/data/permission-probe/`). The settings files are never written.
+
 None of these lines adds a reason for `doctor` to FAIL.
 
 **Invariant a test must pin.** (a) `send --to <typo>` exits 0, files the message, leaves
@@ -2120,4 +2132,6 @@ other broadcast words) writes the one broadcast-word line. (b)
 `doctor` reports a registered hook with its script present, with it MISSING, none
 registered, and an unparseable settings file; names a linked worktree (and only when the
 mailbox was found by walking up); reports the identity set and unset; and
-exits as it did without any of the lines. `test_cli.py` pins both.
+exits as it did without any of the lines. `test_cli.py` pins both, and the 41a line (no
+`.claude/`, no rule, an identical rule, a different rule, `Bash(*)`, unreadable settings, files
+never written).

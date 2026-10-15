@@ -27,6 +27,10 @@ does need a channel, and Postbox is a working one.
 
 ## Why P lost: what the artifacts show
 
+> **Superseded in part, 2026-10-15: see the correction at the end.** The numbers and the
+> verdict below are unchanged. The sentence blaming the spelling of the path was a
+> reading of a correlation and the later probe did not support it.
+
 All 9 P failures have the same cause. Agent A finished its ticket and tried to send the
 ANSWER, and the host's permission layer **denied the `agent_mail.py send` command**
 (`--permission-mode dontAsk` with an allow rule on the command prefix). Agent A reported
@@ -74,3 +78,38 @@ not change the verdict. It does change what to do next.
    rule and the symptom ("the agent says the mail command was denied").
 3. A cheaper question for a later pre-registered run, if wanted: P with the allow rule
    written to match absolute and quoted forms. Not run, not planned until decided.
+
+## Correction and follow-up investigation (2026-10-15)
+
+The tables, the verdict and the 9 failures stand as published. What changed is the cause.
+
+**Measured, in isolation** (`docs/data/permission-probe/`; Claude Code, haiku, `dontAsk`,
+17 cases at about $0.003 each, one run per case, so a probe of the host's rule and not a
+statistical result):
+
+- In the 60 P runs, every one of the 11 `send` commands that held a line starting with `#`
+  inside a quoted `--body` was refused (11 of 11); the other 233 `send` commands were not.
+  The one other refusal was a `&& python3 -c 1` chain whose second command was not allowed.
+- Reproduced: `--body 'one\n# two'` is refused **with a matching allow rule**; the same body
+  without the `#`, with a `#` mid-line, as `--body-file body.txt`, or as `--body-file -` with
+  a heredoc that contains the `#` line, runs. So it is a host check on the command text, and
+  the path spelling was not the cause.
+- Spelling does matter for rule matching, separately: a rule for the relative path did not
+  cover the absolute quoted path. The harness listed four spellings, so it did not bite there.
+- `Bash(python3 *agent_mail.py *)`, which PR #39 suggested, did not match the quoted
+  absolute path and does allow a script of that name at any path. That advice was wrong and
+  has been replaced.
+
+**What belongs to whom.** Claude Code's refusal of a `#` line in quotes is the host's. What
+is Postbox's or the harness's: the P arm's own instruction told agents to send with
+`--body '<text>'`, which `send --help` and the README already say is for short single lines;
+the Reply line the hook prints already says `--body-file`. In 9 of 60 runs the agent that
+was answering improvised a multi-line inline body with `#` headers instead. So the arm
+measured a prompt that steered to a fragile form as well as Postbox, and the result is
+evidence about that arm, not about the protocol. It is still the pre-registered result.
+
+**What was done:** `doctor` now prints `send_permission:` with the exact rules and the
+`#` warning (PROTOCOL.md section 41a). **What was not done:** no re-run. Section 14 forbids
+re-running until the result is favourable; a corrected arm (heredoc/`--body-file` form,
+rule covering the spelling) would be a new pre-registered experiment, reported next to this
+one, and needs approval before spending.

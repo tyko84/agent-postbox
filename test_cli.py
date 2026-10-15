@@ -1729,6 +1729,60 @@ def test_visibility(root: Path) -> None:
           r.returncode == base.returncode, f"{r.returncode} vs {base.returncode}")
 
 
+def test_send_permission_line(root: Path) -> None:
+    """`doctor` says whether Claude Code's allow rules cover `send` (PROTOCOL.md section
+    41a). Informational only: it never changes the exit status and never writes a rule."""
+    head = "send_permission: claude-code"
+
+    def project(name: str, settings: str | None) -> Path:
+        d = root / name
+        (d / "docs" / "agent-mail").mkdir(parents=True)
+        (d / ".git").mkdir()
+        if settings is not None:
+            (d / ".claude").mkdir()
+            (d / ".claude" / "settings.json").write_text(settings, encoding="utf-8")
+        return d
+
+    bare = project("sp-none", None)
+    r_bare = run(None, "doctor", cwd=bare)
+    check("no .claude directory: no send_permission line (not a Claude Code project)",
+          head not in r_bare.stdout, r_bare.stdout[-300:])
+    nodes = project("sp-norule", '{"permissions": {"defaultMode": "dontAsk"}}')
+    r = run(None, "doctor", cwd=nodes)
+    check("dontAsk and no rule: says every send is refused, names the exact rule to add, "
+          "and that Postbox adds nothing",
+          "defaultMode 'dontAsk'" in r.stdout and "refuses every `send`" in r.stdout
+          and "Bash(python3 \"" in r.stdout and "never adds a rule for you" in r.stdout,
+          r.stdout[-700:])
+    check("it warns that a heading line inside --body is refused even with a rule",
+          "starts with `#`" in r.stdout and "--body-file -" in r.stdout, r.stdout[-400:])
+    check("it is information: same exit status as a project with no .claude directory",
+          r.returncode == r_bare.returncode, f"{r.returncode} vs {r_bare.returncode}")
+    spelled = f'Bash(python3 "{os.path.abspath(TOOL)}" *)'
+    ruled = project("sp-rule", json.dumps({"permissions": {"allow": [spelled]}}))
+    r = run(None, "doctor", cwd=ruled)
+    check("an identical rule is reported as allowing send, without telling the user to add one",
+          f"allowed by an identical rule: {spelled}" in r.stdout and "no rule allows" not in r.stdout,
+          r.stdout[-500:])
+    broad = project("sp-broad", '{"permissions": {"allow": ["Bash(python3 *agent_mail.py *)"]}}')
+    r = run(None, "doctor", cwd=broad)
+    check("a different rule that names agent_mail is listed, not claimed to cover either "
+          "spelling, and the identical spellings are offered",
+          "other rule naming agent_mail (not compared)" in r.stdout
+          and "spellings without an identical rule" in r.stdout, r.stdout[-600:])
+    allbash = project("sp-allbash", '{"permissions": {"allow": ["Bash(*)"]}}')
+    r = run(None, "doctor", cwd=allbash)
+    check("Bash(*) is reported as broader than needed", "broader than Postbox needs" in r.stdout,
+          r.stdout[-300:])
+    bad = project("sp-bad", "{not json")
+    r = run(None, "doctor", cwd=bad)
+    check("unparseable settings: UNREADABLE, never a traceback",
+          "UNREADABLE" in r.stdout and "Traceback" not in r.stderr, r.stdout[-300:])
+    check("the settings files are never modified by doctor",
+          (nodes / ".claude" / "settings.json").read_text(encoding="utf-8")
+          == '{"permissions": {"defaultMode": "dontAsk"}}')
+
+
 def test_linked_worktree(root: Path) -> None:
     """Two agents in two linked worktrees of one repository each get their own copy of the
     default mailbox directory: mail filed in one is not in the other, and `doctor` would
@@ -1812,6 +1866,7 @@ def main() -> int:
         test_participants_not_utf8(root)
         test_visibility(root)
         test_linked_worktree(root)
+        test_send_permission_line(root)
     faulthandler.cancel_dump_traceback_later()
     if KNOWN:
         print(f"\nKNOWN ({len(KNOWN)}; defects outside this file's reach, not failures):")
