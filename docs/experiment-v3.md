@@ -233,21 +233,38 @@ other than Claude Code, conflicting edits, long sessions, many agents, humans in
 whether coordination outcomes improve in real teams. Prompts are written by the tool's author;
 they are published (and hashed) so anyone can rerun with their own.
 
-## 14. Freeze table (filled at freeze, before the first measured run)
+## 14. Freeze table (filled 2026-10-15, before the first measured run)
 
-Produce with `python3 scripts/experiment_v3.py --freeze` and `python3 scripts/analyze_v3.py
---freeze`. Nothing in this table is filled yet; a change to any file restarts readiness and
-gets a dated entry.
+Frozen at `main` = the commit that merged PR #54 (`810e378`) plus this table. Produced with
+`python3 scripts/experiment_v3.py --freeze`. A change to any file below restarts readiness and
+gets a dated entry here.
 
 | What | SHA-256 |
 |---|---|
-| `scripts/experiment_v3.py` | _to be filled at freeze_ |
-| `scripts/analyze_v3.py` | _to be filled at freeze_ |
-| `test_experiment_v3.py` | _to be filled at freeze_ |
-| `scripts/experiment_v2.py`, `scripts/analyze_v2.py`, `scripts/experiment_micro.py`, `scripts/e2e_claude.py` (imported) | _to be filled at freeze_ |
-| arm prompts (`prompts_hash()`) | _to be filled at freeze_ (current working value in the readiness doc) |
-| readiness gate file | _to be filled at freeze_ |
+| `scripts/experiment_v3.py` | `0ee5731d2315369e5083e36b948abaf7dc86f679fa6c0c720e4c886f73fb0d1c` |
+| `scripts/analyze_v3.py` | `3fe68c0a7d53c849e8028d96d8b9021aeb9971a170a5ec7626fa651b3f882d69` |
+| `test_experiment_v3.py` | `88b2eb19079939ffce2f11320508254bfb9ea4238c3623bbd81cc6a69a414e6b` |
+| `scripts/experiment_v2.py` (imported) | `9370ffbe7a8caedcf67cecc4f0ad926df75e68a88725bf3bb915ab6ec0858629` |
+| `scripts/analyze_v2.py` (imported) | `f73eaa2020433b9317477822fec0754d3f0689530ff816a27e4db38e06f9ac0c` |
+| `scripts/experiment_micro.py` (imported) | `082d269a32a2e98f415378798e99fbe207153e59233e9e0f45d51a557887ea7c` |
+| `scripts/e2e_claude.py` (imported) | `99788b5fc83d6d3ff9e733154e6a4cd869b13f12e3f92ab467159a4e1c893237` |
+| `agent_mail.py` (the P arm's tool, as installed) | `9e802a18fb0ce34f480fabab8c005c505a6d435aa4fbd31fa4bb5c715d9565ec` |
+| `install.py` | `6ddab27ddb096092d1f90b7d9b303d8532f5f3242d26fb47862c7c3aa4963c32` |
+| arm prompts (`prompts_hash()`) | `a86caa21ffdd274738a4f67075aa1d8256db4fdfaca9bf04e6255325b7b7ec06` |
+| readiness gate file (smoke 5, `passed: true`) | `529c4befec8c8b4acbb7a9bd38a012bfc34c0746817f6d90ed72a9e9d9206694` |
 
-Main stage command (not to be run without the integrator's decision):
+Dated entries after the readiness report:
+
+* 2026-10-15: after the readiness report the integrator (a) changed only type annotations and
+  `# type: ignore` comments in `scripts/experiment_v3.py`, `scripts/analyze_v3.py` and
+  `test_experiment_v3.py` so that the repository's mypy gate passes, and (b) merged unrelated
+  changes to `agent_mail.py` (one timestamp parser on every Python, #51; `doctor` wording, #50).
+  Because the harness's script hash therefore differs from the one in the readiness gates of smokes
+  1 to 4, readiness was repeated once with the frozen files (smoke 5: 2 instances, 38 turns,
+  all 13 checks true, about USD 0.12; total readiness spend USD 0.432 of the USD 1.00 cap). The
+  ceiling observation in the readiness report is unchanged and is not part of the gate.
+
+Main stage command:
 `POSTBOX_EXPERIMENT_LIVE=1 python3 scripts/experiment_v3.py --stage main --live --out <dir outside
-the repo> --gate <readiness_gate.json>`.
+the repo> --gate <readiness_gate.json> --ceiling-usd 15 --prior-spend-usd 0.432`. It stops early,
+as section 8 says, if N2 is at or above 95% on the first 20 instances.
