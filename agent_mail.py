@@ -3470,7 +3470,7 @@ def send_permission_lines(root: Path, tool: Path | None = None) -> list[str]:
     for r in other:
         out.append(f"  - other rule naming agent_mail (not compared): {r}")
     missing = [r for r in wanted if r not in have]
-    if missing and not other:
+    if missing and not other and not have:
         out.append("  - no rule allows `send`. " + (
             "defaultMode dontAsk refuses every `send` (the agent sees only 'permission denied')."
             if mode == "dontAsk" else
@@ -3483,6 +3483,9 @@ def send_permission_lines(root: Path, tool: Path | None = None) -> list[str]:
         out.append("  - spellings without an identical rule (a rule for one spelling does not "
                    "cover another):")
         out += [f"      {r}" for r in missing]
+        if rel:
+            out.append("    (the absolute quoted spelling is the one the pickup hook's Reply line "
+                       "prints; the relative one is what you type by hand from the project root)")
     out.append("  - bodies: use `--body-file -` with a heredoc for anything longer than one "
                "line. Claude Code refuses a command holding a line that starts with `#` inside "
                "quotes (a markdown heading in `--body`) even when a rule allows it")

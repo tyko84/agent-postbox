@@ -1778,6 +1778,28 @@ def test_send_permission_line(root: Path) -> None:
     r = run(None, "doctor", cwd=bad)
     check("unparseable settings: UNREADABLE, never a traceback",
           "UNREADABLE" in r.stdout and "Traceback" not in r.stderr, r.stdout[-300:])
+    # An installed copy under the project: both spellings are wanted. With only the absolute
+    # quoted rule (the spelling the pickup hook's Reply line prints; measured to allow the
+    # send under dontAsk, docs/data/permission-probe/) doctor used to ALSO say "no rule allows
+    # `send`" and "refuses every `send`", contradicting its own "allowed by an identical rule".
+    inst = project("sp-installed", None)
+    (inst / "tools" / "agent-postbox").mkdir(parents=True)
+    copy = inst / "tools" / "agent-postbox" / "agent_mail.py"
+    shutil.copy(TOOL, copy)
+    (inst / ".claude").mkdir()
+    abs_rule = f'Bash(python3 "{os.path.abspath(copy)}" *)'
+    (inst / ".claude" / "settings.local.json").write_text(
+        json.dumps({"permissions": {"defaultMode": "dontAsk", "allow": [abs_rule]}}), encoding="utf-8")
+    r = subprocess.run([sys.executable, "-I", str(copy), "doctor"], capture_output=True, text=True,
+                       env={**BASE_ENV}, cwd=inst, timeout=STEP_TIMEOUT)
+    check("one of two spellings has its rule: reported as allowed, the other as missing, and "
+          "never as 'no rule allows send'",
+          f"allowed by an identical rule: {abs_rule}" in r.stdout
+          and "no rule allows" not in r.stdout and "refuses every `send`" not in r.stdout
+          and "Bash(python3 tools/agent-postbox/agent_mail.py *)" in r.stdout
+          and "spellings without an identical rule" in r.stdout, r.stdout[-900:])
+    check("it says which spelling the pickup hook's Reply line prints",
+          "Reply line prints" in r.stdout, r.stdout[-500:])
     check("the settings files are never modified by doctor",
           (nodes / ".claude" / "settings.json").read_text(encoding="utf-8")
           == '{"permissions": {"defaultMode": "dontAsk"}}')

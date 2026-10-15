@@ -525,6 +525,9 @@ def main() -> int:
           f"then {python_cmd()} {dest_rel}/agent_mail.py doctor")
     print("     `doctor` ends in FAIL: pickup canary missing or stale until a canary is filed "
           "(and again after 24 h); that is not a broken install.")
+    if args.adapter == "claude-code":
+        print("  Start `claude` from the project root: started in a subdirectory it did not run "
+              "the hook (Claude Code 2.1.300, headless).")
     print("Verify pickup before trusting it -- silence proves nothing (PROTOCOL.md §8). "
           "Takes about 20 seconds:")
     print(f"  cd {shlex.quote(str(project))} && {python_cmd()} {dest_rel}/selftest.py")

@@ -49,18 +49,20 @@ git clone https://github.com/tyko84/agent-postbox
 #    in a throwaway directory).
 python3 agent-postbox/examples/two-agents/run.py
 
-# 3. Install into your own project (a git repository), and register the pickup hook
-#    for Claude Code. Use --adapter codex for Codex, or no --adapter to poll.
+# 3. Install into your own project (it must be a git repository: `git init` there if it
+#    is not), and register the pickup hook for Claude Code. Use --adapter codex for Codex, or no --adapter to poll.
 python3 agent-postbox/install.py /path/to/your/project --adapter claude-code
 
 # 4. Your first exchange. Run from the project's root; works as written with the two
-#    example identities the installer put in PARTICIPANTS.md.
+#    example identities the installer put in PARTICIPANTS.md. Replace <ask-id> with the
+#    id the `inbox` line above it prints (keep the placeholder free of quotes: zsh stops
+#    at an unmatched ').
 cd /path/to/your/project
 python3 tools/agent-postbox/agent_mail.py send --type ASK --from agent-a --to agent-b \
     --subject "who owns the billing client?" --body "Is anyone editing it?"
 AGENT_MAIL_IDENTITY=agent-b python3 tools/agent-postbox/agent_mail.py inbox     # shows the ASK and its id
 python3 tools/agent-postbox/agent_mail.py send --type ANSWER --from agent-b --to agent-a \
-    --reply-to <the ASK's id> --subject "re: billing client" --body "Mine. Safe to edit."
+    --reply-to <ask-id> --subject "re: billing client" --body "Mine. Safe to edit."
 AGENT_MAIL_IDENTITY=agent-a python3 tools/agent-postbox/agent_mail.py inbox     # shows the ANSWER
 
 # 5. Preview what the hook will put in front of a Claude Code session (the real hook only
@@ -71,6 +73,8 @@ echo '{}' | AGENT_MAIL_IDENTITY=agent-a CLAUDE_PROJECT_DIR="$PWD" \
 
 For real use, then:
 
+0. Start `claude` from the project root: started in a subdirectory it did not run the
+   hook (Claude Code 2.1.300, headless).
 1. Rename the example rows `agent-a` and `agent-b` in `docs/agent-mail/PARTICIPANTS.md` to
    your agents' names, and start each session from a shell with its own name:
    `export AGENT_MAIL_IDENTITY=<name>` (`inbox` and the hook read it; `send` always takes

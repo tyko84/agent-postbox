@@ -28,7 +28,41 @@ Polling is not second-class as a transport: the same files, the same `live`
 rule. It is weaker only in the one respect this project exists for: a busy or
 new agent has to decide to look (`docs/benchmarking.md` measures that gap).
 
+### Measured on Claude Code 2.1.300 (headless `claude -p`, haiku, 2026-10-15)
+
+All **headless-only**: interactive mode was not run. Throwaway projects installed with
+`install.py --adapter claude-code`; "delivered" means the `UserPromptSubmit` hook event
+carried the control token (the model's own answer is a weaker signal: it also sees `git
+status`, which lists new mailbox file names). About US$0.02 in total.
+
+| Case | Result |
+| --- | --- |
+| `claude` started at the project root | hook ran, token delivered |
+| started in a subdirectory (`src/deep`), with or without `--setting-sources project`, with `--add-dir <root>`, or with `CLAUDE_PROJECT_DIR` preset | **hook did not run** (no hook event); nothing in context. Start `claude` from the directory that holds `.claude/` |
+| linked `git worktree` (install committed), started at its root | hook ran and read the **worktree's own** mailbox; mail filed only in the main checkout was not delivered; `AGENT_MAIL_DIR` pointing at the main mailbox delivered it |
+| linked worktree where only `settings.json` was committed (no `tools/`) | hook exit 0, stderr `can't open file ...`; prompt answered normally |
+| `--resume` | covered by `scripts/e2e_claude.py` T3 (passed on 2.1.300 the same day); not repeated here |
+| context compaction | not exercised: it cannot be forced in a short headless run, so nothing is claimed |
+
+`--permission-mode dontAsk` with `--allowedTools Bash(...)` rules, the command being the
+`send` form shown (the same 12 cases, all as predicted by the rule text):
+
+| `send` form | rule `python3 tools/...agent_mail.py *` (relative) | rule `python3 "/abs/.../agent_mail.py" *` (absolute quoted) |
+| --- | --- | --- |
+| relative path, `--body`, `--body-file body.txt` or `--body-file - <<'EOF'` (heredoc with a `#` line) | runs | **denied** |
+| absolute quoted path, any of the same bodies | **denied** | runs |
+| no rule | denied | denied |
+
+End to end: a session whose hook printed the `Reply:` line (absolute quoted path) and was
+told to answer with it filed the ANSWER with the absolute rule alone or with both rules, and
+was denied with the relative rule alone or with none. `doctor` prints both spellings; the
+one the hook prints, and so the one agents use, is the absolute quoted line. The relative
+rule is only for commands typed by hand. A rule is per path, so it must be repeated in each
+clone or worktree, in `.claude/settings.local.json` (Postbox never writes it).
+
 ## Codex
+
+Static investigation and a validation plan: [codex-investigation.md](codex-investigation.md).
 
 Source: <https://learn.chatgpt.com/docs/hooks> (`developers.openai.com/codex/hooks`
 redirects there) and <https://learn.chatgpt.com/docs/agent-configuration/agents-md>.
