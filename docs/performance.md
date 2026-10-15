@@ -52,3 +52,20 @@ page cache. `python3 -c pass` startup is 16 ms.
 - Not measured: `doctor`, `show`, `verify`, `latency`, the other host adapters, install.
 - `verify` is a per-message evidence check and was not used to validate the generated files;
   validity was checked by `load_messages` returning no rejects.
+
+## When the mailbox gets large (observed 2026-10-15, not a feature)
+
+Nothing in Postbox deletes or archives messages, and every read scans every file, so the
+prompt hook slows as the directory grows (about 4,000 messages to pass 200 ms on the
+machine above). What was checked by hand, on a two-message mailbox:
+
+- Readers look only at `*.md` files directly in the mailbox directory. Moving a message into
+  a subdirectory such as `archive/` removes it from `list`, `status`, `inbox` and the hook.
+- Moving only one side of a thread is visible: with the ASK archived and its ANSWER left,
+  `doctor` reported `dangling_replies: 1` (a report, not a FAIL). Move both sides of a
+  finished thread together, and nothing that still holds a live CLAIM or an open ASK.
+- This is a manual file move, not a supported operation. It was not tested with `verify`
+  on archived messages, with claims, or at scale, and history that has been moved is no
+  longer protected by the append-only checks. If mailboxes this large turn out to be
+  common, a supported archive command is a design question for the maintainers, not
+  something to add before there is a user who needs it.
