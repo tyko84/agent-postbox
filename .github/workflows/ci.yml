@@ -27,25 +27,11 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python }}
-      - run: python selftest.py
-      - run: python stress_test.py
-      - run: python scripts/scenario.py --quick --seed 1
-      - run: python scripts/team_sim.py --quick --seed 1
-      - run: python test_hardening.py
-      - run: python test_field.py
-      - run: python test_adversarial.py
-      - run: python test_handoff.py
-      - run: python test_readme_examples.py
-      - run: python test_publication.py
-      - run: python test_cli.py
-      - run: python test_scenario.py
-      - run: python test_team_sim.py
-      - run: python test_adapters.py
-      - run: python test_examples.py
-      - run: python test_e2e_script.py
-      - run: python test_live_demo.py
-      - run: python test_micro_experiment.py
-      - run: python test_experiment_v2.py
+      # One step runs the whole list, three scripts at a time (scripts/ci_run.py names the
+      # list; test_publication.py checks that no test script is missing from it). The
+      # 3.12 cell of each OS also runs the scripts that do not depend on platform or
+      # Python version.
+      - run: python scripts/ci_run.py ${{ matrix.python == '3.12' && '--with-once' || '' }}
 
   packaging:
     runs-on: ubuntu-latest
@@ -77,7 +63,7 @@ jobs:
       # Every tracked .py, listed by name so adding a file is a deliberate choice
       # (test_publication.py Workflows requires every .py at the root and under hooks/,
       # scripts/ and examples/ here).
-      - run: mypy agent_mail.py install.py hooks/agent_mail_check.py check_handoff.py check_publication.py test_publication.py scripts/repro_build.py scripts/verify_release.py scripts/scenario.py scripts/team_sim.py stress_test.py test_field.py test_handoff.py test_packaging.py test_readme_examples.py selftest.py test_cli.py test_hardening.py test_adversarial.py test_scenario.py test_team_sim.py test_examples.py examples/two-agents/run.py test_adapters.py scripts/e2e_claude.py test_e2e_script.py scripts/experiment_micro.py examples/two-agents/live_demo.py test_live_demo.py test_micro_experiment.py scripts/experiment_v2.py scripts/analyze_v2.py test_experiment_v2.py scripts/perf_audit.py
+      - run: mypy agent_mail.py install.py hooks/agent_mail_check.py check_handoff.py check_publication.py test_publication.py scripts/repro_build.py scripts/verify_release.py scripts/scenario.py scripts/team_sim.py scripts/ci_run.py stress_test.py test_field.py test_handoff.py test_packaging.py test_readme_examples.py selftest.py test_cli.py test_hardening.py test_adversarial.py test_scenario.py test_team_sim.py test_examples.py examples/two-agents/run.py test_adapters.py scripts/e2e_claude.py test_e2e_script.py scripts/experiment_micro.py examples/two-agents/live_demo.py test_live_demo.py test_micro_experiment.py scripts/experiment_v2.py scripts/analyze_v2.py test_experiment_v2.py scripts/perf_audit.py
 
   publication-build:
     # The half of the publication check that needs code from PyPI: the pinned dev tools
