@@ -37,6 +37,9 @@ def cases(proj):
     c["relative_multiline_hash_doublequoted"] = (f'{REL} {SEND} --body "one\n# two"', all3)
     c["relative_hash_midline"] = (f"{REL} {SEND} --body 'one # two'", all3)
     c["heredoc_stdin_with_hash"] = (f"{REL} {SEND} --body-file - <<'EOF'\none\n# two\nEOF", all3)
+    c["heredoc_stdin_with_braces"] = (
+        f"{REL} {SEND} --body-file - <<'EOF'\nstats {{'count': 3, 'total': 7}}\nEOF", all3)
+    c["heredoc_stdin_with_backticks"] = (f"{REL} {SEND} --body-file - <<'EOF'\nrun `ls` now\nEOF", all3)
     c["body_file_path"] = (f"{REL} {SEND} --body-file body.txt", all3)
     c["abs_quoted_oneline"] = (f"python3 \"{ab}\" {SEND} --body 'hello'", all3)
     c["abs_plain_oneline"] = (f"python3 {ab} {SEND} --body 'hello'", all3)
