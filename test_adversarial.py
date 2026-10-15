@@ -57,8 +57,12 @@ def check(name: str, ok: bool, detail: str = "") -> None:
 def run(box: Path, *argv: str, stdin: str | None = None,
         env_extra: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     env = dict(os.environ, AGENT_MAIL_DIR=str(box), **(env_extra or {}))
+    # cwd is the mailbox's own directory, not the checkout: `doctor` reads the project's
+    # `.claude/` (send_permission), and a developer who runs Claude Code in this repo has one,
+    # whose absolute path would put the user's name in an output these tests assert is clean.
     return subprocess.run([sys.executable, "-I", TOOL, *argv], capture_output=True,
-                          text=True, env=env, input=stdin, timeout=120)
+                          text=True, env=env, input=stdin, timeout=120,
+                          cwd=box if box.is_dir() else None)
 
 
 def send(box: Path, *, frm: str = "alice", to: str = "bob", subj: str = "s",
