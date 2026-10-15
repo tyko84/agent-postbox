@@ -394,6 +394,11 @@ def main() -> int:
             code = (
                 "import os, signal, sys, time\n"
                 f"signal.alarm({WATCHDOG})\n"  # a parked child never outlives a dead harness
+                # A shell starts a background job (`cmd &`, non-interactive) with SIGINT ignored
+                # and Python then installs no handler, so the SIGINT cases below would hang until
+                # their timeout. Restore the interpreter default; the tool's own handling is
+                # untouched.
+                "signal.signal(signal.SIGINT, signal.default_int_handler)\n"
                 f"sys.path.insert(0, {str(HERE)!r})\n"
                 "import agent_mail\n"
                 "def block(*_a, **_k):\n"
