@@ -99,11 +99,10 @@ Code changes:
   README examples need `bash`). Contributors on Windows can still send documentation fixes:
   say in the pull request which checks you could not run and CI will run them (a first
   contribution needs a maintainer to approve the CI run).
-* **What to expect.** A maintainer replies to a pull request or issue within a few days,
-  even if only "seen". Small, single-purpose pull requests are reviewed fastest. The review
+* **What to expect.** This is a one-maintainer project with no response-time promise. Small,
+  single-purpose pull requests are reviewed fastest. The review
   checks the list above, that a behaviour change is a numbered `PROTOCOL.md` section with a
   check that asserts on content that must appear, and that nothing private is in the diff.
-  Maintainers may rebase or push small fixes to your branch if you allow it; they will say so.
 * **Labels.** `good first issue` marks a task with a named file and a named check;
   `help wanted` marks something the maintainers would like but are not doing; `field-report`
   is a message that did not arrive; `documentation`, `bug`, `enhancement`, `question`
