@@ -47,7 +47,19 @@ from typing import Any
 
 SHOWN = 5          # rows per list; the rest is "+N more"
 MAX_LIVE = 20      # live messages spelled out per prompt (the newest); the rest is counted
+MAX_SUBJECT = 500  # what `send` accepts (agent_mail.MAX_SUBJECT_CHARS)
+MAX_IDENT = 128    # agent_mail.MAX_IDENT_CHARS
+MAX_STAMP = 64     # characters of a hand-written date or expiry the prompt may carry
 NOT_A_HOLD = ("EXPIRED", "NO_EXPIRES", "MALFORMED_EXPIRES")   # section 34 reasons
+
+
+def _clip(value: object, cap: int) -> str:
+    """A header value as the prompt may carry it: at most `cap` characters. `send` refuses
+    longer fields, so a longer one was written by hand; without this a hostile file could
+    put megabytes in front of the model on every prompt (header values are capped only
+    when written, not when read)."""
+    text = str(value)
+    return text if len(text) <= cap else f"{text[:cap]}... (+{len(text) - cap} characters)"
 
 
 def _left(seconds: object) -> str:
@@ -81,7 +93,8 @@ def holdings(agent_mail: Any, me: str, everything: list[Any], owed: list[Any],
             continue
         scope = "(oversize)" if r.get("scope_oversize") else (r["scope"] or "-")
         contested = "  CONTESTED" if (r["id"], "CONTESTED_SCOPE") in flagged else ""
-        claims.append(f"  {scope}  since {r['date'] or '-'}  live until {r['expires']} "
+        claims.append(f"  {scope}  since {_clip(r['date'] or '-', MAX_STAMP)}  "
+                      f"live until {_clip(r['expires'], MAX_STAMP)} "
                       f"({_left(r['seconds_left'])} left){contested}  id: {r['id']}")
     for r in st["claims_attention"]:
         if r["sender"] == me and r["reason"] in NOT_A_HOLD:
@@ -94,7 +107,7 @@ def holdings(agent_mail: Any, me: str, everything: list[Any], owed: list[Any],
         out += _more(claims[:SHOWN], len(claims))
     if owed:
         out.append(f"You ('{me}') owe a reply to {len(owed)} open ASK(s):")
-        out += _more([f"  {m.id} from {m.sender} (since {_utc(m.sent_at)})"
+        out += _more([f"  {m.id} from {_clip(m.sender, MAX_IDENT)} (since {_utc(m.sent_at)})"
                       for m in owed[:SHOWN]], len(owed))
     return out
 
@@ -151,12 +164,12 @@ def main() -> int:
         for m in listed:
             needs = " [awaiting your reply]" if m.id in owed_ids else ""
             out += [
-                f"  {m.type} from {m.sender}{needs}",
-                f"    {m.subject}",
+                f"  {m.type} from {_clip(m.sender, MAX_IDENT)}{needs}",
+                f"    {_clip(m.subject, MAX_SUBJECT)}",
                 f"    id: {m.id}",
             ]
             if m.type == "CLAIM" and m.meta.get("expires"):
-                out.append(f"    holds until: {m.meta['expires']}")
+                out.append(f"    holds until: {_clip(m.meta['expires'], MAX_STAMP)}")
             out.append(f'    read: {py} "{tool}" show {m.id}')
         if mine:
             out += ["", f'Reply: {py} "{tool}" send --type ANSWER --from {me} '

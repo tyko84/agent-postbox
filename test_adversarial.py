@@ -792,6 +792,106 @@ def identity_binding(root: Path) -> None:
     (ibox / "PARTICIPANTS.md").unlink()
 
 
+def hostile_output(root: Path) -> None:
+    """Phase 6 (docs/threat-model.md): text a hostile writer controls that reaches the
+    prompt hook or a terminal without passing through `send`'s checks."""
+    import json  # noqa: PLC0415
+    ESC = "\x1b[31mRED\x1b]0;pwn\x07"
+    hook_py = str(HERE / "hooks" / "agent_mail_check.py")
+
+    print("the prompt hook's output is bounded whatever a hand-written file carries")
+    hb = root / "hb"
+    hb.mkdir()
+    send(hb, frm="alice", to="me", subj="visible-short")
+    big = "S" * 1_000_000
+    for i, (kind, extra) in enumerate((("NOTICE", ""), ("ASK", ""), ("CLAIM", "expires: 2099-01-01T00:00:00." + "0" * 1_000_000 + "Z\n"))):
+        fid = f"01ARZ3NDEKTSV4RRFFQ69GB00{i}"
+        hand(hb, fid, name=f"{fid}-big.md",
+             head=(f"id: {fid}\ntype: {kind}\nfrom: {'f' * 1_000_000}\nto: me\n"
+                   f"date: 2099-01-01T00:00:00Z\nsubject: {big}\n{extra}"))
+    hk = subprocess.run([sys.executable, "-I", hook_py], capture_output=True, text=True, timeout=120,
+                        env=dict(os.environ, AGENT_MAIL_DIR=str(hb), AGENT_MAIL_IDENTITY="me"))
+    check("control: the hook delivers the short message and the oversized ones are listed",
+          "visible-short" in hk.stdout and hk.stdout.count("id: 01ARZ3NDEKTSV4RRFFQ69GB00") == 3,
+          hk.stdout[:300] + hk.stderr)
+    check("three megabyte-sized fields: the hook prints under 20 kB, with the cut marked",
+          len(hk.stdout) < 20_000 and "characters)" in hk.stdout, str(len(hk.stdout)))
+
+    print("hostile file names never reach a line of output raw")
+    nb = root / "names"
+    nb.mkdir()
+    send(nb, frm="alice", to="bob", subj="name-control")
+    (nb / f"bad{ESC}.md").write_bytes(b"not mail")
+    (nb / "x\nFAKE: all clear\n.md").write_bytes(b"not mail")
+    (nb / "‮gnp.md").write_bytes(b"not mail")
+    os.symlink("/etc/hosts", nb / f"link{ESC}.md")
+    old = nb / (f".t{ESC}.tmp")
+    old.write_text("x")
+    os.utime(old, (1, 1))
+    for argv in (("list",), ("inbox", "--to", "bob"), ("status",), ("doctor",), ("list", "--json")):
+        out = run(nb, *argv)
+        text = out.stdout + out.stderr
+        check(f"`{' '.join(argv)}`: no ESC, BEL or bidi control, no forged line",
+              not any(c in text for c in ("\x1b", "\x07", "‮"))
+              and not any(ln.startswith("FAKE") for ln in text.splitlines()), repr(text[-300:]))
+    lst = run(nb, "list")
+    check("control: the rejects are still named (escaped), and the good message is listed",
+          "name-control" in lst.stdout and "REJECT bad\\x1b[31mRED" in lst.stderr
+          and "REJECT x\\nFAKE: all clear\\n.md" in lst.stderr, lst.stderr)
+
+    print("a hostile PARTICIPANTS.md identity never reaches the terminal raw")
+    pb = root / "parts"
+    pb.mkdir()
+    (pb / "PARTICIPANTS.md").write_text(
+        "| Identity | Reachable | Mechanism | Verified | can | cannot | uid |\n"
+        "|---|---|---|---|---|---|---|\n"
+        f"| `bob{ESC}` | yes | m | v | `review` | | 99999 |\n"
+        "| `carol` | yes | m | v | | | 99998 |\n", encoding="utf-8")
+    sent = send(pb, frm="alice", to="nobody-here", subj="warn-me")
+    check("control: the unknown-recipient warning still names the real identity",
+          sent.returncode == 0 and "carol" in sent.stderr, sent.stderr)
+    for argv in (("status",), ("doctor",)):
+        out = run(pb, *argv)
+        check(f"`{argv[0]}` and the send warning carry no ESC or BEL from a participant row",
+              not any(c in out.stdout + out.stderr + sent.stderr for c in ("\x1b", "\x07")),
+              repr((out.stdout + out.stderr)[-300:]))
+    st = run(pb, "status")
+    check("control: status still reports the well-formed binding", "carol: bound to uid 99998" in st.stdout,
+          st.stdout)
+
+    print("install.py: the registered hook command, and where its config may live")
+    inst = str(HERE / "install.py")
+
+    def install(proj: Path, *a: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run([sys.executable, "-I", inst, str(proj), *a], capture_output=True,
+                              text=True, timeout=120)
+
+    ok_p = root / "inst-ok"
+    (ok_p / ".git").mkdir(parents=True)
+    r_ok = install(ok_p, "--dest", "my tools", "--adapter", "claude-code")
+    settings = json.loads((ok_p / ".claude" / "settings.json").read_text()) if r_ok.returncode == 0 else {}
+    check("control: a destination with a space is registered, quoted as one word",
+          r_ok.returncode == 0
+          and settings["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"].count('"') == 2,
+          r_ok.stdout + r_ok.stderr)
+    for bad in ('a"b', "x$(touch PWNED)y", "x`touch PWNED`y"):
+        proj = root / f"inst-{abs(hash(bad))}"
+        (proj / ".git").mkdir(parents=True)
+        r = install(proj, "--dest", bad, "--adapter", "claude-code")
+        check(f"--dest {bad!r} is refused (exit 2) before anything is written",
+              r.returncode == 2 and "cannot quote" in r.stderr and not (proj / ".claude").exists()
+              and not (proj / bad).exists(), r.stdout + r.stderr)
+    elsewhere = root / "elsewhere"
+    elsewhere.mkdir()
+    link_p = root / "inst-link"
+    (link_p / ".git").mkdir(parents=True)
+    os.symlink(elsewhere, link_p / ".claude")
+    r = install(link_p, "--adapter", "claude-code")
+    check("a .claude that links out of the project is refused; nothing is written through it",
+          r.returncode == 2 and "leading outside the project" in r.stderr and not list(elsewhere.iterdir()),
+          r.stdout + r.stderr)
+
+
 def main() -> int:
     faulthandler.dump_traceback_later(WATCHDOG, exit=True)
     with tempfile.TemporaryDirectory() as td:
@@ -1379,6 +1479,7 @@ def main() -> int:
               and not [f.name for f in kbox.iterdir() if f.name.endswith((".lock", ".takeover"))],
               str(sorted(f.name for f in kbox.iterdir() if f.name.startswith("."))[:6]))
 
+        hostile_output(root)
         identity_binding(root)
         reader_goes_away(root)
 

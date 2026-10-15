@@ -486,6 +486,18 @@ def _body_char_error(value: str) -> str:
     return f"contains control character U+{ord(hit.group()):04X}" if hit else ""
 
 
+def _shown(name: str) -> str:
+    """A file name as a line of output may carry it. A name is not validated like a
+    header (any filesystem, and a repository checkout, accepts ESC, newline and bidi
+    controls in one), and a REJECT line names the file it is about, so each control or
+    format character is written as its escape: a hostile name cannot send a terminal
+    sequence or start a line of its own in what an agent reads."""
+    return "".join(
+        ch.encode("unicode_escape").decode("ascii")
+        if unicodedata.category(ch) in _HEADER_BAD_CATEGORIES else ch
+        for ch in name)
+
+
 def _read_mail_file(path: Path) -> tuple[str | None, str]:
     """Read one mailbox file without trusting it. Returns (text, "") or (None, reason).
 
@@ -568,7 +580,7 @@ def load_messages() -> tuple[list[Message], list[str]]:
             continue
         text, why = _read_mail_file(path)
         if text is None:
-            rejects.append(f"REJECT {path.name}: {why}")
+            rejects.append(f"REJECT {_shown(path.name)}: {why}")
             continue
         meta, body, problem = _parse_frontmatter(text)
         if not problem:
@@ -577,7 +589,7 @@ def load_messages() -> tuple[list[Message], list[str]]:
                 problem = f"body {bad}"
         if problem:
             rejects.append(
-                f"REJECT {path.name}: {problem} "
+                f"REJECT {_shown(path.name)}: {problem} "
                 "(CANNOT_VERIFY; quarantined — never admitted as mail)"
             )
             continue
@@ -587,32 +599,32 @@ def load_messages() -> tuple[list[Message], list[str]]:
         # INVALID ≠ OLD/NEW — omit from ordered set (distinct from §22 sort).
         if not raw_id:
             rejects.append(
-                f"REJECT {path.name}: missing id "
+                f"REJECT {_shown(path.name)}: missing id "
                 "(CANNOT_VERIFY; not admitted — INVALID ≠ OLD/NEW)"
             )
             continue
         if raw_id.upper() == "REPLACE_ID" or not _is_ulid(raw_id):
             rejects.append(
-                f"REJECT {path.name}: malformed id {raw_id!r} "
+                f"REJECT {_shown(path.name)}: malformed id {raw_id!r} "
                 "(CANNOT_VERIFY; not admitted — INVALID ≠ OLD/NEW)"
             )
             continue
         if not type_ok(msg):
             tname = msg.type or "(empty)"
             rejects.append(
-                f"REJECT {path.name}: unknown type {tname!r} "
+                f"REJECT {_shown(path.name)}: unknown type {tname!r} "
                 "(CANNOT_VERIFY; closed set ASK/ANSWER/NOTICE/CLAIM/DISPUTE)"
             )
             continue  # quarantined: listed by doctor, never injected as live mail
         if not msg.sender or not msg.to:
             rejects.append(
-                f"REJECT {path.name}: missing from/to "
+                f"REJECT {_shown(path.name)}: missing from/to "
                 "(CANNOT_VERIFY; not admitted — nobody can be addressed)"
             )
             continue
         if "date" in meta and _parse_iso(meta["date"]) is None:
             rejects.append(
-                f"REJECT {path.name}: unparseable date {meta['date']!r} "
+                f"REJECT {_shown(path.name)}: unparseable date {meta['date']!r} "
                 "(CANNOT_VERIFY; a message with no valid date never goes stale)"
             )
             continue
@@ -626,8 +638,8 @@ def load_messages() -> tuple[list[Message], list[str]]:
                 seen_ids[raw_id.upper()] = keeper
                 out.append(msg)
             rejects.append(
-                f"REJECT {loser}: duplicate id {raw_id} "
-                f"(first seen in {keeper}; a reply or supersede "
+                f"REJECT {_shown(loser)}: duplicate id {raw_id} "
+                f"(first seen in {_shown(keeper)}; a reply or supersede "
                 "citing it would be ambiguous)"
             )
             continue
@@ -1131,8 +1143,8 @@ def load_participants(path: Path | None = None) -> dict[str, dict[str, set[str]]
         if len(cells) <= ident_idx:
             continue
         ident = cells[ident_idx].strip().strip("`").lower()
-        if not ident or ident == "identity":
-            continue
+        if not ident or ident == "identity" or _header_char_error(ident):
+            continue   # (a control character in a name would reach the terminal: `send` warnings, status)
         can: set[str] = set()
         cannot: set[str] = set()
         if can_idx is not None and can_idx < len(cells):
@@ -1227,8 +1239,8 @@ def _parse_bindings_text(text: str) -> dict[str, str]:
             continue
         ident = cells[ident_idx].strip().strip("`").lower()
         cell = cells[uid_idx].strip().strip("`").strip()
-        if not ident or ident == "identity" or not cell:
-            continue
+        if not ident or ident == "identity" or not cell or _header_char_error(ident):
+            continue   # (a control character in a name would reach the terminal: status, doctor)
         out.setdefault(ident, cell)
     return out
 
@@ -2930,7 +2942,7 @@ def scan_hidden(box: Path, now_ts: float) -> dict[str, Any]:
         age = now_ts - st.st_mtime
         if is_tmp:
             if age > STALE_TMP_SECONDS:
-                out["stale_tmp"].append(name)
+                out["stale_tmp"].append(_shown(name))
             continue
         if is_mutex:
             if age > STALE_MUTEX_SECONDS:
@@ -3655,7 +3667,7 @@ def cmd_show(args: argparse.Namespace) -> int:
         return _no_such_message(args.id)
     text, why = _read_mail_file(m.path)
     if text is None:
-        print(f"cannot show {m.path.name}: {why}", file=sys.stderr)
+        print(f"cannot show {_shown(m.path.name)}: {why}", file=sys.stderr)
         return 2
     print(text)
     return 0
