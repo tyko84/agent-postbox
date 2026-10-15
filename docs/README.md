@@ -34,6 +34,7 @@
   (`python examples/two-agents/run.py`; tested by `test_examples.py`).
 * [experiment-v2.md](experiment-v2.md): pre-registration of a second real-agent experiment: arms, power, decision rule, budget.
 * [experiment-v2-results.md](experiment-v2-results.md): its main-stage results (against Postbox on this task, with the cause).
+* [experiment-v3-proposal.md](experiment-v3-proposal.md): a proposal, not approved and not run: why v2 could not show an advantage (control at ceiling, a confounded arm) and one design that could.
 * [install-audit.md](install-audit.md): the installer lifecycle audit: every case run, with its result and the defects found.
 * [performance.md](performance.md): measured latency and memory against mailbox size (linear; the prompt hook passes 200 ms near 4,000 messages), concurrency, and what was not measured.
 * [issues-to-open.md](issues-to-open.md): five starter issues drafted for the
