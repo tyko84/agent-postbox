@@ -9,6 +9,13 @@ behaviour).
 
 ### Added
 
+- `doctor` prints `send_permission:` for projects with a `.claude/` directory (PROTOCOL.md
+  section 41): which `permissions.allow` rules it can see, whether each spelling Postbox
+  prints has an identical rule, the exact rules to add if none does, and that a `#` line
+  inside a quoted `--body` is refused by Claude Code even with a rule (use `--body-file -`).
+  Informational; never writes settings and never changes the exit status.
+- `docs/data/permission-probe/`: the live probe and results behind that line (17 cases,
+  Claude Code, `dontAsk`).
 - `examples/two-agents/live_demo.py`: a recording kit for a demonstration with two REAL
   Claude Code sessions. `setup` prints the terminal commands, prompts and narration;
   `check` judges six beats (both identities wrote, the live value is in the ASK subject, an

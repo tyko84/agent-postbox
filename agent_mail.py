@@ -3372,6 +3372,78 @@ def linked_worktree_line(root: Path) -> str | None:
             "see it. Point every agent's AGENT_MAIL_DIR at one shared directory to talk across them")
 
 
+def send_permission_lines(root: Path, tool: Path | None = None) -> list[str]:
+    """Claude Code only: does `.claude/settings*.json` allow the `send` command?
+
+    Read only and informational (PROTOCOL.md section 41). Interactive sessions ask
+    the user, so no rule is not a fault; an unattended session (`--permission-mode
+    dontAsk`) refuses every command no rule allows, and the agent sees a bare "denied".
+    Nothing here emulates the host's matcher: it reports which rules it can see, and
+    whether the two spellings Postbox prints are covered by an identical rule.
+    """
+    claude = root / ".claude"
+    if not claude.is_dir():
+        return []
+    rules: list[str] = []
+    mode = ""
+    unreadable: list[str] = []
+    for name in ("settings.json", "settings.local.json"):
+        path = claude / name
+        if not _is_file(path):
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8-sig") or "{}")
+        except (OSError, ValueError):
+            unreadable.append(name)
+            continue
+        perms = data.get("permissions") if isinstance(data, dict) else None
+        if not isinstance(perms, dict):
+            continue
+        allow = perms.get("allow")
+        rules += [r for r in (allow if isinstance(allow, list) else []) if isinstance(r, str)]
+        if isinstance(perms.get("defaultMode"), str):
+            mode = perms["defaultMode"]
+    script = Path(os.path.abspath(tool or Path(__file__)))
+    try:
+        rel = script.relative_to(os.path.abspath(root)).as_posix()
+    except ValueError:
+        rel = ""
+    py = python_cmd()
+    wanted = ([f"Bash({py} {rel} *)"] if rel else []) + [f'Bash({py} "{script}" *)']
+    head = "send_permission: claude-code"
+    out = [head + (f" (defaultMode {mode!r})" if mode else "")]
+    for name in unreadable:
+        out.append(f"  - .claude/{name} is UNREADABLE (not valid JSON); its rules were not checked")
+    if "Bash" in rules or "Bash(*)" in rules:
+        out.append("  - every Bash command is allowed by a rule here, so `send` is too "
+                   "(broader than Postbox needs)")
+        return out
+    have = [r for r in wanted if r in rules]
+    other = [r for r in rules if "agent_mail" in r and r not in wanted]
+    for r in have:
+        out.append(f"  - allowed by an identical rule: {r}")
+    for r in other:
+        out.append(f"  - other rule naming agent_mail (not compared): {r}")
+    missing = [r for r in wanted if r not in have]
+    if missing and not other:
+        out.append("  - no rule allows `send`. " + (
+            "defaultMode dontAsk refuses every `send` (the agent sees only 'permission denied')."
+            if mode == "dontAsk" else
+            "Fine while you approve commands yourself; an unattended or dontAsk session "
+            "refuses every `send` (the agent sees only 'permission denied').")
+                   + " Postbox never adds a rule for you. To allow exactly this tool, add to "
+                   "permissions.allow in .claude/settings.local.json:")
+        out += [f"      {r}" for r in missing]
+    elif missing:
+        out.append("  - spellings without an identical rule (a rule for one spelling does not "
+                   "cover another):")
+        out += [f"      {r}" for r in missing]
+    out.append("  - bodies: use `--body-file -` with a heredoc for anything longer than one "
+               "line. Claude Code refuses a command holding a line that starts with `#` inside "
+               "quotes (a markdown heading in `--body`) even when a rule allows it")
+    return out
+
+
 def pickup_hook_lines(root: Path) -> list[str]:
     """PROTOCOL.md section 41: where a prompt-submit hook for the pickup adapter is
     registered under `root`, and whether the script it names is there. Read only and
@@ -3533,6 +3605,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
     if (wt := linked_worktree_line(project_root())) is not None:
         print(wt)
+
+    for line in send_permission_lines(project_root()):
+        print(line)
 
     canary = find_live_canary(everything, now=now)
     if canary is None:
