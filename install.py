@@ -374,7 +374,11 @@ def merge_settings(path: Path, dest_rel: str, check: bool, adapter: str = "claud
                 return (f"upgraded the {adapter} adapter (the command now ends in `|| true`, so "
                         f"a moved tool directory cannot block a prompt; {backup_note(path, backup)})")
             if not interpreter_missing(old):
-                return f"{adapter} adapter already registered (no change)"
+                moved = "" if f"{dest_rel}/hooks/{HOOK_MARKER}" in old else (
+                    f"; NOTE: its command does not point at {dest_rel}/, so the hook still runs "
+                    "the tool from where it was first installed -- edit the command in "
+                    f"{path.name} if you moved the tool")
+                return f"{adapter} adapter already registered (no change)" + moved
             if check:
                 return f"WOULD repair the adapter: `{old.split(' ', 1)[0]}` is not on PATH here"
             backup = back_up(path)
