@@ -43,6 +43,7 @@
 * [handoff-example.md](handoff-example.md): a filled-in handoff packet
   (validated by `test_handoff.py`).
 * [threat-model.md](threat-model.md): assets, adversaries, trust assumptions
+* [coordination-audit.md](coordination-audit.md): a defect hunt over claims, ASK/ANSWER, delivery and the five status views: what was probed, two defects fixed, what was not found.
   (each cited to code), the phase 6 findings and the accepted risks.
 * [publication-safety.md](publication-safety.md): the pre-publication scanner and how to configure it.
 * [release-process.md](release-process.md): how a release is cut (version,
