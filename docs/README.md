@@ -35,6 +35,7 @@
 * [experiment-v2.md](experiment-v2.md): pre-registration of a second real-agent experiment: arms, power, decision rule, budget.
 * [experiment-v2-results.md](experiment-v2-results.md): its main-stage results (against Postbox on this task, with the cause).
 * [install-audit.md](install-audit.md): the installer lifecycle audit: every case run, with its result and the defects found.
+* [performance.md](performance.md): measured latency and memory against mailbox size (linear; the prompt hook passes 200 ms near 4,000 messages), concurrency, and what was not measured.
 * [issues-to-open.md](issues-to-open.md): five starter issues drafted for the
   tracker (known gaps, each with what was observed, acceptance criteria,
   files to touch and how to test).
