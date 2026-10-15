@@ -20,28 +20,56 @@ it and got stuck is not a field report; use the questions below for them.
 Copy this into a reply or a new issue:
 
 ```text
-Thanks for trying agent-postbox. Four questions, answer any of them:
+Thanks for trying agent-postbox. Six questions, answer any of them:
 
 1. Which host(s) and OS? (Claude Code / Codex / other; macOS / Linux)
-2. How far did you get, and how long did it take? (cloned / installed / first message sent /
-   message picked up by the other session / used in real work)
-3. Where did you get stuck or confused? Exact command and output if you have it.
-4. Did a message ever not arrive, or arrive and get ignored? What did `doctor` say?
+2. How far did you get? (cloned / installed / first message sent / message picked up by the
+   other session / used in real work / removed)
+3. How many minutes from the clone to your first message, by your own clock?
+4. Did the other agent show the mail without being told to look? (yes / no / only when told)
+5. Did any permission prompt or denial hit a mail command? What was the command, and what
+   happened next? What did `doctor` print on its `send_permission:` line?
+6. Where did you get stuck or confused? Exact command and output if you have it.
 
-Please do not paste real mailbox contents.
+Please do not paste real mailbox contents. Note that my own experiments did not show an
+advantage over a notes file; I am asking about installation, pickup and permissions.
 ```
 
 ## Triage order
 
+Label each issue with one of these and work in this order.
+
 1. **Anything that loses, corrupts or silently hides a message**, or a security issue.
-2. **First-use failures**: a documented command that does not work, or a step where people
+   (Security goes through the private advisory link.)
+2. **Pickup did not reach the agent** where it should have (hook not firing, wrong identity,
+   host change). A disabled adapter looks like an empty inbox, so these are easy to miss.
+3. **Permission friction**: a mail command denied or prompted. Check whether
+   `doctor`'s `send_permission:` line and [troubleshooting.md](../troubleshooting.md) already
+   cover it; if not, that is a documentation or adapter defect.
+4. **First-use failures**: a documented command that does not work, or a step where people
    stall. These come before features because adoption stops there.
-3. **Host compatibility reports** (especially Codex, which has never been run in the real
+5. **Host compatibility reports** (especially Codex, which has never been run in the real
    host): verify, then record in `docs/hosts.md`.
-4. **Requests for new behaviour.** Only when at least two people hit the same gap, or one
+6. **Requests for new behaviour.** Only when at least two people hit the same gap, or one
    person shows a failure that cannot be worked around, and only if it fits the constraints
    (standard library, no daemon, files first, backward compatible). Otherwise label
    `wontfix` and say why.
+
+## Summary format after the trial
+
+Write it in `docs/` in a pull request, with the denominator on every number:
+
+```text
+Trial summary, <date>. Testers who tried: N of 5 invited.
+Installed: x of N. Message exchanged without owner help: x of N. Median minutes to first
+message (human clock): m (range a to b).
+Pickup reached the agent: yes x, no x, only when told x (hosts: ...).
+Permission friction: x testers hit a prompt or denial; causes: ...; fixed by: ...
+Removal clear: x of N.
+Stuck points by step: step -> count.
+Issues opened: #..., #... (one per distinct problem).
+What this does not show: whether Postbox improves agents' work.
+```
 
 ## Rhythm
 

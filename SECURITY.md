@@ -110,6 +110,13 @@ findings, open an issue. This is a small stdlib-only tool with no network
 surface and no embargo process. A report about a release artifact should
 include the output of `scripts/verify_release.py vX.Y.Z` for that tag.
 
+## Supported versions and response
+
+Only the latest release is supported; this is an early (v0.x) project maintained by one
+person, so there is no service-level promise and no embargo process. A private report gets an
+acknowledgement within a few days, and a fix lands in a new patch release with a changelog
+entry that says what was wrong, once the reporter has had a chance to check it.
+
 ## How this repository is built and released
 
 The tool has no dependencies; the pipeline that tests and releases it does.

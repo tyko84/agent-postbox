@@ -8,7 +8,42 @@ step the account owner has to take, in order. Until those steps are done,
 install from a clone or from the wheel attached to a GitHub release
 ([packaging.md](packaging.md)).
 
-Checked on 2026-10-11 through the JSON API (`https://<index>/pypi/<name>/json`):
+## State on 2026-10-15 (re-verified, nothing uploaded)
+
+| Check | Result |
+|---|---|
+| `GET https://pypi.org/pypi/tyko84-agent-postbox/json` | **HTTP 404**, no such project; `https://pypi.org/simple/tyko84-agent-postbox/` also 404 |
+| `GET https://pypi.org/pypi/agent-postbox/json` | **HTTP 200**: an unrelated project (its page is titled `agent-board`, author Ben Ballintyn, repository `benballintyn/agent-board`, releases 0.2.0 to 0.3.1 from June 2026). Not ours, not contactable by us |
+| Version | `agent_mail.__version__` = `0.5.0`; `pyproject.toml` reads it (`dynamic`); `CHANGELOG.md` has `## [0.5.0]` and an `## [Unreleased]` section with changes made after the tag. The built files are named `tyko84_agent_postbox-0.5.0-*` |
+| Reproducible build (`scripts/repro_build.py --check`, CPython 3.12.10, setuptools 84.0.0, build 1.6.1, on `main` at `283ce7b`) | two independent builds byte-identical. Because `main` has moved since the tag, its 0.5.0 files differ from the released ones (expected; see Blockers) |
+| Wheel contents | `agent_mail.py`, `LICENSE` (under `dist-info/licenses/`), `METADATA`, `WHEEL`, `entry_points.txt`, `top_level.txt`, `RECORD`; nothing else, no dependencies |
+| sdist contents | 88 members: `LICENSE`, `PKG-INFO`, sources, tests, `docs/*.md`, `examples/`, `hooks/`; no `scripts/`, no `.github/` |
+| Install the wheel into a fresh venv (CPython 3.13, `--no-index --no-deps`) | `agent-postbox --version` prints `agent-postbox 0.5.0`; `pip show -f` lists `agent_mail.py`, the dist-info and the `agent-postbox` entry point |
+| Uninstall | `pip uninstall` removes every file; the venv is back to `pip` only |
+| `scripts/verify_release.py v0.5.0` | 13 checks OK, 1 skipped (`--rebuild` not requested): assets, `SHA256SUMS`, both hashes, both attestations, wheel and sdist members, builder identity |
+| GitHub side (read-only `gh api`) | no environment `pypi` (0 environments), no repository variable `PYPI_PUBLISH`, `patterns_allowed` is `[]`, SHA pinning required, so the PyPA action is not allowed yet |
+| `twine check` | not run in this pass (`twine` is not installed in the build venv); `test_packaging.py` and the release workflow's `test` job run it |
+
+## Blockers, and who does what
+
+Nothing below is done. **A** is the account owner (Tyler), **R** is a repository change a
+maintainer reviews, **C** is the owner of the CI workflows.
+
+| # | Blocker | Who | Notes |
+|---|---|---|---|
+| 1 | Decide to publish at all, and the `Author` string (`TyKo Sales LLC` today) | A | Uploaded metadata cannot be edited, and a file name can never be reused |
+| 2 | No upload job in `release.yml`, and the PyPA action is not allowed by the actions policy | C, then A for the policy | The job is drafted below; the policy change is checklist step 6 |
+| 3 | No PyPI account, no pending publisher, no GitHub environment `pypi`, no `PYPI_PUBLISH` variable | A | Checklist steps 3 to 5, 8 |
+| 4 | The first PyPI release must be a **new version**, not v0.5.0: v0.5.0's tag is permanent, its README says "Not on PyPI" and its relative links would be dead on PyPI | A (decides), R (version and changelog) | `Unreleased` holds changes made since. Uploading the v0.5.0 files by hand would put an out-of-date README on the project page |
+| 5 | README links are relative (29 links, 19 distinct) and PyPI does not resolve them | R | Before the first published release, make every relative link absolute (`https://github.com/tyko84/agent-postbox/blob/main/<path>`), review the diff, and re-run `test_readme_examples.py` and `test_publication.py`. Fragment-only links such as `#install` also break on PyPI; reword them. `twine check` does not catch this |
+| 6 | README and docs say "Not on PyPI" | R | List under "Wording to change", in the same release as the first upload |
+| 7 | Rehearsal on TestPyPI not done | A | Optional but recommended: it is the only way to see the action start under the actions policy |
+
+PyPI may refuse the name `tyko84-agent-postbox` as too similar to an existing one; that is
+known only at the first upload. The rule "never write `pip install agent-postbox`" holds
+whatever happens.
+
+First checked on 2026-10-11 (same result again on 2026-10-15) through the JSON API (`https://<index>/pypi/<name>/json`):
 
 | Name | pypi.org | test.pypi.org |
 |---|---|---|
@@ -64,7 +99,7 @@ setuptools 84.0.0):
    `pyproject.toml` before the first upload if another name should appear;
    metadata of an uploaded file cannot be edited afterwards.
 3. **The README as a project page.** PyPI renders the README but does not
-   resolve relative links. The README had eight of them when this was written and has more now (count them before editing), among them `SECURITY.md`,
+   resolve relative links. The README has 29 of them (19 distinct) as of 2026-10-15, among them `SECURITY.md`,
    `PROTOCOL.md`, `docs/packaging.md`, `CONTRIBUTING.md`, `CHANGELOG.md`: on
    PyPI they would lead nowhere. Make them absolute
    (`https://github.com/tyko84/agent-postbox/blob/main/...`) in the release that
@@ -298,15 +333,16 @@ in this repository a release tag is permanent.
 
 ## The checklist, in order
 
-Every step is an action of the account owner. Nothing here has been done.
+Steps are marked **A** (the account owner, on pypi.org or in GitHub settings), **R** (a pull request) or **C** (the owner of the workflows). Nothing here has been done.
 
-1. **Decide** the four points under Decisions above; fix the `Author` string
-   and the README links in a normal pull request if needed.
-2. **Rehearse** on TestPyPI in a scratch repository, as above.
-3. **Create the PyPI account** at `https://pypi.org/account/register/`, verify
+1. **Decide** (A+R) the four points under Decisions above; fix the `Author` string
+   and make the README links absolute in a normal pull request. Also choose the version
+   (blocker 4): the first PyPI release is a new version with its own changelog section.
+2. **Rehearse** (A) on TestPyPI in a scratch repository, as above.
+3. **Create the PyPI account** (A) at `https://pypi.org/account/register/`, verify
    the address, and enable two-factor authentication (PyPI requires it) with
    the recovery codes stored offline.
-4. **Create the GitHub environment** `pypi`: one required reviewer, release tags
+4. **Create the GitHub environment** (A) `pypi`: one required reviewer, release tags
    only. With `gh` (not run by anyone yet):
 
    ```sh
@@ -328,7 +364,7 @@ Every step is an action of the account owner. Nothing here has been done.
    `prevent_self_review` stays `false` while there is one maintainer: the person
    who pushes the tag is the only one who can approve. With a second maintainer,
    set it to `true`. The last command must print `tag v*.*.*` and nothing else.
-5. **Register the pending publisher** on PyPI: Account settings, Publishing,
+5. **Register the pending publisher** (A) on PyPI: Account settings, Publishing,
    Add a new pending publisher, GitHub tab, with exactly:
 
    | Field | Value |
@@ -341,7 +377,7 @@ Every step is an action of the account owner. Nothing here has been done.
 
    From this moment until the first upload the name is still not reserved. Do
    not leave a long gap.
-6. **Allow the action**, by exact commit, keeping everything else as it is:
+6. **Allow the action** (A), by exact commit, keeping everything else as it is:
 
    ```sh
    gh api repos/tyko84/agent-postbox/actions/permissions/selected-actions      # before: patterns_allowed is []
@@ -360,25 +396,25 @@ Every step is an action of the account owner. Nothing here has been done.
    grep -o 'pypa/gh-action-pypi-publish@[0-9a-f]*' .github/workflows/release.yml
    gh api repos/tyko84/agent-postbox/actions/permissions/selected-actions --jq '.patterns_allowed[]'
    ```
-7. **Add the job** to `release.yml` in a pull request, with the test, Dependabot
+7. **Add the job** (C+R) to `release.yml` in a pull request, with the test, Dependabot
    and documentation changes listed under The job. Merge it. Every check on the
    pull request passes without proving anything about the new job: no pull
    request runs `release.yml`.
-8. **Set the switch**: `gh variable set PYPI_PUBLISH --repo tyko84/agent-postbox --body true`
+8. **Set the switch** (A): `gh variable set PYPI_PUBLISH --repo tyko84/agent-postbox --body true`
    (a repository variable, not a secret: it is not sensitive, and a job's `if:`
    cannot read secrets). To turn publishing off again:
    `gh variable delete PYPI_PUBLISH --repo tyko84/agent-postbox`.
-9. **Cut the next release** exactly as [release-process.md](release-process.md)
+9. **Cut the new release** (A) exactly as [release-process.md](release-process.md)
    says and push its tag. `build`, `scan`, `test` and `publish` run as before and
    leave a draft GitHub release. The `pypi` job then waits: the run page shows
    "Waiting for review".
-10. **Review, then approve.** Check the draft release first (notes, three
+10. **Review, then approve.** (A) Check the draft release first (notes, three
     assets, checksums). Then approve the deployment on the run page. Approving
     is the step that cannot be taken back: within a minute the two files are on
     PyPI under a file name that can never be used again. Rejecting the
     deployment instead leaves the draft release and uploads nothing; the run is
     then marked failed, which is correct.
-11. **Verify** from a clean directory:
+11. **Verify** (A) from a clean directory:
 
     ```sh
     python -m pip download --no-deps --no-cache-dir -d /tmp/pb-pypi-check tyko84-agent-postbox==X.Y.Z
@@ -396,8 +432,8 @@ Every step is an action of the account owner. Nothing here has been done.
     the file's details as the publisher `release.yml` of this repository. On
     PyPI, Account settings, Publishing, the pending publisher is gone and the
     project lists a normal one.
-12. **Publish the draft GitHub release.**
-13. **Change the wording** in the next pull request (see below). Until then the
+12. **Publish the draft GitHub release.** (A)
+13. **Change the wording** (R) in the next pull request (see below). Until then the
     documentation says the project is not on PyPI, which has stopped being true.
 
 If the upload fails half-way (one file accepted, one not), the accepted file

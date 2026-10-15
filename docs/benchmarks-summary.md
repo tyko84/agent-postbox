@@ -23,6 +23,9 @@ two from run to run, because races between claims are settled at run time;
 and nothing here says what a model does with mail once it has it. How to run
 it and how to read it: [benchmarking.md](benchmarking.md).
 
-The pilot with real agents, which did not show an advantage, is summarised in the
-README ("Evidence, and what it does not show") and written up in
-[micro-experiment.md](micro-experiment.md).
+This is a property of the mechanism in a simulation, not a benefit shown with real agents.
+The pilot with real agents did not show an advantage, and the pre-registered second experiment
+went against Postbox on its task (the host refused the agent's `send` command in 9 of 60 runs).
+They are summarised in the README ("Evidence so far") and written up in
+[micro-experiment.md](micro-experiment.md) and
+[experiment-v2-results.md](experiment-v2-results.md).

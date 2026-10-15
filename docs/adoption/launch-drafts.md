@@ -1,7 +1,8 @@
 # Launch drafts (not posted)
 
 These are drafts for the owner to edit and post. Every claim in them was checked against the
-repository on 2026-10-13; the experiment result is stated rather than hidden.
+repository on 2026-10-13 and the experiment wording was updated on 2026-10-15; the results (null, then
+against) are stated rather than hidden.
 
 **Do not post yet.** The gate is in [invite-five.md](invite-five.md): the demo recording does
 not exist (`<demo link>` below is a placeholder), and five outside developers have not tried
@@ -26,11 +27,14 @@ before it sees your prompt, so there's no "remember to check" step. Other hosts 
 command.
 
 Honest status: it has an extensive test suite and passed scripted checks in real headless
-Claude Code sessions (not interactive use), but a small
-pilot I ran (20 paired instances, a small model) did **not** show it beating a shared notes
-file the agents were told to read, and Codex support has never run in the real host. I'm
-looking for people who've watched agents miss each other's notes to try it and tell me where
-it breaks. About five minutes from clone to a first exchange; POSIX only. The installer edits
+Claude Code sessions (not interactive use), but my experiments did **not** show a benefit: a
+small pilot (20 paired instances, a small model) found no advantage over a shared notes file
+the agents were told to read, and a larger pre-registered run (60 pairs) came out against it
+because the host refused the agents' `send` command in some runs (a Claude Code check on a
+`#` line in a quoted argument; the docs now say how to avoid it). Codex support has never run
+in the real host. I'm looking for people who've watched agents miss each other's notes to try
+it and tell me whether it installs, whether the mail reaches the agent, and where permissions
+get in the way. POSIX only. The installer edits
 `.claude/settings.json` (backup kept) and there is a tested removal procedure, so try it in a
 throwaway project first.
 
@@ -54,13 +58,14 @@ a `doctor` command reports whether the hook is registered, whether its script ex
 whether your identity is set, since silence otherwise looks like an empty inbox.
 
 What I can and can't claim: it passes its own stress, adversarial and headless real-session tests (Claude Code, one small
-model), and the demo linked below shows two real Claude Code sessions exchanging a message. I ran a small pre-registered
-experiment on whether it improves outcomes and the result was null against a notes-file
-control (small N, one small model, known confounds, all written up with the per-run data in
-the repo). I would rather hear that it doesn't help your setup than not hear anything.
+model), and the demo linked below shows two real Claude Code sessions exchanging a message. I ran two experiments on whether it
+improves outcomes: a pilot that was null against a notes-file control, and a pre-registered
+second run that came out against Postbox (51 of 60 completed versus 60 of 60), because the
+host refused the agent's `send` command in 9 runs. One small model, a restrictive permission
+mode, all written up in the repo. No benefit has been demonstrated. I would rather hear that it doesn't help your setup than not hear anything.
 
 It is not an orchestration framework. It doesn't start, plan or supervise agents.
-Repo: https://github.com/tyko84/agent-postbox (first exchange in five minutes:
+Repo: https://github.com/tyko84/agent-postbox (walkthrough of a first exchange:
 docs/onboarding-first-exchange.md) · demo: <demo link>
 
 Questions I'd love answers to: do your agents actually miss each other's notes? What would you

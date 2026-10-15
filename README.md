@@ -2,21 +2,28 @@
 
 [![ci](https://github.com/tyko84/agent-postbox/actions/workflows/ci.yml/badge.svg)](https://github.com/tyko84/agent-postbox/actions/workflows/ci.yml)
 
-**Stop being the messenger between your AI agents.**
+**Mail between coding agents that run in the same repository.**
 
-When you run several coding agents on one repository, you relay between them
-by hand: a question copied out of one session and pasted into another, then
-the answer carried back. agent-postbox is mail for those agents. One agent
-writes a message, and the other finds it in its context at its next prompt,
-**without having to remember to look.**
+If you run two or three coding-agent sessions on one repository (Claude Code, Codex, ...),
+you end up as the router: a question copied out of one session, pasted into another, the
+answer carried back. agent-postbox lets the agents write to each other instead. A message is
+a Markdown file in a directory of your repository. With a small hook installed, the receiving
+session sees waiting mail in its context at its next prompt, so it does not have to remember
+to look; hosts without a hook can poll with one command.
 
-It is a lightweight communication layer for agents you already run, not an orchestration
-framework: it does not start, plan or supervise anything. Why it exists, and what has and has
-not been shown: [docs/adoption/why-postbox.md](docs/adoption/why-postbox.md).
+It is for developers who already run several agent sessions themselves and want them to talk.
+It is **not** an orchestrator: it does not start, plan, assign or supervise anything, and it
+cannot make an agent act on a message. It is a mailbox plus a way to put mail in front of the
+reader.
 
-No database. No daemon. No dependencies. A message is a Markdown file in a
-directory of your repository, the tool is one Python file (standard library
-only), and identity is a name you choose: there is no vendor default.
+No database, no daemon, no dependencies, no network. The tool is one Python file (standard
+library only), and identity is a name you choose.
+
+**What has and has not been shown.** The mechanism works and is heavily tested. A benefit has
+**not** been demonstrated: a pilot found no advantage over a shared notes file, and a larger
+pre-registered experiment went against Postbox under a restrictive permission mode (see
+[Evidence so far](#evidence-so-far)). Why it exists, and the design:
+[docs/adoption/why-postbox.md](docs/adoption/why-postbox.md).
 
 ## Quickstart
 
@@ -30,15 +37,16 @@ adds one hook entry to that project's `.claude/settings.json` (backed up first).
 prints mailbox text into your agent's context, so anyone who can write to the mailbox can put
 text in front of your agent: read [SECURITY.md](SECURITY.md) before using it on a repository
 with outside contributors. Removing it: [docs/troubleshooting.md](docs/troubleshooting.md#removing-it).
-Evidence so far is thin: Claude Code in headless sessions on one small model, Codex never run
-in the real host, and a pilot that showed no advantage (see Evidence, below).
+Supported hosts and what was verified: Claude Code in headless sessions (one small model);
+Codex never run in the real host; Cursor documented only (see [Which hosts](#which-hosts-are-supported)).
 
 ```sh
 # 1. Clone. (Not on PyPI: `pip install agent-postbox` is a different project; see Install.)
 #    Already have the repo? Skip this.
 git clone https://github.com/tyko84/agent-postbox
 
-# 2. Watch two sessions exchange a message. Under a second, in a throwaway directory.
+# 2. Watch two scripted sessions exchange a message (about a second of machine time,
+#    in a throwaway directory).
 python3 agent-postbox/examples/two-agents/run.py
 
 # 3. Install into your own project (a git repository), and register the pickup hook
@@ -92,7 +100,7 @@ each step, and exits non-zero if anything did not happen as it says
 full under [Install](#install); hosts other than Claude Code wire the same
 adapter to their own prompt-submit event, or poll.
 
-## 30-second demo (project install)
+## What a message and a pickup look like
 
 ```text
 $ python3 agent-postbox/install.py .           # (run from your project's root) tool -> tools/agent-postbox/, mailbox -> docs/agent-mail/
@@ -318,62 +326,24 @@ held versus expired versus malformed-expiry claims, quarantined files,
 leftover temp files, and agents that have been silent past `--stalled-hours`
 (an agent with no readable date is `unknown`, never `stalled`).
 
-It also counts what a crashed sender leaves behind: scope lock files and
-idempotency markers, each classed as in flight (under 60 s), held by a live
-process, or orphaned; stale takeover mutexes; messages whose `supersedes`
-cites a claim they may not supersede; and fresh replies that cite an id that
-is not in the mailbox. `status --json` carries a `problems` list of fixed
-codes with counts (`QUARANTINED`, `STALE_TMP`, `ORPHAN_IDEM_MARKER`,
-`ORPHAN_SCOPE_LOCK`, `STALLED_LOCK_HOLDER`, `STALE_TAKEOVER_MUTEX`,
-`MALFORMED_CLAIM_EXPIRY`, `FOREIGN_SUPERSEDE`, `DANGLING_REPLY`,
-`STALLED_AGENT`, `CONTESTED_SCOPE`, `MALFORMED_RESULT`, `UNATTACHED_RESULT`,
-`CONTESTED_RESULT`, `RESULT_FROM_THIRD_PARTY`), empty for a clean mailbox, so
-tooling does not parse prose. When any ANSWER carries a `result:`, text
-`status` adds one `ask results (claimed, not proven): ...` line with the
-counts by value and a short table of what needs a look (an unknown value, a
-result that cites no ASK, one sender contradicting itself, a result from
-someone the ASK was not addressed to); a mailbox without results prints
-exactly what it always printed (PROTOCOL.md section 39).
-`status` still exits 0 whenever the mailbox exists; `doctor` prints the same
-counts with file names. The JSON keys are documented in PROTOCOL.md sections
-29, 33 and 34 and are only ever added to.
+It also counts what a crashed sender leaves behind (orphaned lock files and idempotency
+markers, stale mutexes, replies that cite a missing id). `status --json` carries a `problems`
+list of fixed codes with counts, empty for a clean mailbox, so tooling does not parse prose;
+the codes are in PROTOCOL.md sections 29, 33 and 34. `status` exits 0 whenever the mailbox
+exists; `doctor` prints the same counts with file names. When any ANSWER carries a `result:`,
+text `status` adds one `ask results (claimed, not proven): ...` line (PROTOCOL.md section 39).
 
-**Who holds what.** `status` also names the holders. In text, a table of held
-claims (scope, holder, expiry in UTC, time left; at most 20 rows):
-
-```text
-claims: held=2  expired=1  malformed_expiry=1  superseded=1
-held claims (scope, holder, expires, left):
-  file:s.py  alice  2030-01-01T18:00:00Z  6h00m
-  -          bob    2030-01-02T10:00:00Z  22h00m
-```
-
-In `--json`, `claims_held` has one object per held claim, sorted by scope and
-then id:
-
-```json
-{"id": "01ARZ3NDEKTSV4RRFFQ69G5FA0", "sender": "alice", "to": "all",
- "scope": "file:s.py", "expires": "2030-01-01T18:00:00Z", "seconds_left": 21600,
- "date": "2030-01-01T09:00:00Z", "supersedes": null}
-```
-
-`sender` is the claim's `from` (the writer token, never an alias expansion),
-`scope` is exactly what the claimant wrote (`null` when the claim names none),
-and `expires` and `date` are normalised to UTC. `claims_attention` lists the
-unsuperseded claims that need a look, each with `id`, `sender`, `scope` and a
-`reason`: `CONTESTED_SCOPE`, `MALFORMED_EXPIRES`, `NO_EXPIRES`, `TOO_LONG` or
-`EXPIRED`. Each list holds at most 200 rows and says how many it left out
-(`claims_held_truncated`, `claims_attention_truncated`). Subjects and bodies
-are never included; use `show <id>` for those.
+**Who holds what.** `status` also names the holders of unexpired claims (scope, holder, expiry
+in UTC, time left) as a table and, with `--json`, as `claims_held` and `claims_attention`
+lists. Subjects and bodies are never included; use `show <id>` for those. `--scope` keeps
+only the rows for exactly that scope, so "who holds `file:s.py`, until when" is one command:
 
 ```bash runnable
 agent-postbox status --scope file:s.py
 agent-postbox status --json --scope file:s.py
 ```
 
-`--scope` keeps only the rows for exactly that scope (the counts still cover
-the whole mailbox, and no match is still exit 0), so "who holds `file:s.py`,
-until when" is one command. Two senders holding the same scope cannot happen
+The counts still cover the whole mailbox, and no match is still exit 0. Two senders holding the same scope cannot happen
 through `send`; if a hand-written or very old file causes it, `status` counts
 it in `contested_scopes`, adds the problem code `CONTESTED_SCOPE`, and `doctor`
 names the scope and both holders. A listed claim is evidence that a claim file
@@ -416,31 +386,31 @@ reader they finish and report the status of the send (`send ... | true` exits
 
 ## The problem it solves
 
-The format was never the hard part. **Pickup is.**
+The message format was never the hard part. **Pickup is.**
 
-In the repo this came from, a clear written instruction to leave notes for the
-next agent produced **zero notes in 22 hours**. Any design that depends on an
-agent *remembering to check* fails exactly that way — and the failure is
-invisible, because an inbox nobody read looks identical to an empty one.
+In the repository this came from, a clear written instruction to leave notes for the next
+agent produced **zero notes in 22 hours** (one anecdote, not a study). A design that depends
+on an agent *remembering to check* fails that way, and invisibly: an inbox nobody read looks
+identical to an empty one.
 
-Existing file-based agent-messaging systems are, as far as I found, pull-based:
-the agent has to go and fetch. agent-postbox ships the other half. Pickup is
-either a **prompt-injection adapter** (mail printed into context before the
-model sees the prompt, so there is no decision to look; "injection" names the
-mechanism, not an attack) or a **session-start
-poll** (`list --live`). A hook is an adapter for a host, not the protocol.
-This repo ships one adapter (`hooks/agent_mail_check.py`) that any host can
-wire to its own prompt-submit event; Claude Code users can register it as
-`UserPromptSubmit`. Hosts without a hook poll.
+So pickup is either a **prompt-injection adapter** (mail printed into context before the model
+sees the prompt, so there is no decision to look; "injection" names the mechanism, not an
+attack) or a **session-start poll** (`list --live`). A hook is an adapter for a host, not the
+protocol. This repo ships one adapter (`hooks/agent_mail_check.py`) that any host can wire to
+its own prompt-submit event; Claude Code users register it as `UserPromptSubmit`. Hosts
+without a hook poll. Whether automatic pickup makes agents do better work is exactly what the
+experiments below did **not** show.
 
 ## Which hosts are supported
 
 | Host | Automatic pickup | Status |
 |---|---|---|
-| Claude Code | Yes (`--adapter claude-code`) | Tested in the real host (headless, one model): [docs/e2e-real-sessions.md](docs/e2e-real-sessions.md) |
-| Codex CLI | Yes (`--adapter codex`) | **Experimental**: built from the documented hook format, never run inside real Codex |
-| Cursor | No: the host cannot add context per prompt | Polling only (`list --live`), untested |
+| Claude Code | Yes (`--adapter claude-code`) | Run in the real host, headless (`claude -p`) only, on one small model; last re-run on Claude Code 2.1.300. Interactive mode not run: [docs/e2e-real-sessions.md](docs/e2e-real-sessions.md) |
+| Codex CLI | Yes (`--adapter codex`) | **Experimental**: built from the documented hook format, never run inside real Codex; the hook must be trusted once in `/hooks` |
+| Cursor | No: the host cannot add context per prompt | Documented only, never run; polling (`list --live`) is the only option |
 | Anything else | No | Polling only; the protocol is just files |
+
+POSIX only (Linux, macOS). Not tested on Windows or WSL.
 
 Detail and the checklist for confirming a host: [docs/hosts.md](docs/hosts.md).
 
@@ -550,38 +520,25 @@ schedule" is a mechanism. Until your row exists, you are unreachable and mail
 to you is unsent — which turns "did they get it?" from an assumption into a
 lookup.
 
-**Silence proves nothing.** The first version of the adapter gated delivery on
-"does this owe a reply", which a `NOTICE` never does — so it silently dropped
-every NOTICE. The symptom was no output, which is also what a healthy pickup
-does with an empty inbox. The first test looked like a pass. `owes_reply()` and
-`live()` are now separate functions on purpose, and `selftest.py` asserts on
-content that *must* appear, never on absence. `open_asks()` is the batch form of
-the first — the ASKs addressed to one identity that still owe a reply, in one
-pass — and it answers `owes_reply()`'s question, not `derived_status()`'s.
+**Silence proves nothing.** An early version of the adapter silently dropped every NOTICE; the
+symptom was no output, which is also what a healthy pickup does with an empty inbox. The first
+test looked like a pass. `selftest.py` now asserts on content that *must* appear, never on
+absence.
 
-Status is derived, never stored — an ASK is open until something cites its id,
-a CLAIM is held until its expiry passes. And `CLAIM` *requires* an expiry: an
-agent that dies mid-session must not deadlock the repo forever.
+Status is derived, never stored: an ASK is open until something cites its id, a CLAIM is held
+until its expiry passes. And a `CLAIM` *requires* an expiry, so an agent that dies mid-session
+cannot deadlock the repo.
 
 ## Recommended norms (optional, from live use)
 
-PROTOCOL.md sections 10-28 spell out optional norms: handoff fields (10), CLAIM
-supersedes and re-scope (11), HOLD/DISPUTE for presses (12), pickup is not
-belief (13), chat is not the store (14), transport adapters (15),
-CANNOT_VERIFY and scoped verify (16), verify hardening (17), structured
-`BLOCKED_ACTION` blocks (18), derived status and the actionable `inbox` (19),
-`doctor` and the pickup canary (20), participant capabilities (21), load order
-and the closed type set (22), pickup-to-reply latency (23), persist/admit (24),
-a reference is not a body (25), shell metacharacters before argv (26),
-display alias vs writer token (27), and the handoff packet (28). Later
-sections cover input policy and `status` (29), kernel-held scope locks (30),
-keyed-send locking (31), read-time ownership, id case and failure reporting
-(32), crash diagnostics with the exit-status table (33), who holds what
-in `status` (34), a reader that goes away (35), filters, `--limit` and
-`--json` for `list`, `inbox` and `show` (37), and what the command line owes
-its user: complete help, no tracebacks, a next step (38).
-Sections 5 and 5a cover lease rules, retry-safe sends and quarantine. Steal those even if you keep your own
-transport.
+PROTOCOL.md numbers its sections. Sections 10 to 28 are optional norms (handoff fields,
+claim supersede and re-scope, HOLD/DISPUTE, "pickup is not belief", `doctor` and the pickup
+canary, participant capabilities, shell metacharacters before argv, the handoff packet, ...);
+later sections cover input policy and `status` (29), kernel-held scope locks (30), keyed-send
+locking (31), crash diagnostics and the exit-status table (33), who holds what (34), filters,
+`--limit` and `--json` (37), the command line's own obligations (38), ask results (39),
+identity binding (40) and the permission line of `doctor` (41). Sections 5 and 5a cover lease
+rules, retry-safe sends and quarantine. Take those even if you keep your own transport.
 
 Full spec: [PROTOCOL.md](PROTOCOL.md). It is self-contained: an agent that has
 read it can participate with no other instruction. Threat model:
@@ -630,33 +587,47 @@ executed or passed to a shell; the adapter only reads.
   `inbox` itself ([docs/reliability-evidence.md](docs/reliability-evidence.md)).
 * **POSIX only.** Windows is not supported or tested (WSL: not tried).
 
-## Evidence, and what it does not show
+## Evidence so far
 
-In a simulation (8 simulated agents, 400 scheduled messages, no LLM), the pickup adapter put every
-message in front of its recipient at the first awake prompt, where an agent that polls half the
-time managed 270 of 493. "Half the time" is an assumption, not a measurement, and nothing there says
-what a model does with mail once it has it. The table, the caveats and how to run it:
-[docs/benchmarks-summary.md](docs/benchmarks-summary.md) and [docs/benchmarking.md](docs/benchmarking.md).
+No performance advantage has been demonstrated. What exists, most important first:
 
-A pilot with real agents (20 paired instances, two Claude Code sessions each, haiku) did
-**not** show an advantage: the fact reached the consumer in most runs under every
-arrangement, and a shared notes file the agents were told to read did at least as well as
-mail. That pilot was small, one model, with known confounds; read it before drawing
-conclusions: [docs/micro-experiment.md](docs/micro-experiment.md).
+* **Pre-registered experiment v2** (60 paired instances, Claude Code, haiku,
+  `--permission-mode dontAsk`): **against Postbox on that task**. 51 of 60 completed against
+  60 of 60 for a shared notes file, because the host refused the agent's `send` command in 9
+  runs. The refusal was traced to a `#` line inside a quoted `--body`, which Claude Code
+  refuses even when an allow rule matches (the arm's own prompt steered agents to that form).
+  It is a result about that arm, not a measured benefit, and not a finding about normal
+  permission settings: [docs/experiment-v2-results.md](docs/experiment-v2-results.md).
+* **Micro-experiment** (20 paired instances, haiku): **null**. The fact reached the consumer in
+  most runs under every arrangement, and a notes file the agents were told to read did at
+  least as well: [docs/micro-experiment.md](docs/micro-experiment.md).
+* **Reliability tests**: atomic sends, concurrent claims, crash recovery and adversarial inputs
+  pass in CI on Linux and macOS ([docs/reliability-evidence.md](docs/reliability-evidence.md)).
+  Passing tests are not a proof of absence.
+* **Real-host check**: the hook delivered mail into real headless Claude Code sessions,
+  including after a resume and with a missing-hook-script failure observed
+  ([docs/e2e-real-sessions.md](docs/e2e-real-sessions.md)).
+* **Simulation** (8 simulated agents, no model): the adapter put every message in front of its
+  recipient at the first awake prompt. That is a property of the mechanism; it says nothing
+  about what a model does with mail ([docs/benchmarks-summary.md](docs/benchmarks-summary.md)).
 
-A larger pre-registered run (60 paired instances, same model, strict permission mode) went
-**against** Postbox: 51 of 60 completed against 60 of 60 for a shared notes file, because
-the host denied the agent's `send` command in 9 runs. It says nothing for or against mail
-under a normal permission setup, and it is not a measured benefit:
-[docs/experiment-v2-results.md](docs/experiment-v2-results.md).
+A follow-up experiment has been proposed but not approved or run
+([docs/experiment-v3-proposal.md](docs/experiment-v3-proposal.md)).
+
+## Permissions
+
+Claude Code may refuse the `send` command (it is a shell command) under a restrictive
+permission mode. `doctor` prints a `send_permission:` line with the exact allow rules for your
+project and the one form to avoid (a `#` line inside a quoted `--body`; use `--body-file -`
+with a heredoc). Symptoms and fixes: [docs/troubleshooting.md](docs/troubleshooting.md).
+Do not use a broad rule such as `Bash(python3 *agent_mail.py *)`.
 
 ## Status
 
-Early (v0.x), extracted from a working multi-agent setup. Python 3.10-3.14,
-standard library only, POSIX only; CI runs the test scripts on Linux and macOS.
-The protocol is opinionated and still moving, so expect sections to be added.
-Issues and field reports are welcome (see [CONTRIBUTING.md](CONTRIBUTING.md)).
-
-Prompt-injection pickup is the stronger mechanism; poll is the portable one.
+Early (v0.x), extracted from a working multi-agent setup. Python 3.10-3.14, standard library
+only, POSIX only; CI runs the test scripts on Linux and macOS. Not on PyPI
+([docs/pypi-publishing.md](docs/pypi-publishing.md)). The protocol is opinionated and still
+moving, so expect sections to be added. Issues and field reports are welcome (see
+[CONTRIBUTING.md](CONTRIBUTING.md)); the most useful report is where you got stuck.
 
 MIT
