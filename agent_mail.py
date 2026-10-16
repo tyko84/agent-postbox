@@ -3655,6 +3655,10 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         print("FAIL: mailbox unreadable")
         return 2
     print("store: OK")
+    if not os.access(box, os.W_OK | os.X_OK):
+        # PROTOCOL.md section 44: information, never a FAIL (a reader may be read-only on purpose).
+        print("writable: NO: this account cannot create files in the mailbox directory, so `send` "
+              "and `canary` here exit 1 with a permission error; reading is unaffected")
 
     everything, rejects = load_messages()
     print(f"messages: {len(everything)}")
