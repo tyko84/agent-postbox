@@ -79,7 +79,12 @@ Not shown:
   `#` line inside a quoted `--body`, which Claude Code refuses even when an allow rule
   matches ([experiment-v2-results.md](../experiment-v2-results.md)). The case Postbox is
   built for, an agent that does not read a shared file unprompted over a long session, was
-  not tested. No performance advantage has been demonstrated.
+  not tested. A third pre-registered run (20 paired instances) stopped at its ceiling gate and was
+  uninformative: both arms completed 20 of 20 ([experiment-v3-results.md](../experiment-v3-results.md)).
+  All three experiments measured delivery of a fact. None tested what the protocol adds beyond
+  delivery (exclusive claims with mandatory expiry, owed replies, the history), which tests
+  verify with simulated agents and real processes but no experiment has measured with real
+  agents. No performance advantage has been demonstrated.
 * Anything about Codex, Cursor or other hosts beyond what [hosts.md](../hosts.md) says was
   and was not verified.
 

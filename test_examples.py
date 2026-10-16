@@ -140,6 +140,20 @@ class Demo(unittest.TestCase):
             self.assertEqual(cp.returncode, 0, cp.stdout + cp.stderr)
             self.assertEqual(not_a_dir.read_text(encoding="utf-8"), "x\n")
 
+    def test_takeover_is_opt_in_and_shows_expiry_then_a_rival_taking_over(self) -> None:
+        cp = run_demo("--takeover")
+        self.assertEqual(cp.returncode, 0, cp.stdout + cp.stderr)
+        out = cp.stdout
+        self.assertIn("== 8. a holder disappears, its lease expires, a rival takes over"
+                      "  (scripted, no model)\n", out)
+        self.assertIn("All 8 steps behaved as described.\n", out)
+        self.assertIn("[exit 3]", out[out.index("== 8."):])        # the rival is refused while live
+        self.assertIn("claims: held=1  expired=1  malformed_expiry=0", out)   # then it lapsed
+        self.assertRegex(out, r"(?m)^  billing/retry\.py  agent-a  \S+Z  0h59m$")   # then taken
+        self.assertEqual(cp.stderr, "")
+        plain = run_demo()                                  # without the flag: still 7 steps
+        self.assertNotIn("== 8.", plain.stdout)
+
     def test_usage_error_exits_2(self) -> None:
         cp = run_demo("--no-such-flag")
         self.assertEqual(cp.returncode, 2, cp.stdout + cp.stderr)
