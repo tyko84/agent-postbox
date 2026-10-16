@@ -1940,6 +1940,7 @@ and none of them changes which result stands or silences any message:
 | `UNATTACHED_RESULT` | an ANSWER carries a valid result and cites no ASK (above): applied to nothing |
 | `CONTESTED_RESULT` | one sender's ANSWERs cite the same ASK with different valid results (a resend with the same value is not a contest); the latest stands and the ASK is listed, once per sender |
 | `RESULT_FROM_THIRD_PARTY` | the ANSWER's `from` is not the ASK's `to`, compared as writer tokens (§27, the way `send` stores them); the result stands, and the reader is told whose claim it is |
+| `ANSWER_FROM_THIRD_PARTY` | the same test for an ANSWER with no `result:` at all (§45); it closes the ASK as before |
 
 Nothing is resolved or voided by the tool: which claim to believe is for the
 reader, as §12 and §34 already say of contested claims.
@@ -2240,3 +2241,26 @@ the authority.)
 and keep its exit status; a normal one does not print it. Skipped when running as root, where
 the permission bits do not bind. `test_cli.py` pins it.
 
+---
+
+## 45. A bare ANSWER from someone else is reported
+
+Any message citing an ASK's id closes it (§32), so an ANSWER from an agent the ASK was not
+addressed to closed it with no sign anything was unusual. §39 already reports that for an ANSWER
+that carries a `result:`; a plain ANSWER, the common case, was not reported.
+
+**Rule.** An ANSWER with no `result:` header whose `reply_to:` names an ASK in this mailbox, and
+whose `from` is not that ASK's `to` (writer tokens, as in §39), is one `ANSWER_FROM_THIRD_PARTY`
+row in the §39 attention list: reason, ask id, answer id, sender, and `-` where a result would be.
+It is also a problem code, counted in `status --json` `problems` after `RESULT_FROM_THIRD_PARTY`.
+Nothing else changes: the ASK is still `answered`, `owes_reply` is still false, the pickup adapter
+still stops delivering it, and nobody is blocked or refused. A reply that names no ASK here is §32's
+dangling reply and is not counted. An ANSWER that carries a malformed or valid `result:` keeps its
+§39 reason. Text `status` prints the attention rows even when no ANSWER carries a `result:`.
+
+**Why a flag and not a refusal.** A teammate may legitimately answer for someone who is away. The
+tool cannot tell that from a mistake; the reader can, so the reader is told.
+
+**Invariant a test must pin.** A bare ANSWER from a non-addressee is counted once and named in text
+`status`; the addressee's ANSWER and a dangling reply are not; the ASK stays closed and `status`
+writes nothing. `test_cli.py` pins it.

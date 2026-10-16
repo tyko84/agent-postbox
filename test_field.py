@@ -1064,7 +1064,8 @@ def scenario(td: Path, box: Path) -> None:
                             and r["observed_uid"] == me and r["bound_uid"] == other for r in rows_)
               and st_m["identity"]["mismatched"] == len(rows_)
               and st_m["identity"]["matched"] + len(rows_) == st_m["messages"]["total"]
-              and st_m["problems"] == [{"code": "IDENTITY_MISMATCH", "count": len(rows_)}],
+              and [q for q in st_m["problems"] if q["code"] != "ANSWER_FROM_THIRD_PARTY"]
+              == [{"code": "IDENTITY_MISMATCH", "count": len(rows_)}],   # section 45 is its own flag
               json.dumps(rows_)[:300] + str(n_alice))
         doc = run(box, "doctor")
         denied = send(box, "alice", "all", "NOTICE", "as alice", "must not land end")
