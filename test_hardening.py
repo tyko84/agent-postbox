@@ -17,6 +17,7 @@ import datetime as dt
 import faulthandler
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -39,13 +40,13 @@ def check(name: str, ok: bool, detail: str = "") -> None:
         FAILS.append(f"{name}: {detail[:300]}")
 
 
-def run(box: Path, *argv: str, env_extra: dict[str, str] | None = None
+def run(box: Path, *argv: str, env_extra: dict[str, str] | None = None, cwd: Path | None = None
         ) -> subprocess.CompletedProcess[str]:
     env = dict(os.environ, AGENT_MAIL_DIR=str(box))
     env.pop("AGENT_MAIL_IDEM_WAIT", None)  # the suite pins the default; never inherit one
     env.update(env_extra or {})
-    return subprocess.run([sys.executable, "-I", TOOL, *argv],
-                          capture_output=True, text=True, env=env, timeout=STEP_TIMEOUT)
+    return subprocess.run([sys.executable, "-I", TOOL, *argv], capture_output=True, text=True,
+                          env=env, timeout=STEP_TIMEOUT, cwd=cwd)
 
 
 def soon(hours: float) -> str:
@@ -1587,6 +1588,50 @@ def main() -> int:
         check("control: a send to an alias directly is a fan-out to its writers, no warning",
               direct19.returncode == 0 and direct19.stdout.count("wrote ") == 1
               and "warning" not in direct19.stderr, direct19.stdout + direct19.stderr)
+
+        print("20. a send warns when aliases fall through to a different participant registry")
+        r20 = Path(td) / "rec20"
+        box20, cwd20 = r20 / "mail", r20 / "cwd"
+        box20.mkdir(parents=True)
+        cwd20.mkdir()
+        reg20 = r20 / "PARTICIPANTS.md"
+        alias20 = cwd20 / "PARTICIPANTS.md"
+        reg20.write_text(
+            "| Identity | Reachable | Mechanism | Verified | can | cannot |\n"
+            "|---|---|---|---|---|---|\n"
+            "| `alice` | no | poll | no | | |\n| `bob` | no | poll | no | | |\n")
+        alias20.write_text("## Aliases\n\n| Alias | Writers |\n|---|---|\n| `team` | `bob` |\n")
+
+        def n20(to: str) -> subprocess.CompletedProcess:
+            return run(box20, "send", "--type", "NOTICE", "--from", "alice", "--to", to,
+                       "--subject", "s20", "--body", "b", cwd=cwd20)
+
+        fall20 = n20("team")
+        want20 = (f"warning: alias 'team' was read from {alias20}, but this mailbox's registry is "
+                  f"{reg20}; the copies go to that table's writers.")
+        check("alias from a later registry warns once and still files its copy",
+              fall20.returncode == 0 and fall20.stdout.count("wrote ") == 1
+              and fall20.stderr.count(want20) == 1, fall20.stdout + fall20.stderr)
+        direct20 = n20("bob")
+        check("a non-alias has no fall-through warning", direct20.returncode == 0
+              and "was read from" not in direct20.stderr, direct20.stdout + direct20.stderr)
+        reg20.write_text(reg20.read_text() + "\n## Aliases\n\n| Alias | Writers |\n|---|---|\n| `local` | `bob` |\n")
+        local20 = n20("local")
+        check("an alias in the selected registry has no fall-through warning", local20.returncode == 0
+              and "was read from" not in local20.stderr, local20.stdout + local20.stderr)
+
+        empty20 = Path(td) / "empty20"
+        baretool, barebox, barecwd = empty20 / "tool.py", empty20 / "mail", empty20 / "cwd"
+        empty20.mkdir()
+        barebox.mkdir()
+        barecwd.mkdir()
+        shutil.copy(TOOL, baretool)
+        bare = subprocess.run([sys.executable, "-I", str(baretool), "send", "--type", "NOTICE",
+                                "--from", "alice", "--to", "nobody", "--subject", "s20",
+                                "--body", "b"], capture_output=True, text=True, timeout=STEP_TIMEOUT,
+                               cwd=barecwd, env={**os.environ, "AGENT_MAIL_DIR": str(barebox)})
+        check("no registry has no fall-through warning", bare.returncode == 0
+              and "was read from" not in bare.stderr, bare.stdout + bare.stderr)
 
     faulthandler.cancel_dump_traceback_later()
     if FAILS:
