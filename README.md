@@ -2,28 +2,56 @@
 
 [![ci](https://github.com/tyko84/agent-postbox/actions/workflows/ci.yml/badge.svg)](https://github.com/tyko84/agent-postbox/actions/workflows/ci.yml)
 
-**Mail between coding agents that run in the same repository.**
+**A small file-based coordination ledger for AI coding agents that share a repository: exclusive claims with mandatory expiry, owed-reply tracking, and a history you can inspect afterwards.**
 
-If you run two or three coding-agent sessions on one repository (Claude Code, Codex, ...),
-you end up as the router: a question copied out of one session, pasted into another, the
-answer carried back. agent-postbox lets the agents write to each other instead. A message is
-a Markdown file in a directory of your repository. With a small hook installed, the receiving
-session sees waiting mail in its context at its next prompt, so it does not have to remember
-to look; hosts without a hook can poll with one command.
+If you run two or three coding-agent sessions on one repository (Claude Code, Codex, ...), you end
+up as the router and the referee: a question copied out of one session and pasted into another, a
+guess about who is editing which file. agent-postbox gives the sessions a shared ledger instead.
+Every entry is a Markdown file in a directory of your repository, and the tool derives what is
+open, held or expired from those files. What the protocol defines, and the tests check
+(PROTOCOL.md sections in brackets):
 
-It is for developers who already run several agent sessions themselves and want them to talk.
-It is **not** an orchestrator: it does not start, plan, assign or supervise anything, and it
-cannot make an agent act on a message. It is a mailbox plus a way to put mail in front of the
-reader.
+* **Exclusive claims.** A `CLAIM` on a `--scope` is a lease. A second claim on the same scope from
+  another sender is refused with exit 3 and nothing is written (sections 5, 30). This holds within
+  one mailbox: agents in separate worktrees or clones share a mailbox only if `AGENT_MAIL_DIR`
+  names one directory for all of them (`send` warns, section 43).
+* **Mandatory expiry.** `send` refuses a `CLAIM` without an expiry (at most 168 hours out), so a
+  session that dies cannot hold a scope forever: a lapsed claim stops counting as held, and a lock
+  left by a crashed claimant is reclaimed (sections 5, 30).
+* **Owed replies.** An `ASK` stays open, and visible to its recipient, until a later message cites
+  its id (sections 4, 19).
+* **Derived status, an inspectable history.** Status is computed from files the tool never edits.
+  `list` shows the full chronology, and `status` names who holds what and what a crash left
+  behind (sections 4, 19, 33, 34).
+* **Pickup, as a convenience.** With a small hook installed, the receiving session sees waiting
+  mail in its context at its next prompt; hosts without a hook poll with one command.
 
-No database, no daemon, no dependencies, no network. The tool is one Python file (standard
-library only), and identity is a name you choose.
+It is for developers who already run several agent sessions themselves. It is **not** an
+orchestrator: it does not start, plan, assign or supervise anything, and it cannot make an agent
+act on a message or honour a claim. No database, no daemon, no dependencies, no network. The tool is
+one Python file (standard library only), and identity is a name you choose.
 
-**What has and has not been shown.** The mechanism works and is heavily tested. A benefit has
-**not** been demonstrated: a pilot found no advantage over a shared notes file, and a larger
-pre-registered experiment went against Postbox under a restrictive permission mode (see
+**What has and has not been shown.** Tests (simulated agents and real processes, in CI) show that
+the tool behaves as listed above. No experiment with real agents has shown that these properties
+change what agents do or how well their work turns out. Three experiments measured something
+narrower, whether a fact reaches another session, and a shared notes file did as well or better:
+a pilot found no advantage, a pre-registered run went against Postbox (51 of 60 against 60 of 60,
+under a restrictive permission mode), and a third stopped at its ceiling and was uninformative (see
 [Evidence so far](#evidence-so-far)). Why it exists, and the design:
 [docs/adoption/why-postbox.md](docs/adoption/why-postbox.md).
+
+## When to use it, and when not to
+
+| Your situation | Verdict | What backs it |
+|---|---|---|
+| Several agent sessions share one working tree and you want a second claim on a file refused, with leases that expire | Fits | PROTOCOL.md sections 5 and 30; tests with real processes; step 6 of `examples/two-agents/run.py`. Claims are advisory, and no experiment has measured the effect on real agents |
+| You want to reconstruct afterwards who asked, held and answered what | Fits | Sections 4, 19, 34: status is derived from files; `list` is the chronology. It is not tamper-proof: a person can edit the files |
+| You only need a fact to reach another session ("the endpoint moved") | A shared notes file did as well in every experiment we ran | [Evidence so far](#evidence-so-far) |
+| Each agent already works on its own branch or worktree | Probably not needed for file conflicts | Belief, untested: separate checkouts avoid shared files. Claims across them need one shared `AGENT_MAIL_DIR` |
+| You need agents started, planned, assigned or supervised | Not this | It is not an orchestrator |
+| You need something that stops an agent that ignores a claim, or that authenticates who sent a message | Not this | Claims are advisory; `from:` is self-declared (Security and limitations; PROTOCOL.md section 40) |
+| You need proof that a requested action was done | Not this | `--result` is the sender's claim, never proof (PROTOCOL.md section 39) |
+| Several machines, a network filesystem, or Windows | Not supported | Local filesystems and POSIX only (Security and limitations) |
 
 ## Quickstart
 
