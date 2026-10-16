@@ -2221,3 +2221,22 @@ share one. Exit status, stdout, files and fields are unchanged; a main checkout,
 exits 0 and stderr carries the warning; the same CLAIM in a main checkout, with `AGENT_MAIL_DIR`
 set, without `--scope`, and a NOTICE in the worktree, do not. `test_cli.py` pins it.
 
+---
+
+## 44. `doctor` says when the mailbox cannot be written
+
+`doctor` reads the mailbox, so it passed (exit 0) on a directory this account could read but not
+write, and the first sign of the problem was `send` exiting 1 with a permission error.
+
+**Rule.** After `store: OK`, `doctor` prints one line `writable: NO: ...` when
+`os.access(box, W_OK | X_OK)` is false for the current account, and nothing otherwise. It is
+information like §33 and §41: it adds no FAIL reason, changes no exit status and no other line.
+A read-only mailbox can be intentional (a reviewer who only reads), so the line says what will
+and will not work and does not call it a fault. (`os.access` answers for the real uid and does
+not see every filesystem restriction, such as a read-only mount's exact errors; `send` remains
+the authority.)
+
+**Invariant a test must pin.** A mailbox directory with mode 0555 makes `doctor` print the line
+and keep its exit status; a normal one does not print it. Skipped when running as root, where
+the permission bits do not bind. `test_cli.py` pins it.
+

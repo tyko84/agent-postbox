@@ -1795,6 +1795,25 @@ def test_visibility(root: Path) -> None:
           r.returncode == base.returncode, f"{r.returncode} vs {base.returncode}")
 
 
+def test_doctor_writable_line(root: Path) -> None:
+    """`doctor` names a mailbox this account cannot write (PROTOCOL.md section 44)."""
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        return   # permission bits do not bind root
+    box = root / "dw" / "docs" / "agent-mail"
+    box.mkdir(parents=True)
+    (root / "dw" / ".git").mkdir()
+    base = run(None, "doctor", cwd=root / "dw")
+    check("a writable mailbox: doctor prints no writable line", "writable:" not in base.stdout,
+          base.stdout[-200:])
+    box.chmod(0o555)
+    try:
+        r = run(None, "doctor", cwd=root / "dw")
+    finally:
+        box.chmod(0o755)
+    check("a read-only mailbox: doctor says writable: NO and keeps its exit status",
+          "writable: NO" in r.stdout and r.returncode == base.returncode, f"{r.returncode} {r.stdout[-300:]}")
+
+
 def test_claim_in_linked_worktree_warns(root: Path) -> None:
     """A scoped CLAIM in a linked worktree's own default mailbox excludes nobody else, and
     `send` now says so on stderr (PROTOCOL.md section 43). Stderr only: exit and stdout as before."""
@@ -2125,6 +2144,7 @@ def main() -> int:
         test_linked_worktree(root)
         test_send_permission_line(root)
         test_claim_in_linked_worktree_warns(root)
+        test_doctor_writable_line(root)
     faulthandler.cancel_dump_traceback_later()
     if KNOWN:
         print(f"\nKNOWN ({len(KNOWN)}; defects outside this file's reach, not failures):")
