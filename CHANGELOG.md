@@ -9,6 +9,10 @@ behaviour).
 
 ### Fixed
 
+- `send --to <alias>` now warns on stderr when the alias was read from a different PARTICIPANTS.md than
+  the mailbox's own registry (a working directory's or a public checkout's example table could fan mail
+  out to names the mailbox never declared). Which table wins, the exit status and the copies filed are
+  unchanged (PROTOCOL.md section 49). Found and test-covered by the Codex session.
 - A recipient who never writes is no longer invisible: `status` counts a name that has an
   unanswered ASK as old as `--stalled-hours` and never sent a message as `SILENT_RECIPIENT`, and
   `doctor` names it (PROTOCOL.md section 48). `agents` itself is unchanged.

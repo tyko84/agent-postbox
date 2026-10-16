@@ -747,6 +747,8 @@ Declare aliases in an **Aliases** table (separate from Identity rows):
   sender, scope and expiry, addressed to a writer, filed within a minute), so
   one release frees the scope.
 
+An alias read from a different registry file than the mailbox's own is warned about on `send` (§49).
+
 **Falsifier (Ledger).** `to=alias` ASK shows unanswered / 0 replies while
 ANSWERs exist under mapped writer tokens.
 
@@ -2110,7 +2112,7 @@ match is `difflib`'s closest row, when there is one. The message is filed anyway
 like that. Nothing is said for a mailbox with no table, an empty table, or one that
 cannot be read (those commands already refuse on an unreadable table). The check reads
 `PARTICIPANTS.md` only; it never scans the mailbox. A fan-out through an alias warns
-for none of its writers that have a row. A writer that is itself an alias (an alias naming
+for none of its writers that have a row. An alias that came from a different registry file than the mailbox's own is a separate warning (§49). A writer that is itself an alias (an alias naming
 another alias, or its own name) is not a row: aliases expand at send time and do not nest
 (section 27), so the copy filed to that name is read by nobody, and `send` says so once per
 such copy (`warning: --to 'inner' is an alias, not an Identity row in PARTICIPANTS.md, so
@@ -2341,3 +2343,33 @@ something is wrong.
 **Invariant a test must pin.** An unanswered ASK to a name that never wrote is counted once it is
 as old as the threshold and not before; a name that wrote, an ASK that was answered by anyone, and
 a young ASK are not counted; nothing is written. `test_cli.py` pins it.
+
+---
+
+## 49. An alias read from another registry file is warned about
+
+`load_participants` (identities and capabilities) uses the **first** PARTICIPANTS.md that exists among
+the candidates in this order: the mailbox directory, its parent, the working directory, the tool's own
+directory. `load_aliases` (§27) uses the first file that has a **non-empty** Aliases table, so it can fall
+through to a later candidate. That fall-through is deliberate (a mailbox-local file that only declares
+capabilities must not hide a complete table elsewhere) but it can reach a file that is not this mailbox's:
+a public checkout's own example `team -> agent-a, agent-b` fanned a private mailbox's mail out to two
+names its registry never declared. §41 already says the working-directory and tool-adjacent files are not
+this mailbox's; alias lookup did not agree. Found by the Codex session in the cross-host work of
+2026-10-16.
+
+**Rule.** `send --to <alias>` writes **one** extra line on stderr, after its other output, when the alias
+was found in a file other than the one `load_participants` selects:
+`warning: alias 'NAME' was read from PATH_A, but this mailbox's registry is PATH_R; the copies go to that
+table's writers. Declare the alias in the mailbox's own PARTICIPANTS.md, or this is the wrong table.`
+`NAME` is the alias as typed, lower-cased; both paths are absolute and canonical (symlinks resolved, so a
+file is never printed under two names). One alias per `send`; `ask --to a,b` sends once per recipient, so
+each alias that fell through warns once. Which table wins is **not** changed, and neither are the exit
+status, stdout or the copies filed. Nothing is said when the alias is in the selected registry, when `--to`
+is not an alias, or when no registry file exists. No new `--json` key, and `status`, `list` and `doctor`
+are unchanged.
+
+**Invariant a test must pin.** From a working directory whose PARTICIPANTS.md declares the alias, with a
+mailbox registry that does not, `send --to <alias>` exits 0, files its copies and prints exactly one
+warning; a non-alias, an alias declared in the mailbox's own registry, and a mailbox with no registry at
+all print none. `test_hardening.py` section 20 pins it.
