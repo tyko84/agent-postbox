@@ -41,7 +41,6 @@ def reconstruct(tool: str, box: str) -> dict:
     # `date` has one-second resolution, so ties on date are common and the id
     # is the only tie-break the record offers.
     rows.sort(key=lambda m: m["id"].upper())
-    by_id = {m["id"].upper(): m for m in rows}
     superseders: dict[str, list[dict]] = {}
     for m in rows:
         if m["supersedes"]:
