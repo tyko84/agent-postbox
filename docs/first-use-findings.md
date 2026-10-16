@@ -40,6 +40,19 @@ mine). It shows only that nothing regressed. The time is dominated by the networ
    now prints that for the claude-code adapter.
 5. Step 2 is not needed to install; it is a demo and can be skipped.
 
+## Re-run, second pass (2026-10-15, zsh, branch dev/host-2)
+
+Quickstart steps 3 to 5 scripted in zsh in three fresh projects: plain, a path with a space, and
+an existing `.claude/settings.json` (model, permissions, a `PostToolUse` hook). Install 0.03 s,
+each `send` 0.05 s, `doctor` 0.05 s (exit 2 only for the missing canary); the existing-settings
+project kept every key and wrote `settings.json.bak`. Reinstall: `already registered (no change)`.
+The troubleshooting removal block, run from a file in zsh: restored the existing-settings project
+byte for byte and emptied the space project, exit 0 both times. Observation for the
+README owner: the Quickstart's step 3 and the "commit `.claude/settings.json`" item do not say to
+commit `tools/agent-postbox/` too; a linked worktree or clone with the setting but without the tool
+gets no mail and no message in the interactive UI (stderr only). `install.py` now says it.
+Also seen, outside my files: `send --reply-to ""` is accepted and files an ANSWER.
+
 ## Edge cases tried
 
 | Case | Result |
