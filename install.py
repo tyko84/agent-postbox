@@ -63,6 +63,7 @@ import re
 import shlex
 import shutil
 import stat
+import subprocess
 import sys
 from pathlib import Path
 
@@ -112,28 +113,66 @@ def occupied_ancestor(project: Path, mailbox_rel: str) -> Path | None:
     return None
 
 
-def python_cmd() -> str:
-    """`python3`, else `python`, else this interpreter's path -- whichever
-    actually runs on this host. (Kept local: install.py runs from the spec
-    checkout and does not import agent_mail.)"""
+def hook_python_cmd() -> tuple[str | None, str]:
+    """Return a portable supported hook command and a diagnostic.
+
+    Hook settings are intended to be committed, so they must name `python3` or
+    `python`, never the installer's machine-specific executable.  Probe the
+    command that the hook will actually resolve instead of assuming that a
+    `python3` on PATH is new enough for this tool.
+    """
+    seen: list[str] = []
     for name in ("python3", "python"):
-        if shutil.which(name):
-            return name
+        if shutil.which(name) is None:
+            seen.append(f"{name}: not found")
+            continue
+        try:
+            probe = subprocess.run(
+                [name, "-c", "import sys; print(f'{sys.version_info[0]}.{sys.version_info[1]}')"],
+                capture_output=True, text=True, timeout=2, check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            seen.append(f"{name}: cannot run")
+            continue
+        match = re.fullmatch(r"(\d+)\.(\d+)", probe.stdout.strip())
+        if probe.returncode == 0 and match:
+            version = tuple(map(int, match.groups()))
+            if version >= (3, 10):
+                return name, "; ".join(seen)
+            seen.append(f"{name}: {version[0]}.{version[1]}")
+        else:
+            seen.append(f"{name}: cannot determine version")
+    return None, "; ".join(seen)
+
+
+def hook_python_refusal() -> str | None:
+    command, seen = hook_python_cmd()
+    if command is not None:
+        return None
+    return ("no Python 3.10+ interpreter on PATH for the committed hook command "
+            f"({seen}); install Python 3.10+ or put it on PATH, then re-run")
+
+
+def python_cmd() -> str:
+    """The interpreter that ran this installer, used only in local instructions."""
     return sys.executable
 
 
 def hook_command(dest_rel: str, adapter: str = "claude-code") -> str:
     # A bare `python` does not exist on stock macOS; a hook that cannot start
     # delivers nothing, and looks exactly like an empty inbox.
+    command, _ = hook_python_cmd()
+    if command is None:  # main refuses before a hook command can be written.
+        raise RuntimeError("no supported hook interpreter on PATH")
     if adapter == "codex":
         # Codex runs a hook with the session's cwd, which may be a subdirectory,
         # and documents resolving repo-local hooks from the git root. `|| true`:
         # see safety rule 7.
-        return (f'{python_cmd()} "$(git rev-parse --show-toplevel)/{dest_rel}/hooks/'
+        return (f'{command} "$(git rev-parse --show-toplevel)/{dest_rel}/hooks/'
                 f'{HOOK_MARKER}" || true')
     # Claude Code: "exit 2 ... Blocks the prompt, so it never reaches Claude"
     # (https://code.claude.com/docs/en/hooks). `|| true`: see safety rule 7.
-    return f'{python_cmd()} "$CLAUDE_PROJECT_DIR/{dest_rel}/hooks/{HOOK_MARKER}" || true'
+    return f'{command} "$CLAUDE_PROJECT_DIR/{dest_rel}/hooks/{HOOK_MARKER}" || true'
 
 
 # The claude-code command this installer wrote before it ended in `|| true`:
@@ -514,7 +553,8 @@ def main() -> int:
 
     dest_rel = args.dest.replace("\\", "/").strip("/")
     dest = project / dest_rel
-    refusal = escaped or path_refusal(
+    runtime_refusal = hook_python_refusal() if args.adapter else None
+    refusal = escaped or runtime_refusal or path_refusal(
         project, dest_rel, args.mailbox) or (
         codex_refusal(project, dest_rel) if args.adapter == "codex"
         else claude_refusal(project, dest_rel) if args.adapter == "claude-code" else None
