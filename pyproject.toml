@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "tyko84-agent-postbox"
 dynamic = ["version"]
-description = "Inter-agent mail for a code repo, with delivery that does not depend on the agent remembering to look."
+description = "A file-based coordination ledger for AI coding agents that share a repository: exclusive claims with mandatory expiry, owed replies, and an inspectable history."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"

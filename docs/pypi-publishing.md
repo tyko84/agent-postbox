@@ -35,7 +35,7 @@ maintainer reviews, **C** is the owner of the CI workflows.
 | 2 | No upload job in `release.yml`, and the PyPA action is not allowed by the actions policy | C, then A for the policy | The job is drafted below; the policy change is checklist step 6 |
 | 3 | No PyPI account, no pending publisher, no GitHub environment `pypi`, no `PYPI_PUBLISH` variable | A | Checklist steps 3 to 5, 8 |
 | 4 | The first PyPI release must be a **new version**, not v0.5.0: v0.5.0's tag is permanent, its README says "Not on PyPI" and its relative links would be dead on PyPI | A (decides), R (version and changelog) | `Unreleased` holds changes made since. Uploading the v0.5.0 files by hand would put an out-of-date README on the project page |
-| 5 | README links are relative (33 links, 23 distinct, 3 of them fragment-only, as of 2026-10-16) and PyPI does not resolve them | R | Before the first published release, make every relative link absolute (`https://github.com/tyko84/agent-postbox/blob/main/<path>`), review the diff, and re-run `test_readme_examples.py` and `test_publication.py`. Fragment-only links such as `#install` also break on PyPI; reword them. `twine check` does not catch this |
+| 5 | README links are relative (35 links, 24 distinct, 4 of them fragment-only, as of 2026-10-16 at `c832fe1`) and PyPI does not resolve them | R | Before the first published release, make every relative link absolute (`https://github.com/tyko84/agent-postbox/blob/main/<path>`), review the diff, and re-run `test_readme_examples.py` and `test_publication.py`. Fragment-only links such as `#install` also break on PyPI; reword them. `twine check` does not catch this |
 | 6 | README and docs say "Not on PyPI" | R | List under "Wording to change", in the same release as the first upload |
 | 7 | Rehearsal on TestPyPI not done | A | Optional but recommended: it is the only way to see the action start under the actions policy |
 
@@ -99,7 +99,7 @@ setuptools 84.0.0):
    `pyproject.toml` before the first upload if another name should appear;
    metadata of an uploaded file cannot be edited afterwards.
 3. **The README as a project page.** PyPI renders the README but does not
-   resolve relative links. The README has 33 of them (23 distinct, 3 fragment-only) as of 2026-10-16, among them `SECURITY.md`,
+   resolve relative links. The README has 35 of them (24 distinct, 4 fragment-only) as of 2026-10-16 at `c832fe1`, among them `SECURITY.md`,
    `PROTOCOL.md`, `docs/packaging.md`, `CONTRIBUTING.md`, `CHANGELOG.md`: on
    PyPI they would lead nowhere. Make them absolute
    (`https://github.com/tyko84/agent-postbox/blob/main/...`) in the release that
