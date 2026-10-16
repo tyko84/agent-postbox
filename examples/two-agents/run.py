@@ -4,6 +4,7 @@
     python examples/two-agents/run.py            # run it; a few seconds
     python examples/two-agents/run.py --pause    # wait for Enter between steps
     python examples/two-agents/run.py --keep     # leave the project directory behind
+    python examples/two-agents/run.py --takeover # add step 8: a lease expires, a rival takes over
 
 What is real: every command printed after a `$` is run as a subprocess, and
 the text under it is what that command printed. The installer is this clone's
@@ -36,6 +37,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]          # the clone
@@ -45,6 +47,8 @@ MAILBOX = "docs/agent-mail"
 SCOPE = "billing/client.py"
 SUBJECT = "can you add a retry test for the billing client?"
 TIMEOUT = 60
+LEASE_SCOPE = "billing/retry.py"
+LEASE_SECONDS = 3                                   # step 8 only: a deliberately short lease
 _ID = re.compile(r"^id: ([0-9A-HJKMNP-TV-Z]{26})$", re.M)
 
 
@@ -53,9 +57,10 @@ class StepFailed(Exception):
 
 
 class Demo:
-    def __init__(self, project: Path, pause: bool) -> None:
+    def __init__(self, project: Path, pause: bool, takeover: bool = False) -> None:
         self.project = project
         self.pause = pause
+        self.takeover = takeover
         self.step_no = 0
         self.title = ""
         self.env = {k: v for k, v in os.environ.items() if not k.startswith("AGENT_MAIL")}
@@ -247,6 +252,61 @@ def play(d: Demo) -> None:
     d.check("PROBLEMS:" not in cp.stdout and "quarantined: 0" in cp.stdout,
             "status reports no problems")
 
+    if d.takeover:
+        takeover(d)
+
+
+def takeover(d: Demo) -> None:
+    """Step 8 (opt-in, `--takeover`): a holder that never renews loses the scope.
+
+    Scripted, no model. The only wait is the real clock running past a 3 second lease,
+    because `send` refuses an expiry in the past and the tool reads the real time."""
+    d.step("a holder disappears, its lease expires, a rival takes over  (scripted, no model)",
+           f"agent-b takes a deliberately short lease ({LEASE_SECONDS} s) on {LEASE_SCOPE} and then",
+           "does nothing more: it has crashed. Nothing releases the scope but the clock.")
+    expires = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=LEASE_SECONDS)
+               ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    cp = d.mail("send", "--type", "CLAIM", "--from", "agent-b", "--to", "agent-a",
+                "--subject", "editing the retry module", "--scope", LEASE_SCOPE,
+                "--expires", expires, "--body-file", "-", identity="agent-b",
+                stdin="Working on retry.py; will renew if I need longer.\n")
+    held = new_id(cp)
+    d.check(True, f"agent-b holds {LEASE_SCOPE} until {expires} ({held})")
+    before = d.message_files()
+    cp = d.mail("send", "--type", "CLAIM", "--from", "agent-a", "--to", "agent-b",
+                "--subject", "retry module please", "--scope", LEASE_SCOPE,
+                "--expires", (dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=1)
+                              ).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "--body-file", "-", identity="agent-a", stdin="Taking over if it frees up.\n")
+    d.check(cp.returncode == 3 and f"scope '{LEASE_SCOPE}' is already held by agent-b" in cp.stdout,
+            "while the lease is live, agent-a is refused with exit 3")
+    d.check(d.message_files() == before, "the refusal wrote nothing")
+
+    left = (dt.datetime.strptime(expires, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=dt.timezone.utc)
+            - dt.datetime.now(dt.timezone.utc)).total_seconds()
+    print(f"\n... agent-b never renews. Waiting for the lease to run out ({max(left, 0):.0f} s) ...")
+    sys.stdout.flush()
+    lapsed = dt.datetime.strptime(expires, "%Y-%m-%dT%H:%M:%SZ").replace(
+        tzinfo=dt.timezone.utc) + dt.timedelta(seconds=1)     # status reads whole seconds
+    while dt.datetime.now(dt.timezone.utc) < lapsed:
+        time.sleep(0.2)
+    cp = d.mail("status", "--scope", LEASE_SCOPE, identity="agent-a")
+    d.check(cp.returncode == 0 and re.search(r"^claims: held=1\s+expired=1\b", cp.stdout, re.M)
+            is not None and LEASE_SCOPE not in cp.stdout.split("held claims", 1)[-1],
+            f"the lease on {LEASE_SCOPE} is now expired (expired=1), no longer a held claim")
+
+    cp = d.mail("send", "--type", "CLAIM", "--from", "agent-a", "--to", "agent-b",
+                "--subject", "retry module, taken over", "--scope", LEASE_SCOPE,
+                "--expires", (dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=1)
+                              ).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "--body-file", "-", identity="agent-a", stdin="agent-b's lease lapsed.\n")
+    taken = new_id(cp)
+    d.check(True, f"agent-a's claim on {LEASE_SCOPE} was written ({taken})")
+    cp = d.mail("status", "--scope", LEASE_SCOPE, identity="agent-a")
+    d.check(re.search(rf"^  {re.escape(LEASE_SCOPE)}\s+agent-a\b", cp.stdout, re.M) is not None
+            and "expired=1" in cp.stdout and len(d.message_files()) == len(before) + 2,
+            f"{LEASE_SCOPE} is held by agent-a; agent-b's expired claim is still in the mailbox")
+
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
@@ -256,6 +316,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="leave the throwaway project directory behind and print its path")
     ap.add_argument("--pause", action="store_true",
                     help="wait for Enter between steps (for reading along or recording)")
+    ap.add_argument("--takeover", action="store_true",
+                    help="add step 8: a holder's short lease expires and a rival takes over "
+                         "(waits about 4 seconds; scripted, no model)")
     args = ap.parse_args(argv)
     if sys.version_info < (3, 10):  # noqa: UP036  (say so, instead of a traceback)
         print("agent-postbox needs Python 3.10 or newer", file=sys.stderr)
@@ -268,7 +331,7 @@ def main(argv: list[str] | None = None) -> int:
     except OSError as e:
         print(f"FAILED before step 1: no temporary directory: {e}", file=sys.stderr)
         return 1
-    demo = Demo(project, args.pause)
+    demo = Demo(project, args.pause, args.takeover)
     print("agent-postbox: two scripted sessions, the real tool. No model, no network.")
     print(f"  python    = {sys.executable}")
     print(f"  <clone>   = {ROOT}")
