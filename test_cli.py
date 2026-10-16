@@ -1633,6 +1633,64 @@ def test_participants_not_utf8(root: Path) -> None:
     check("control: ...and send writes", r.returncode == 0 and "wrote " in r.stdout, r.stderr)
 
 
+def test_participants_table(root: Path) -> None:
+    print("\nPARTICIPANTS.md edited by hand: duplicate rows, a duplicated alias, an alias that is also an identity")
+    box = root / "participants-table"
+    box.mkdir()
+    ids = "| Identity | can | cannot |\n|---|---|---|\n| `a` | | |\n| `bob` | | |\n| `c1` | | |\n| `c2` | | |\n"
+
+    def table(extra: str) -> None:
+        (box / "PARTICIPANTS.md").write_text(ids + extra, encoding="utf-8")
+
+    def send(to: str, subject: str) -> subprocess.CompletedProcess[str]:
+        return run(box, "send", "--type", "NOTICE", "--from", "a", "--to", to, "--subject", subject,
+                   "--body", "b")
+
+    def sees(who: str, subject: str) -> bool:
+        return subject in run(box, "list", "--to", who).stdout
+
+    table("\n## Aliases\n\n| Alias | Writers |\n|---|---|\n| `team` | `c1` |\n| `team` | `c2` |\n")
+    r = send("team", "dup-alias")
+    check("an alias with two rows reaches the writers of both (the second used to replace the first, "
+          "so c1 silently got nothing)",
+          r.returncode == 0 and r.stdout.count("wrote ") == 2 and sees("c1", "dup-alias")
+          and sees("c2", "dup-alias"), r.stdout + r.stderr)
+    table("\n## Aliases\n\n| Alias | Writers |\n|---|---|\n| `team` | `c1`, `c1` |\n")
+    r = send("team", "twice")
+    check("control: a writer named twice in one row is one recipient, one copy",
+          r.returncode == 0 and r.stdout.count("wrote ") == 1, r.stdout + r.stderr)
+
+    table("\n## Aliases\n\n| Alias | Writers |\n|---|---|\n| `bob` | `c1`, `c2` |\n")
+    r = send("bob", "collide")
+    check("an alias that is also an Identity row (section 27 forbids it): the send still fans out, exit 0, "
+          "and one stderr line says bob itself receives nothing",
+          r.returncode == 0 and r.stdout.count("wrote ") == 2 and r.stderr.startswith("warning: --to 'bob'")
+          and "alias and an Identity row" in r.stderr and len(r.stderr.splitlines()) == 1, r.stdout + r.stderr)
+    table("\n## Aliases\n\n| Alias | Writers |\n|---|---|\n| `team` | `c1`, `c2` |\n")
+    r = send("team", "fine")
+    check("control: an alias that is not an Identity row warns about nothing",
+          r.returncode == 0 and r.stderr == "", r.stderr)
+    r = send("alias", "word")
+    check("the Aliases table's own header word is not an identity: sending to it is a warned typo",
+          r.returncode == 0 and r.stderr.startswith("warning: --to 'alias'")
+          and "(Known: a, bob, c1, c2.)" in r.stderr, r.stderr)
+    r = run(box, "capability", "--identity", "team", "--capability", "read")
+    check("...and an alias has no capability row of its own", (r.returncode, r.stdout) == (0, "CANNOT_VERIFY\n"),
+          r.stdout + r.stderr)
+
+    (box / "PARTICIPANTS.md").write_text(
+        "| Identity | can | cannot |\n|---|---|---|\n| `x` | review | |\n| `X` | | review |\n", encoding="utf-8")
+    r = run(box, "capability", "--identity", "x", "--capability", "review")
+    check("two rows for one identity, one saying can and one cannot: cannot, whichever comes first",
+          (r.returncode, r.stdout) == (0, "cannot\n"), r.stdout + r.stderr)
+    (box / "PARTICIPANTS.md").write_text(
+        "| Identity | can | cannot |\n|---|---|---|\n| `x` | | review |\n| `x` | review, ro | |\n", encoding="utf-8")
+    r = run(box, "capability", "--identity", "x", "--capability", "review")
+    r2 = run(box, "capability", "--identity", "x", "--capability", "ro")
+    check("...and each row's other capabilities still count (the later row no longer erases the earlier)",
+          r.stdout == "cannot\n" and r2.stdout == "can\n", r.stdout + r2.stdout)
+
+
 def test_visibility(root: Path) -> None:
     print("\na mistyped recipient and a dead pickup are visible (section 41)")
     box = root / "visibility-box"
@@ -2056,6 +2114,7 @@ def main() -> int:
         test_fuzz(root)
         test_timestamps(root)
         test_participants_not_utf8(root)
+        test_participants_table(root)
         test_visibility(root)
         test_linked_worktree(root)
         test_send_permission_line(root)
