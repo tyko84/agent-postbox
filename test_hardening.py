@@ -1507,6 +1507,40 @@ def main() -> int:
         check("no sibling copy keeps holding the released scope",
               sum(1 for r in st17["claims_held"] if r["scope"] == "t17") == 1, str(st17["claims_held"]))
 
+        print("18. releasing the newest of one's own claims does not say a scope is released while "
+              "an older claim of one's own still holds it (PROTOCOL.md section 42)")
+        r18 = Path(td) / "rec18"
+        r18.mkdir()
+
+        def c18(frm: str, scope: str | None, *extra: str) -> subprocess.CompletedProcess:
+            return run(r18, "send", "--type", "CLAIM", "--from", frm, "--to", "ops", "--subject", "hold",
+                       "--body", "b", *(["--scope", scope] if scope else []), "--expires", soon(1), *extra)
+
+        def id18(cp: subprocess.CompletedProcess) -> str:
+            return next(x.split(": ", 1)[1] for x in cp.stdout.splitlines() if x.startswith("id: "))
+
+        a18 = c18("zed", "f18")
+        b18 = c18("zed", "f18")          # a restarted session re-claims; it cannot know a18
+        rel18 = c18("zed", None, "--supersedes", id18(b18))
+        check("control: both claims are held and the release is accepted (exit 0)",
+              a18.returncode == 0 and b18.returncode == 0 and rel18.returncode == 0, rel18.stderr)
+        check("the note does not claim the scope is released and names the claim that holds it",
+              "is released" not in rel18.stderr and "NOT released" in rel18.stderr
+              and id18(a18) in rel18.stderr, rel18.stderr)
+        riv18 = c18("yan", "f18")
+        check("and it is true: a rival is still refused with exit 3 naming zed",
+              riv18.returncode == 3 and "already held by zed" in riv18.stderr, riv18.stderr)
+        one18 = c18("zed", "g18")
+        rel18b = c18("zed", None, "--supersedes", id18(one18))
+        check("control: with no other claim of one's own the old note is unchanged",
+              rel18b.returncode == 0 and "'g18' is released" in rel18b.stderr
+              and "NOT released" not in rel18b.stderr, rel18b.stderr)
+        fin18 = c18("zed", None, "--supersedes", id18(a18))
+        riv18 = c18("yan", "f18")
+        check("superseding the older claim too says released, and the rival then succeeds",
+              fin18.returncode == 0 and "'f18' is released" in fin18.stderr and riv18.returncode == 0,
+              fin18.stderr + riv18.stderr)
+
     faulthandler.cancel_dump_traceback_later()
     if FAILS:
         print("\nFAILED:")

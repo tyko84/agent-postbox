@@ -2154,3 +2154,36 @@ mailbox was found by walking up); reports the identity set and unset; and
 exits as it did without any of the lines. `test_cli.py` pins both, and the `send_permission` line (no
 `.claude/`, no rule, an identical rule, a different rule, `Bash(*)`, unreadable settings, files
 never written).
+
+---
+
+## 42. The release note tells the truth when a scope is held twice
+
+§5 lets a sender re-claim its own scope, and a re-claim without `--supersedes`
+(a restarted session cannot know the id of the claim its predecessor filed)
+files a second held claim on the same scope. §32 says a claim is released by
+superseding it with a claim that names no scope or another one, and `send` says
+so on stderr. With two held claims of one sender on the scope, superseding the
+newer one printed `'X' is released` while the older one still held `X`: a
+rival's claim was refused (exit 3) for up to 168 hours after the owner had
+been told the scope was free.
+
+**Rule.** After a CLAIM that supersedes a claim of its own sender and names a
+different scope than the superseded claim (or none), `send` reads the mailbox
+again. If the sender still has any held (§19) CLAIM on the old scope, the note
+is instead
+
+`note: the superseded claim held scope 'X' and this one names ..., but 'X' is NOT released: you still hold it through N other claim(s) (<ids>); supersede each to release it`
+
+with at most three ids and `...` after them. Otherwise the §32 note is
+unchanged, byte for byte. Only stderr text in the first case changes. No exit
+code, file or field changes, and a claim is never superseded implicitly: the
+record shows exactly what the sender filed. To find the ids, `status --json
+--scope X` (§34) lists them.
+
+**Invariant a test must pin.** Two held claims by one sender on a scope;
+superseding the newer with a scope-less CLAIM exits 0, the note contains `NOT
+released` and the older claim's id and not `is released`, and a rival is still
+refused (exit 3). Superseding the older one too prints `is released` and the
+rival then succeeds. A sender with one claim gets the §32 note unchanged.
+`test_hardening.py` section 18 pins this.

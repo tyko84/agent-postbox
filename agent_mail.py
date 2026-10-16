@@ -2510,9 +2510,27 @@ def cmd_send(args: argparse.Namespace) -> int:
             _scope_unlock(lock, lock_fd)  # only ever a lock this process holds
         trap.restore()
     if dropped_scope:
-        print(f"note: the superseded claim held scope {dropped_scope!r} and this one names "
-              f"{('scope ' + repr(scope)) if scope else 'no scope'}: {dropped_scope!r} is released",
-              file=sys.stderr)
+        # PROTOCOL.md section 42: the scope is free only if this sender holds it through no
+        # other unsuperseded claim (a re-claim after a restart files a second one).
+        still: list[Message] = []
+        try:
+            current, _ = load_messages()
+            still = [m for m in current
+                     if m.type == "CLAIM" and m.sender == sender
+                     and (m.meta.get("scope") or "").strip() == dropped_scope
+                     and derived_status(m, current, now) == "held"]
+        except OSError:
+            pass
+        if still:
+            ids = ", ".join(m.id for m in still[:3]) + (", ..." if len(still) > 3 else "")
+            print(f"note: the superseded claim held scope {dropped_scope!r} and this one names "
+                  f"{('scope ' + repr(scope)) if scope else 'no scope'}, but {dropped_scope!r} is "
+                  f"NOT released: you still hold it through {len(still)} other claim(s) ({ids}); "
+                  f"supersede each to release it", file=sys.stderr)
+        else:
+            print(f"note: the superseded claim held scope {dropped_scope!r} and this one names "
+                  f"{('scope ' + repr(scope)) if scope else 'no scope'}: {dropped_scope!r} is released",
+                  file=sys.stderr)
     print(f"wrote {final}")
     print(f"id: {msg_id}")
     if (note := unknown_recipient_note(to, mtype)) is not None:
