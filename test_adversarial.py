@@ -887,6 +887,18 @@ def hostile_output(root: Path) -> None:
         check(f"--dest {bad!r} is refused (exit 2) before anything is written",
               r.returncode == 2 and "cannot quote" in r.stderr and not (proj / ".claude").exists()
               and not (proj / bad).exists(), r.stdout + r.stderr)
+    lone = root / "inst-lone-src"
+    lone.mkdir()
+    (lone / "install.py").write_bytes((HERE / "install.py").read_bytes())   # without its payload
+    proj = root / "inst-lone-proj"
+    (proj / ".git").mkdir(parents=True)
+    r = subprocess.run([sys.executable, "-I", str(lone / "install.py"), str(proj)],
+                       capture_output=True, text=True, timeout=120)
+    check("install.py run without its payload is refused (exit 2), names the missing files, and "
+          "copies nothing",
+          r.returncode == 2 and "is missing" in r.stderr and "agent_mail.py" in r.stderr
+          and "Nothing was changed" in r.stderr and not (proj / "tools").exists()
+          and not (proj / "docs").exists(), r.stdout + r.stderr)
     elsewhere = root / "elsewhere"
     elsewhere.mkdir()
     link_p = root / "inst-link"
