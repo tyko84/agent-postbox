@@ -3636,6 +3636,9 @@ def pickup_hook_lines(root: Path) -> list[str]:
 def cmd_doctor(args: argparse.Namespace) -> int:
     """Read-only mailbox health. Never mutates. Never invents authorship."""
     box = mail_dir()
+    # Resolved before anything is printed: a deleted cwd must refuse up front, not after a
+    # full report that ends in an exit-2 traceback-free abort at the hook lines.
+    root = project_root()
     failures: list[str] = []
     print(f"# doctor  mailbox: {box}  ({mailbox_source()})")
 
@@ -3742,17 +3745,17 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                             "OS owner is not the bound uid of the self-declared sender")
 
     # PROTOCOL.md section 41: where mail is surfaced from. Reported, never a reason to FAIL.
-    for line in pickup_hook_lines(project_root()):
+    for line in pickup_hook_lines(root):
         print(line)
     who = os.environ.get("AGENT_MAIL_IDENTITY", "").strip()
     print(f"AGENT_MAIL_IDENTITY: {who.lower()!r}" if who else
           "AGENT_MAIL_IDENTITY: UNSET in this shell: the pickup adapter prints "
           "nothing without it, which looks exactly like an empty inbox")
 
-    if (wt := linked_worktree_line(project_root())) is not None:
+    if (wt := linked_worktree_line(root)) is not None:
         print(wt)
 
-    for line in send_permission_lines(project_root()):
+    for line in send_permission_lines(root):
         print(line)
 
     canary = find_live_canary(everything, now=now)

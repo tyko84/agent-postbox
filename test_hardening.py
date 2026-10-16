@@ -1473,6 +1473,14 @@ def main() -> int:
                       and cp.stderr.startswith("refusing: the working directory cannot be read")
                       and len(cp.stderr.strip().splitlines()) == 1, cp.stdout + cp.stderr)
 
+        cp = subprocess.run([sys.executable, "-I", "-c", gone_shim, td, TOOL, "doctor"],
+                            capture_output=True, text=True,
+                            env=dict(gone_env, AGENT_MAIL_DIR=str(gone_box)), timeout=STEP_TIMEOUT)
+        check("deleted cwd, doctor: refuses up front (one line, exit 2, nothing printed first)",
+              cp.returncode == 2 and cp.stdout == "" and "Traceback" not in cp.stderr
+              and cp.stderr.startswith("refusing: the working directory cannot be read")
+              and len(cp.stderr.strip().splitlines()) == 1, cp.stdout + cp.stderr)
+
         print("17. a renewed claim is not an orphan, and a claim sent to an alias is renewed whole "
               "(PROTOCOL.md sections 5, 27, 32, 34)")
         r17 = Path(td) / "rec17"

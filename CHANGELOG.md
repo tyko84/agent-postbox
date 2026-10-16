@@ -9,6 +9,9 @@ behaviour).
 
 ### Fixed
 
+- `doctor` with a deleted working directory and `AGENT_MAIL_DIR` set now refuses up front (one
+  line on stderr, exit 2, nothing on stdout) instead of printing the whole report and then
+  aborting at the hook lines with the same refusal.
 - Timestamps (`date`, `expires`, `--now`, `--since`) are read by Postbox's own parser instead of
   `datetime.fromisoformat`, so a lease `send` accepted (a fraction longer than 6 places, a zone
   written `+0000`) no longer reads back as malformed on Python 3.10, where `fromisoformat` is
