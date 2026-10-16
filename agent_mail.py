@@ -3002,7 +3002,7 @@ PROBLEM_CODES = (
     "STALE_TAKEOVER_MUTEX", "MALFORMED_CLAIM_EXPIRY", "FOREIGN_SUPERSEDE", "DANGLING_REPLY",
     "STALLED_AGENT", "CONTESTED_SCOPE",
     "MALFORMED_RESULT", "UNATTACHED_RESULT", "CONTESTED_RESULT", "RESULT_FROM_THIRD_PARTY",
-    "ANSWER_FROM_THIRD_PARTY",
+    "ANSWER_FROM_THIRD_PARTY", "ALIAS_MAIL_UNDELIVERED",
     "IDENTITY_MISMATCH", "IDENTITY_UNRESOLVED", "IDENTITY_SHARED_INODE",   # section 40
 )
 CLAIMS_LIST_CAP = 200    # rows per list in status --json (PROTOCOL.md section 34)
@@ -3209,10 +3209,30 @@ def claim_report(everything: list[Message], idx: _Index, now: dt.datetime,
     }
 
 
+def undelivered_alias_mail(everything: list[Message], now: dt.datetime,
+                           aliases: dict[str, list[str]] | None = None,
+                           idx: _Index | None = None) -> list[Message]:
+    """Live messages whose `to` is an alias declared now but was not when they were filed
+    (PROTOCOL.md section 46). `send` fans an alias out to its writers only when the alias is
+    declared at that moment; an earlier message keeps the alias as its `to` and no writer's
+    pickup or `list --to <writer>` matches it. Pure; reports, never delivers."""
+    try:   # status and doctor must not start refusing over a table they only read for a hint
+        table = aliases if aliases is not None else load_aliases()
+        identities = set(load_participants()) if table else set()   # a row reads its own mail
+    except (ParticipantsUnreadable, OSError):
+        return []
+    if not table:
+        return []
+    idx = idx or _Index(everything)
+    return [m for m in everything
+            if m.to in table and m.to not in identities and live(m, everything, now, idx)]
+
+
 def build_status(everything: list[Message], rejects: list[str], box: Path,
                  now: dt.datetime, stalled_hours: float = DEFAULT_STALLED_HOURS,
                  scope_filter: str | None = None,
-                 bindings: dict[str, IdentityBinding] | None = None) -> dict[str, Any]:
+                 bindings: dict[str, IdentityBinding] | None = None,
+                 aliases: dict[str, list[str]] | None = None) -> dict[str, Any]:
     """Pure, read-only summary of a mailbox. Deterministic for a given (files, now).
 
     Stable JSON key set (STATUS_SCHEMA = 1; keys are only ever added, never
@@ -3340,6 +3360,7 @@ def build_status(everything: list[Message], rejects: list[str], box: Path,
         "STALLED_AGENT": len(stalled),
         "CONTESTED_SCOPE": report["contested_scopes"],
         **idx.results().counts(),
+        "ALIAS_MAIL_UNDELIVERED": len(undelivered_alias_mail(everything, now, aliases, idx)),
     }
     st: dict[str, Any] = {
         "schema": STATUS_SCHEMA,
@@ -3718,6 +3739,11 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     print(f"foreign_supersedes: {len(foreign)}" + "".join(f"\n  - {i}" for i in foreign[:20]))
     dangling = dangling_replies(everything, now)
     print(f"dangling_replies: {len(dangling)}" + "".join(f"\n  - {i}" for i in dangling[:20]))
+    stranded = undelivered_alias_mail(everything, now, idx=idx)
+    if stranded:   # PROTOCOL.md section 46: only when there is something to say
+        print(f"alias_mail_undelivered: {len(stranded)}: filed to an alias before it was "
+              "declared, so no writer's pickup shows it; re-send it to the alias or to each writer"
+              + "".join(f"\n  - {m.id} (to {m.to})" for m in stranded[:20]))
     # PROTOCOL.md section 34: reported, never a new reason to FAIL.
     contested = claim_report(everything, idx, now)["contested"]
     print(f"contested_scopes: {len(contested)}")

@@ -1165,6 +1165,7 @@ may be added; an existing code never changes meaning.
 | `MALFORMED_CLAIM_EXPIRY` | `claims.malformed_expiry` |
 | `FOREIGN_SUPERSEDE` | `foreign_supersedes` |
 | `DANGLING_REPLY` | `dangling_replies` |
+| `ALIAS_MAIL_UNDELIVERED` | live messages whose `to` is an alias declared now (§46) |
 | `STALLED_AGENT` | number of `stalled_agents` |
 
 `problems` is `[]` for a clean mailbox. It does not change `status`'s exit
@@ -2264,3 +2265,29 @@ tool cannot tell that from a mistake; the reader can, so the reader is told.
 **Invariant a test must pin.** A bare ANSWER from a non-addressee is counted once and named in text
 `status`; the addressee's ANSWER and a dangling reply are not; the ASK stays closed and `status`
 writes nothing. `test_cli.py` pins it.
+
+---
+
+## 46. Mail filed to an alias before it was declared is reported
+
+`send --to <alias>` fans a message out to the alias's writers only when the alias is declared at
+that moment (§27: an undeclared alias is an ordinary name). A message filed earlier keeps the alias
+as its `to`, and neither the pickup adapter nor `list --to <writer>` matches it. Declaring the alias
+afterwards did not change that. An ASK sent that way stayed open and no writer was ever shown it.
+
+**Rule.** `status --json` adds the problem code `ALIAS_MAIL_UNDELIVERED` (after
+`ANSWER_FROM_THIRD_PARTY`), counting messages that are live (§9: an ASK nobody has answered, an
+unexpired CLAIM, a fresh NOTICE, ANSWER or DISPUTE) and whose `to` is an alias declared now.
+An alias that is also an Identity row is not counted: that identity reads it. `doctor` prints
+`alias_mail_undelivered: N: ...` with the ids (at most 20) only when N is not zero, and the way out:
+send it again to the alias (now a fan-out) or to each writer. No new JSON key, no change to an exit
+status, and `doctor` does not FAIL on it.
+
+**Why a report and not delivery.** Reading an alias as its writers at pickup time would show a
+newcomer every old message ever sent to that name, and would make "who was this sent to" depend on
+today's table rather than the day it was sent. The sender can fix a stranded message in one command;
+the tool makes sure someone is told.
+
+**Invariant a test must pin.** With no alias declared nothing is reported. Once declared, one live
+message filed to it earlier is counted; a copy filed after, and a message to a writer, are not;
+`doctor` names the id; an answered ASK drops out; nothing is written. `test_cli.py` pins it.

@@ -1823,6 +1823,37 @@ def test_answer_from_third_party(root: Path) -> None:
     check("status stays read-only", snapshot(box) == before)
 
 
+def test_alias_mail_undelivered(root: Path) -> None:
+    """Mail filed to an alias before it was declared is reported (PROTOCOL.md section 46)."""
+    box = root / "amu"
+    box.mkdir()
+    NOW = "2030-01-02T00:00:00Z"
+    hand(box, "W1", "ASK", "alice", "crew", "2030-01-01T09:00:00Z", "who owns billing?")
+    hand(box, "W2", "NOTICE", "alice", "bob", "2030-01-01T09:01:00Z", "addressed to a writer")
+    before_decl = doc(run(box, "status", "--json", "--now", NOW))
+    check("no alias declared: nothing is reported (an undeclared alias is an ordinary name)",
+          all(q["code"] != "ALIAS_MAIL_UNDELIVERED" for q in before_decl.get("problems", [])),
+          repr(before_decl.get("problems")))
+    (box / "PARTICIPANTS.md").write_text(
+        "## Aliases\n\n| Alias | Writers |\n|---|---|\n| `crew` | `bob`, `carol` |\n",
+        encoding="utf-8")
+    hand(box, "W3", "ASK", "alice", "bob", "2030-01-01T09:02:00Z", "a copy filed after the alias")
+    snap = snapshot(box)
+    sj = doc(run(box, "status", "--json", "--now", NOW))
+    check("once declared, the one live message filed to it earlier is counted, nothing else",
+          [q for q in sj.get("problems", []) if q["code"] == "ALIAS_MAIL_UNDELIVERED"]
+          == [{"code": "ALIAS_MAIL_UNDELIVERED", "count": 1}], repr(sj.get("problems")))
+    dr = run(box, "doctor").stdout
+    check("doctor names it by id and alias, with the way out",
+          f"alias_mail_undelivered: 1" in dr and f"{P}W1 (to crew)" in dr and "re-send" in dr, dr[-500:])
+    hand(box, "W4", "ANSWER", "bob", "alice", "2030-01-01T09:10:00Z", "re: billing", reply_to=P + "W1")
+    sj = doc(run(box, "status", "--json", "--now", NOW))
+    check("an ASK that was answered is no longer live, so it is no longer reported",
+          all(q["code"] != "ALIAS_MAIL_UNDELIVERED" for q in sj.get("problems", [])),
+          repr(sj.get("problems")))
+    check("status and doctor wrote nothing", all(snapshot(box).get(k) == v for k, v in snap.items()))
+
+
 def test_doctor_writable_line(root: Path) -> None:
     """`doctor` names a mailbox this account cannot write (PROTOCOL.md section 44)."""
     if hasattr(os, "geteuid") and os.geteuid() == 0:
@@ -2174,6 +2205,7 @@ def main() -> int:
         test_claim_in_linked_worktree_warns(root)
         test_doctor_writable_line(root)
         test_answer_from_third_party(root)
+        test_alias_mail_undelivered(root)
     faulthandler.cancel_dump_traceback_later()
     if KNOWN:
         print(f"\nKNOWN ({len(KNOWN)}; defects outside this file's reach, not failures):")
