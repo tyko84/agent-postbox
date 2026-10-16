@@ -25,6 +25,7 @@ benefit: see [Evidence](#evidence) for what was and was not shown.
 * [experiment-v3-proposal.md](experiment-v3-proposal.md): a proposal, not approved and not run.
 * [experiment-v3.md](experiment-v3.md) and [experiment-v3-readiness.md](experiment-v3-readiness.md): the v3 pre-registration (multi-prompt consumer) and its low-cost readiness check, whose recommendation was not to run the main stage as designed because the notes control looked to be at the ceiling.
 * [experiment-v3-results.md](experiment-v3-results.md): v3 stopped at its pre-registered ceiling gate (notes control 20/20): uninformative, not a tie; costs, the one unverified mechanism, and why it was not extended.
+* [product-direction.md](product-direction.md): what the three experiments measured and could not, what the protocol adds beyond delivery, which outcomes would measure it, and the positioning the evidence supports.
 * [e2e-real-sessions.md](e2e-real-sessions.md): runs inside a real host (Claude Code, headless `claude -p`) with real model sessions. `scripts/e2e_claude.py` re-runs it; it spends usage and is not in CI.
 * [reliability-evidence.md](reliability-evidence.md): twelve failure scenarios, each with its mechanism, the test or run that covers it, the gaps and the signal a person gets.
 * [benchmarks-summary.md](benchmarks-summary.md) and [benchmarking.md](benchmarking.md): the simulated pickup-versus-polling benchmark (no model) and how to run it.
