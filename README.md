@@ -87,8 +87,9 @@ For real use, then:
    `AGENT_MAIL_IDENTITY: UNSET in this shell` describes the shell you ran `doctor` in, and
    `authorship: CANNOT_VERIFY` says a `from:` name is a claim anyone can write, not a
    verified identity.
-3. Commit `.claude/settings.json` (or `.codex/hooks.json`) so the hook reaches the next
-   clone; the `.bak` files next to them are your pre-install originals.
+3. Commit `.claude/settings.json` (or `.codex/hooks.json`) **and `tools/agent-postbox/`** so the
+   hook reaches the next clone and its worktrees (a worktree with the settings but without the
+   tool runs a hook that cannot find its script: the prompt still goes through, minus the mail); the `.bak` files next to them are your pre-install originals.
 4. `selftest.py` takes about 20 seconds.
 
 The whole path with output and timings:
