@@ -9,6 +9,9 @@ behaviour).
 
 ### Fixed
 
+- Mail filed to an alias before the alias was declared is no longer silent: `status` counts it
+  as `ALIAS_MAIL_UNDELIVERED` and `doctor` names it (PROTOCOL.md section 46). It is still not shown
+  by any writer's pickup, by design; the report says how to re-send it.
 - A plain ANSWER (no `result:`) from someone the ASK was not addressed to is now reported as
   `ANSWER_FROM_THIRD_PARTY` in `status` (PROTOCOL.md section 45). It still closes the ASK, as
   before; it used to do so with no sign anything was unusual.
