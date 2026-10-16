@@ -2,20 +2,34 @@ name: Bug
 description: The tool did something other than what PROTOCOL.md says.
 labels: [bug]
 body:
+  - type: markdown
+    attributes:
+      value: |
+        Not a bug: a message that did not arrive or was ignored (use "Field report"), or a first-use
+        report that it just worked or you got stuck (use "Tried it"). Security problems go to the
+        private advisory link, never here. Do not paste real mailbox contents.
   - type: textarea
     id: repro
     attributes:
       label: Smallest repro
-      description: Commands, in order, starting from an empty mailbox.
+      description: Commands, in order, starting from an empty mailbox (`mkdir` a temporary directory and set `AGENT_MAIL_DIR` to it; never use a real mailbox).
     validations: {required: true}
   - type: textarea
     id: expected
     attributes:
       label: Expected vs actual
+      description: The PROTOCOL.md section or README line you expected, the exit status, and the exact output.
     validations: {required: true}
   - type: input
     id: env
     attributes:
       label: Version, Python, OS
-      placeholder: "agent-postbox 0.1.0, Python 3.12, macOS 15"
+      description: "`agent-postbox --version` (or `python3 agent_mail.py --version`), `python3 --version`, and your OS."
+      placeholder: "agent-postbox 0.5.0 (or the commit), Python 3.12, macOS 15"
     validations: {required: true}
+  - type: textarea
+    id: doctor
+    attributes:
+      label: "`doctor` output (optional)"
+      description: Run `agent_mail.py doctor` in the same mailbox and paste it. It names file paths, so read it first.
+    validations: {required: false}

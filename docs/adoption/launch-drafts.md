@@ -10,21 +10,21 @@ it. A public post is stronger when it can say what N people found.
 
 ## Reddit (short)
 
-**Title:** I built a stdlib-only "mailbox" so parallel coding agents (Claude Code / Codex) can
-message each other without me copy-pasting
+**Title:** I built a stdlib-only ledger so parallel coding agents (Claude Code / Codex) can claim
+files and ask each other questions without me refereeing
 
 **Body:**
 
-When I run two or three coding agents on one repo, I end up as the messenger: copy a question
-out of one session, paste it into another, carry the answer back. Notes files help, but the
-failure I kept seeing is agents not *looking*, and an unread inbox looks identical to an empty
-one.
+When I run two or three coding agents on one repo, I end up as the router and the referee: copy a
+question out of one session into another, guess who is editing which file.
 
-agent-postbox is a small tool for that. A message is a Markdown file in a folder in your repo;
-the whole tool is one standard-library Python file (no daemon, no DB, no network). For Claude
-Code (and experimentally Codex) an installed hook prints waiting mail into the agent's context
-before it sees your prompt, so there's no "remember to check" step. Other hosts poll with one
-command.
+agent-postbox is a small ledger for that. A message is a Markdown file in a folder in your repo;
+the whole tool is one standard-library Python file (no daemon, no DB, no network). A claim on a
+scope is a lease: a second claim on it is refused, and every claim must expire, so a crashed
+session cannot hold a file forever. A question stays owed until it is answered, and the history
+is there to inspect afterwards. For Claude Code (and experimentally Codex) an installed hook also
+prints waiting mail into the agent's context before it sees your prompt; other hosts poll with
+one command. Claims are advisory: nothing stops an agent that ignores one.
 
 Honest status: it has an extensive test suite and passed scripted checks in real headless
 Claude Code sessions (not interactive use), but my experiments did **not** show a benefit: a
@@ -45,17 +45,18 @@ throwaway project first.
 
 ## Show HN
 
-**Title:** Show HN: Agent-postbox – file-based mail between coding agents, with automatic pickup
+**Title:** Show HN: Agent-postbox – a file-based claim and message ledger for coding agents
 
 **Text:**
 
-Hi HN. If you run several coding agents on one repository you become the router between them.
-Writing notes to a shared file works until an agent doesn't read it, and then the failure is
-invisible.
+Hi HN. If you run several coding agents on one repository you become the router and the referee
+between them. A shared notes file cannot refuse a second writer, and an unread one fails
+invisibly.
 
-agent-postbox is a message layer for that. Messages are immutable Markdown files; status is
-derived from the files; claims are expiring advisory leases; the tool is one stdlib Python file
-with no daemon or database. Pickup, which I now treat as a convenience rather than the point: for Claude Code (and
+agent-postbox is a ledger for that. Messages are immutable Markdown files; status is derived from
+the files; a claim is an expiring advisory lease and a second claim on the same scope is refused;
+an open question stays owed until answered; the tool is one stdlib Python file with no daemon or
+database. Pickup, which I treat as a convenience rather than the point: for Claude Code (and
 experimentally Codex) a prompt-submit hook injects waiting mail into the agent's context, and
 a `doctor` command reports whether the hook is registered, whether its script exists and
 whether your identity is set, since silence otherwise looks like an empty inbox.
