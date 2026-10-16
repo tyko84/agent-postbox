@@ -32,7 +32,7 @@ benefit: see [Evidence](#evidence) for what was and was not shown.
 * [benchmarks-summary.md](benchmarks-summary.md) and [benchmarking.md](benchmarking.md): the simulated pickup-versus-polling benchmark (no model) and how to run it.
 * [coordination-experiment.md](coordination-experiment.md): the design of a team-outcome experiment and the offline simulation `scripts/team_sim.py` (simulated agents; says nothing about real models).
 * [performance.md](performance.md): latency and memory against mailbox size.
-* [coordination-audit.md](coordination-audit.md), [install-audit.md](install-audit.md), [first-use-audit.md](first-use-audit.md): defect hunts and what they found.
+* [coordination-audit.md](coordination-audit.md), [install-audit.md](install-audit.md), [first-use-audit.md](first-use-audit.md): defect hunts and what they found. The second pass, [coordination-audit-2.md](coordination-audit-2.md), checks claims, takeover after a killed holder and audit reconstruction with real processes; its stdlib reconstruction script is in `docs/data/audit-reconstruction/`.
 * [test-inventory.md](test-inventory.md): every test and CI job with its time and flake findings.
 
 ## Security and publication
