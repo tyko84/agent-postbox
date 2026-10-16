@@ -1795,6 +1795,34 @@ def test_visibility(root: Path) -> None:
           r.returncode == base.returncode, f"{r.returncode} vs {base.returncode}")
 
 
+def test_answer_from_third_party(root: Path) -> None:
+    """A bare ANSWER from someone the ASK was not addressed to is reported, never undone
+    (PROTOCOL.md section 45)."""
+    box = root / "a3p"
+    box.mkdir()
+    hand(box, "T1", "ASK", "alice", "bob", "2030-01-01T09:00:00Z", "who owns billing?")
+    hand(box, "T2", "ASK", "alice", "bob", "2030-01-01T09:01:00Z", "who owns retry?")
+    hand(box, "T3", "ANSWER", "carol", "alice", "2030-01-01T09:05:00Z", "re: billing",
+         reply_to=P + "T1")                       # bare, from a third party
+    hand(box, "T4", "ANSWER", "bob", "alice", "2030-01-01T09:06:00Z", "re: retry",
+         reply_to=P + "T2")                       # bare, from the addressee
+    hand(box, "T5", "ANSWER", "carol", "alice", "2030-01-01T09:07:00Z", "re: nothing",
+         reply_to=P + "NOSUCH")                   # cites no ASK here: nothing to flag
+    before = snapshot(box)
+    sj = doc(run(box, "status", "--json", "--now", "2030-01-02T00:00:00Z"))
+    check("a bare ANSWER from a non-addressee is counted once; the addressee's and a dangling one are not",
+          sj.get("problems", [])[-1:] == [{"code": "ANSWER_FROM_THIRD_PARTY", "count": 1}]
+          and sum(q["code"] == "ANSWER_FROM_THIRD_PARTY" for q in sj.get("problems", [])) == 1,
+          repr(sj.get("problems")))
+    check("the ASK it answered is still closed: the flag changes no status",
+          sj["asks"]["open"] == 0, repr(sj.get("asks")))
+    txt = run(box, "status", "--now", "2030-01-02T00:00:00Z").stdout
+    check("text status names reason, ask, answer and sender, with no result column value",
+          f"ANSWER_FROM_THIRD_PARTY  {P}T1  {P}T3  carol  -" in txt and f"{P}T4" not in
+          "".join(ln for ln in txt.splitlines() if "ANSWER_FROM_THIRD_PARTY" in ln), txt[-400:])
+    check("status stays read-only", snapshot(box) == before)
+
+
 def test_doctor_writable_line(root: Path) -> None:
     """`doctor` names a mailbox this account cannot write (PROTOCOL.md section 44)."""
     if hasattr(os, "geteuid") and os.geteuid() == 0:
@@ -2145,6 +2173,7 @@ def main() -> int:
         test_send_permission_line(root)
         test_claim_in_linked_worktree_warns(root)
         test_doctor_writable_line(root)
+        test_answer_from_third_party(root)
     faulthandler.cancel_dump_traceback_later()
     if KNOWN:
         print(f"\nKNOWN ({len(KNOWN)}; defects outside this file's reach, not failures):")

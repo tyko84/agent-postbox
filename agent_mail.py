@@ -783,7 +783,7 @@ class _Index:
 
 RESULT_VALUES = ("DONE", "PARTIAL", "FAILED", "DECLINED", "CANNOT_VERIFY")   # section 39
 RESULT_ATTENTION_REASONS = ("MALFORMED_RESULT", "UNATTACHED_RESULT", "CONTESTED_RESULT",
-                            "RESULT_FROM_THIRD_PARTY")
+                            "RESULT_FROM_THIRD_PARTY", "ANSWER_FROM_THIRD_PARTY")
 RESULTS_TEXT_ROWS = 20   # attention rows in text status
 
 
@@ -821,6 +821,12 @@ class _Results:
                 continue   # result: on any other type is the free field of section 16
             raw = (m.meta.get("result") or "").strip()
             if not raw:
+                # A bare ANSWER closes its ASK like any other (section 32); from someone the
+                # ASK was not addressed to, it is reported (section 45), never undone.
+                target = by_id.get(m.re_id.strip().upper()) if m.re_id else None
+                if (target is not None and target.type == "ASK"
+                        and target.id.upper() != m.id.upper() and m.sender != target.to):
+                    self._flag("ANSWER_FROM_THIRD_PARTY", target, m, "")
                 continue
             self.seen += 1
             value = raw.upper()
@@ -2996,6 +3002,7 @@ PROBLEM_CODES = (
     "STALE_TAKEOVER_MUTEX", "MALFORMED_CLAIM_EXPIRY", "FOREIGN_SUPERSEDE", "DANGLING_REPLY",
     "STALLED_AGENT", "CONTESTED_SCOPE",
     "MALFORMED_RESULT", "UNATTACHED_RESULT", "CONTESTED_RESULT", "RESULT_FROM_THIRD_PARTY",
+    "ANSWER_FROM_THIRD_PARTY",
     "IDENTITY_MISMATCH", "IDENTITY_UNRESOLVED", "IDENTITY_SHARED_INODE",   # section 40
 )
 CLAIMS_LIST_CAP = 200    # rows per list in status --json (PROTOCOL.md section 34)
@@ -3403,24 +3410,24 @@ def _results_lines(everything: list[Message], st: dict[str, Any]) -> list[str]:
     mailbox prints exactly what it printed before. For people: `--json` rows
     (`list --json`) carry the values; `problems` carries the counts."""
     res = ask_results(everything)
-    if not res.seen:
-        return []
-    by_value = {v: 0 for v in RESULT_VALUES}
-    for value, _answer in res.applied.values():
-        by_value[value] += 1
-    n_ask = int(st["messages"]["by_type"].get("ASK", 0))
-    unanswered = int(st["asks"]["open"])
-    with_result = len(res.applied)
-    values = " ".join(f"{v}={n}" for v, n in by_value.items() if n)
-    out = [f"ask results (claimed, not proven): with_result={with_result}"
-           + (f" ({values})" if values else "")
-           + f"  answered={max(0, n_ask - unanswered - with_result)}  unanswered={unanswered}"]
+    out: list[str] = []
+    if res.seen:
+        by_value = {v: 0 for v in RESULT_VALUES}
+        for value, _answer in res.applied.values():
+            by_value[value] += 1
+        n_ask = int(st["messages"]["by_type"].get("ASK", 0))
+        unanswered = int(st["asks"]["open"])
+        with_result = len(res.applied)
+        values = " ".join(f"{v}={n}" for v, n in by_value.items() if n)
+        out.append(f"ask results (claimed, not proven): with_result={with_result}"
+                   + (f" ({values})" if values else "")
+                   + f"  answered={max(0, n_ask - unanswered - with_result)}  unanswered={unanswered}")
     if res.attention:
         out.append("results attention (reason, ask, answer, sender, result):")
         for row in res.attention[:RESULTS_TEXT_ROWS]:
             shown = row["result"] if row["reason"] != "MALFORMED_RESULT" else _arg_text(row["result"])
             out.append(f"  {row['reason']}  {row['ask'] or '-'}  {row['answer']}  "
-                       f"{str(row['sender'])[:32]}  {shown}")
+                       f"{str(row['sender'])[:32]}  {shown or '-'}")
         if len(res.attention) > RESULTS_TEXT_ROWS:
             out.append(f"  ... and {len(res.attention) - RESULTS_TEXT_ROWS} more")
     return out
