@@ -1,7 +1,8 @@
 # Codex: static investigation and a bounded validation plan (issue #21)
 
-**Documentation read only.** Codex CLI is not installed on the machine this was written on,
-and nothing here was run in Codex. Read on 2026-10-15. Nothing below says the Codex adapter
+**Documentation read only.** Codex CLI is not installed on the machine this was written on
+(`which codex`: not found, re-checked 2026-10-15), and nothing here was run in Codex. Read on
+2026-10-15 and re-fetched the same day (see "Refresh" below). Nothing below says the Codex adapter
 works; it says what the documentation does and does not promise, and how to find out.
 
 Sources (OpenAI's `developers.openai.com/codex/...` URLs permanently redirect to
@@ -29,14 +30,76 @@ anything is built on them):
 | Timeout, exit codes | Default 600 s; exit `2` blocks; other non-zero exits on this event: not stated |
 | Output size | `additionalContextLimit`: beyond it the model gets a shorter preview and the full text is saved to disk |
 | Disable | `[features] hooks = false` |
-| Hooks in `codex exec`, IDE extension, cloud | Not stated |
+| Hooks in `codex exec`, IDE extension, cloud | `codex exec`: still not stated. Refresh: CLI/Desktop "full hook support"; IDE extension uses the local environment under the extension's sandbox; Work Cloud: command hooks unsupported (MCP hooks by admin policy only) |
 | Environment of the hook process (does it see `AGENT_MAIL_IDENTITY`?) | Not stated |
 | Operating systems | Hooks "work on macOS, Linux, Windows", with a `commandWindows` override. CLI: macOS/Linux installer; Windows via npm or Homebrew; WSL mentioned |
 | Approvals | `on-request`, `never`; `untrusted` is deprecated in favour of a per-project `trust_level`. Other pages (a search summary, so lower confidence) give the non-interactive default as read-only with no prompts possible |
 | Sandbox | `read-only`, `workspace-write` (the default), `danger-full-access`. Network off by default. macOS Seatbelt, Linux `bwrap` + seccomp |
 | Protected paths | In `workspace-write`, `.git` (including gitdir pointers), `.codex`, `.agents`, `.aws` stay read-only, recursively |
 | Sessions | `codex resume`; `session_id` is in the hook payload |
-| Worktrees | Git worktrees are mentioned as a supported workflow; nothing about hook or `.codex` resolution inside one |
+| Worktrees | Refresh: "Hooks resolve relative to the active worktree's git root". Whether an untracked `.codex/` or an uncommitted tool is found is not stated |
+
+## Refresh (fetched 2026-10-15)
+
+Pages: <https://learn.chatgpt.com/docs/hooks>, <https://learn.chatgpt.com/docs/non-interactive-mode>,
+<https://learn.chatgpt.com/docs/agent-configuration/agents-md> (the `developers.openai.com/codex/...`
+URLs answer 308 to these). Summaries come from a fetch tool, not verbatim page copies. Changes
+against the earlier reading:
+
+* `SessionStart` sources are now `startup`, `resume`, `clear`, `compact` and `fork`.
+* New: handler type `mcp_tool` beside `command`; `async: true` hooks (output arrives "at the next safe
+  turn boundary", cannot block); config precedence System, User, Cloud, Project.
+* Worktrees: "Hooks resolve relative to the active worktree's git root" (was unstated).
+* Surfaces: command hooks are unsupported in Work Cloud; the IDE extension follows its own sandbox.
+* `codex exec`: read-only sandbox by default; `--full-auto` is gone (`--approve-for-me`); the page
+  still does not say whether hooks run there. `--ignore-user-config` exists.
+* Unchanged and still unstated: whether the hook process inherits the launching shell's environment
+  (`AGENT_MAIL_IDENTITY`), and non-zero exit codes other than 2 on this event.
+* Trust is per exact definition hash, so the command string (including `|| true`) is part of it: an
+  installer upgrade of the command needs re-trusting.
+
+## Compatibility matrix
+
+Status: S supported by the documentation, U unsupported by it, V unverifiable (not stated, or only
+testable in the real host). Nothing is "works": nothing was run.
+
+| Capability | Status | Source |
+|---|---|---|
+| Per-prompt context injection from a command hook (plain stdout) | S | hooks page, `UserPromptSubmit` |
+| Same at session start, resume, after compaction | S | hooks page, `SessionStart` sources |
+| Project-local registration in `<repo>/.codex/hooks.json` | S | hooks page, config locations |
+| Delivery without user review | U | trust requires `/hooks` review of the exact hash |
+| Hook finds the repo tool when Codex starts in a subdirectory | S for the `rev-parse` pattern (the page recommends it); `git` on the hook's PATH is V | hooks page |
+| Linked worktrees | S for resolution; V for an uncommitted `.codex/` or tool | hooks page |
+| `AGENT_MAIL_IDENTITY` visible to the hook | V | not stated; the most likely silent failure |
+| Hook runs in `codex exec` | V | not stated |
+| IDE extension | V | "uses local environment", hooks not itemised |
+| Cloud tasks | U | "command hooks unsupported" in Work Cloud |
+| Agent can `send` under the default sandbox | S inside the workspace; U for an external `AGENT_MAIL_DIR` and for `exec`'s read-only default | approvals and non-interactive pages |
+| Mail arriving during a long turn | U | no prompt-boundary event fires mid-turn (`PostToolUse` is not shipped) |
+| Standing instruction file read at session start | S | AGENTS.md: once per run, 32 KiB combined cap, root-to-cwd concatenation |
+| Windows | V | `commandWindows` exists; our command is POSIX |
+
+## Smallest useful Codex step: bounded proposal
+
+Option A (documentation only): a short Codex paragraph in `docs/hosts.md` telling a Codex user to put in
+`AGENTS.md`: "At the start of a session and before acting on shared state run
+`python3 tools/agent-postbox/agent_mail.py inbox`", to set `AGENT_MAIL_IDENTITY` before `codex`, and the
+sandbox caveat for `send`. No code, no trust step; it is explicit polling with its known weakness.
+Complexity trivial; test effort a docs check (`test_adapters.py` already pins the hosts table).
+
+Option B (exists): `install.py --adapter codex`. It earns the word "works" only after the procedure
+below passes steps 3, 4 and 8. Real-run cost: 10 to 15 minutes by hand, under US$0.50, an OpenAI account.
+
+Option C (new code): also register `SessionStart`. About 30 lines in `install.py` plus idempotence tests
+(small to medium). Not justified before B passes: it adds a second trust entry with no evidence of need.
+
+## Recommendation
+
+Codex support work is **not justified now beyond Option A**. No Codex runtime exists here, and the three
+decisive questions (environment inheritance, `codex exec`, trust-gate behaviour) can only be answered by
+running Codex. Keep the host labelled "experimental, never run in Codex". If the owner has an account,
+run the procedure below once; its outcome decides B and C.
 
 ## The adapter's assumptions against that
 

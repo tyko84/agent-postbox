@@ -528,6 +528,9 @@ def main() -> int:
     if args.adapter == "claude-code":
         print("  Start `claude` from the project root: started in a subdirectory it did not run "
               "the hook (Claude Code 2.1.300, headless).")
+        print(f"  Commit {dest_rel}/ together with .claude/settings.json: a clone or linked worktree that "
+              "has the setting but not the tool delivers no mail (stderr: can't open file; the prompt "
+              "still goes through).")
     print("Verify pickup before trusting it -- silence proves nothing (PROTOCOL.md §8). "
           "Takes about 20 seconds:")
     print(f"  cd {shlex.quote(str(project))} && {python_cmd()} {dest_rel}/selftest.py")

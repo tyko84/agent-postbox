@@ -42,7 +42,29 @@ status`, which lists new mailbox file names). About US$0.02 in total.
 | linked `git worktree` (install committed), started at its root | hook ran and read the **worktree's own** mailbox; mail filed only in the main checkout was not delivered; `AGENT_MAIL_DIR` pointing at the main mailbox delivered it |
 | linked worktree where only `settings.json` was committed (no `tools/`) | hook exit 0, stderr `can't open file ...`; prompt answered normally |
 | `--resume` | covered by `scripts/e2e_claude.py` T3 (passed on 2.1.300 the same day); not repeated here |
-| context compaction | not exercised: it cannot be forced in a short headless run, so nothing is claimed |
+| context compaction | forced two ways, see "Session lifecycle" below |
+
+#### Session lifecycle (Claude Code 2.1.300, headless, haiku, 2026-10-15; 13 sessions)
+
+A throwaway project with a `SessionStart` command hook per matcher that logs its stdin and prints
+a marker. **Headless only; interactive mode not run.**
+
+| Question | Result |
+| --- | --- |
+| Does `SessionStart` exist and reach the model? | Yes. The hook's stdout was in the model's context (the model quoted the marker). stdin carries `session_id`, `transcript_path`, `cwd`, `hook_event_name`, `source` |
+| Which `source` values fired? | `startup` (new `claude -p`), `resume` (`--resume <id>`), `compact` (both a `/compact` sent as a headless prompt, and an automatic compaction in the middle of one turn). `clear` not exercised (matcher registered, never triggered) |
+| Is context injected earlier kept across compaction? | **No, for a hook marker.** After `/compact` the model listed only the marker the `compact` hook had just printed; the `startup` marker was gone |
+| Can compaction be forced headless? | Yes: `/compact` as a prompt (also in stream-json input), and automatic compaction with `CLAUDE_CODE_AUTO_COMPACT_WINDOW=30000` and `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=30` once a turn had several tool calls and a large prompt. It did not trigger in three other attempts with smaller turns |
+| Was an owed ASK lost? | **Not shown.** With the real adapter registered on `UserPromptSubmit` alone, and again with the same command also on `SessionStart`, the model named the owed ASK id correctly after the turn. Compaction did not happen in those runs, so they say nothing about it. After a manual `/compact` the next prompt runs the per-prompt hook again, which prints the owed ASK again |
+
+Conclusion: the only conceivable gap is an automatic compaction in the middle of one long
+autonomous turn, after which the earlier-injected hook text may be summarised away until the next
+prompt. It was **not demonstrated for the Postbox text** (no owed ASK or claim was seen lost), so
+`install.py` does not register `SessionStart`. If it is ever shown, the smallest fix is to register
+the same adapter command, unchanged, under `SessionStart` with matcher `compact` (the script ignores
+stdin and prints plain text, which `SessionStart` also adds to context; checked with the markers
+above, not with the real adapter in a compaction). It would need an installer change that is
+additive, idempotent and `|| true`, a `doctor` line and tests, none of which exist.
 
 `--permission-mode dontAsk` with `--allowedTools Bash(...)` rules, the command being the
 `send` form shown (the same 12 cases, all as predicted by the rule text):
@@ -57,7 +79,14 @@ End to end: a session whose hook printed the `Reply:` line (absolute quoted path
 told to answer with it filed the ANSWER with the absolute rule alone or with both rules, and
 was denied with the relative rule alone or with none. `doctor` prints both spellings; the
 one the hook prints, and so the one agents use, is the absolute quoted line. The relative
-rule is only for commands typed by hand. A rule is per path, so it must be repeated in each
+rule is only for commands typed by hand.
+
+Doctor's advice followed literally (2026-10-15, 2.1.300, `dontAsk`, 2 sessions): in a fresh
+installed project, the two `Bash(...)` lines `doctor` printed were copied verbatim into
+`.claude/settings.local.json`; `doctor` then reported both as "allowed by an identical rule".
+(i) the hook's `Reply:` command, run literally with a `--body-file - <<'EOF'` body holding a `#`
+line: filed the ANSWER, 0 permission denials. (ii) the relative `send ... --body-file - <<'EOF'`
+command with the same body: filed, 0 denials. The advice is correct and complete for these two cases. A rule is per path, so it must be repeated in each
 clone or worktree, in `.claude/settings.local.json` (Postbox never writes it).
 
 ## Codex
@@ -70,7 +99,7 @@ redirects there) and <https://learn.chatgpt.com/docs/agent-configuration/agents-
 | Mechanism | Event | Text into the model's context | When | Failure behaviour | Stability |
 | --- | --- | --- | --- | --- | --- |
 | Command hook | `UserPromptSubmit` | Yes. "Plain text on `stdout` is added as extra developer context." JSON `hookSpecificOutput.additionalContext` does the same | Per prompt, before it is sent (`prompt`: "User prompt that's about to be sent") | "Exit `0` with no output is treated as success and Codex continues." Exit `2` blocks the prompt ("You can also use exit code `2` and write the blocking reason to `stderr`"). Other exit codes: not stated for this event | Documented; "Hooks are enabled by default"; `[features] hooks = false` turns them off |
-| Command hook | `SessionStart` (`source`: `startup`, `resume`, `clear`, `compact`) | Yes, same two forms | Per session start, and again after compaction | As above | Documented |
+| Command hook | `SessionStart` (`source`: `startup`, `resume`, `clear`, `compact`, and `fork` as of the 2026-10-15 re-read) | Yes, same two forms | Per session start, and again after compaction | As above | Documented |
 | Command hook | `PostToolUse`, `Stop`, others | Feedback or continuation, not a pre-prompt channel | Per tool call / per turn end | `Stop`: "Plain text output is invalid for this event" | Documented |
 | `AGENTS.md` | none (a file) | Only as a file: static instructions | "once per run; in the TUI this usually means once per launched session". **Not re-read per turn** | A missing file is skipped | Documented |
 

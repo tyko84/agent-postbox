@@ -878,6 +878,15 @@ class InstallNextSteps(unittest.TestCase):
             self.assertIn("AGENT_MAIL_IDENTITY=<name>", cp.stdout)
             self.assertIn("(run from the project root)", cp.stdout)   # the poll hint is relative too
 
+    def test_claude_code_install_says_to_commit_the_tool_with_the_setting(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="test-adapters-") as tmp:
+            project = Path(tmp).resolve() / "p"
+            (project / ".git").mkdir(parents=True)
+            cp = install(project, "--adapter", "claude-code")
+            self.assertEqual(cp.returncode, 0, cp.stderr)
+            self.assertIn("Commit tools/agent-postbox/ together with .claude/settings.json", cp.stdout)
+            self.assertNotIn("Commit tools", install(project).stdout)   # poll: nothing registered
+
 
 TABLE = ("| Identity | Reachable | Mechanism | Verified | can | cannot | uid |\n"
          "|---|---|---|---|---|---|---|\n"
