@@ -34,3 +34,11 @@ Suggested caption: "Two real Claude Code sessions exchanging a message
 through Postbox: automatic pickup by a hook, an acknowledgement, and code that
 uses the shared fact. Prepared by a script; the evidence is read from files.
 Mechanism demo only, not a benchmark."
+
+## Claim beat (scripted, no model): `run.py --takeover`
+
+For the Part 2 recording only. Say "scripted, no model" at the start, and never present it as Claude
+Code behaviour. Lines, in order: "B takes a short lease on a second file, then stops, as a crashed
+session would. While the lease is live, A is refused: exit 3, nothing written." / "Nothing releases
+it but the clock: the lease is now expired, not held." / "A takes over. B's expired claim stays in the
+history." Do not say it shows agents coordinating better; it shows the lease rules.

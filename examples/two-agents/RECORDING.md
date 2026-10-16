@@ -27,13 +27,27 @@ What is scripted and what is real:
 
 ## What has and has not been tested
 
-Checked by the author of this script (2026-10-13, claude 2.1.296, macOS):
-every command below that needs no model (setup, the install, the hook run by
-hand, `check` on an empty, a half-built and a complete mailbox), and that the
-`claude` flags used here exist. Headless rehearsals (`claude -p`) passed all
-six beats in 5 of 5 runs after the last wording change.
+Status key used below: **VERIFIED** = run by an agent without a human and the output
+matched; **SCRIPTED** = needs no model, run by `run.py`; **OWNER** = needs an interactive
+terminal and a person. Nothing in this document claims an interactive pass.
 
-NOT tested, because it needs an interactive terminal and a model:
+VERIFIED on 2026-10-16 (Claude Code 2.1.300, macOS, Python 3.13), headless, without a human:
+
+* `claude --version` (2.1.300) and `claude auth status` (`"loggedIn": true`);
+* step 3, `live_demo.py setup --dir ...`: prints `LIVE DEMO READY`, the two terminals' commands,
+  the three prompts and the expected screen; `prompts/B1.txt`, `A.txt`, `B2.txt` are written;
+* step 4: `.claude/settings.json` holds the `UserPromptSubmit` hook, and the hook run by hand
+  with `AGENT_MAIL_IDENTITY=beta` and an empty mailbox prints nothing and exits 0;
+* `live_demo.py check` on an empty mailbox: all six beats FAIL, exit 1, so the checker cannot
+  pass by default;
+* `live_demo.py rehearse --max-calls 2 --max-cost 0.5` (two `claude -p` sessions, haiku):
+  **all six beats OK**, total cost USD 0.0049; beta's own `python3 -I -c` self-check was refused
+  by `dontAsk` (one denial, as in earlier runs), which does not affect the beats. One run, not a
+  reliability figure. Earlier results: the table under "Results of the author's runs";
+* Part 2, `run.py` (7 steps) and `run.py --takeover` (8 steps, SCRIPTED, no model): both exit 0;
+  `test_examples.py` pins them.
+
+NOT tested, because it needs an interactive terminal and a model (OWNER):
 
 * the workspace trust dialog (it is skipped in `-p`, so no rehearsal saw it);
 * whether the interactive screen shows the hook's `Agent mail` block, or only
@@ -48,6 +62,13 @@ Where this script says UNVERIFIED, that is the list above. If what you see
 differs, stop and write down what you saw (a phone photo or screenshot is
 enough). That is a result for the repo, not something to work around on
 camera.
+
+### Where the owner is required
+
+Steps 1 to 4 and section A need a person only to open a Terminal. **Steps 5, 6, 7, 9, 10 and 11
+(starting `claude` interactively, the trust dialog, pasting the prompts, the take) can only be done
+by the owner**: they need two interactive Claude Code sessions, and nobody else's pass counts as
+theirs. The first line of the first owner step is the `claude --model haiku` of step 5.
 
 ## The story
 
@@ -147,7 +168,7 @@ unexpected. Then do step 12 (reset) and run section C again for the take.
 
 ### C. The run (record from step 8)
 
-**Step 5. LEFT window (alpha).** Paste these four lines, from the `setup`
+**Step 5. LEFT window (alpha). OWNER REQUIRED FROM HERE (interactive Claude Code).** Paste these four lines, from the `setup`
 output ("TERMINAL 1"), with your real paths. Shape:
 
 ```sh
@@ -157,7 +178,7 @@ export PAYMENTS_REGISTRY=/private/tmp/postbox-demo/registry/payments.json
 claude --model haiku
 ```
 
-**Step 6. RIGHT window (beta).** If you did step 4 in this window, it already
+**Step 6. RIGHT window (beta). OWNER.** If you did step 4 in this window, it already
 has `AGENT_MAIL_IDENTITY=beta`; pasting again does no harm. Beta must NOT
 have `PAYMENTS_REGISTRY`; a fresh window is safest:
 
@@ -199,7 +220,7 @@ prompts, with no trailing newline, so press Return yourself.
 region covering both windows, Record). Both sessions are open at an empty
 prompt.
 
-**Step 9. The take.** Wait for each model to finish (no spinner, prompt back)
+**Step 9. The take. OWNER.** Wait for each model to finish (no spinner, prompt back)
 before the next paste; haiku takes 10 to 25 seconds per prompt.
 
 | Time | Window | You do | On screen (what to expect) | Say (`docs/demo-narration.md`) |
@@ -386,7 +407,7 @@ transcript files it looked at and where.
 ---
 
 
-# Part 2: scripted run.py (about 60 seconds, no model)
+# Part 2: scripted run.py (about 60 seconds, or about 85 with the claim beat; no model)
 
 A shot list for a terminal recording of `run.py --pause`. The script waits
 for Enter between its seven steps, so the pace is yours. Nothing is staged:
@@ -436,6 +457,29 @@ Times are targets, not requirements. Press Enter at the end of each shot.
 | 7 | 0:54 | `== 7. The picture: status` | `asks: open=0`, the `held claims` row, `ask results (claimed, not proven)` | "Status is derived from the files: nothing open, one lease, one claimed result." |
 | 8 | 0:59 | `All 7 steps behaved as described.` and `Removed ...` | both lines | Stop the recording here. |
 
+## Optional claim beat: `--takeover` (SCRIPTED, no model)
+
+`run.py` already shows the contest in step 6 (the second claim is refused, exit 3). It does not
+show what happens when the holder disappears. `--takeover` adds an eighth step, labelled
+"scripted, no model" on screen, that does:
+
+```sh
+python3 examples/two-agents/run.py --pause --takeover
+```
+
+| # | From | On screen | Hold it until the viewer has read | Say |
+|---|---|---|---|---|
+| 8 | 0:59 | `== 8. a holder disappears, its lease expires, a rival takes over  (scripted, no model)`: agent-b claims `billing/retry.py` for 3 seconds | `--expires ...` three seconds ahead, then agent-a's claim refused: `[exit 3]` | "B takes a short lease on a second file, then stops: think of a crashed session. While the lease is live, A is refused." |
+| 8 | 1:12 | `... agent-b never renews. Waiting for the lease to run out (2 s) ...`, then `status` with `claims: held=1  expired=1` | `expired=1` | "Nothing released it. The clock did: the lease is now expired, no longer held." |
+| 8 | 1:20 | agent-a's claim `wrote ...`, then `status` listing `billing/retry.py  agent-a`, and `All 8 steps behaved as described.` | the `held claims` row naming agent-a | "A takes over. B's expired claim stays in the mailbox; the history keeps both." |
+
+What it shows: a claim needs an expiry, a live lease refuses a rival (exit 3, nothing written), a
+lapsed lease no longer counts as held, and the rival's claim then succeeds. What it does not show:
+that a real agent notices the refusal or recovers well, or that anything is "dead" (the script
+simply never runs agent-b again; the wait is the real clock, about 4 seconds). The kernel-held scope lock
+that PROTOCOL.md section 30 describes (a crashed claimant's lock is reclaimed at once) is exercised by
+`selftest.py` with real processes, not by this beat. A claim is advisory: it stops nobody who ignores it.
+
 ## After recording
 
 * Watch it once at full size and once at the size it will be embedded at.
@@ -445,3 +489,66 @@ Times are targets, not requirements. Press Enter at the end of each shot.
   does not show a model acting on mail.
 * If a step printed `FAILED`, that is a bug report, not a retake: the output
   names the step and what was expected (see CONTRIBUTING.md, field reports).
+
+---
+
+
+# Part 3: scripts to read from, terminal layout and fallbacks
+
+## Terminal layout
+
+* Part 1 (real sessions): two Terminal windows side by side, LEFT alpha, RIGHT beta, each about
+  110 columns by 34 rows, font large enough to read at half screen width, `PROMPT='$ '`,
+  Do Not Disturb on. A third, off-camera window holds `pbcopy < .../prompts/B1.txt` (then `A.txt`,
+  `B2.txt`) and the `check` command. tmux is optional and untested (see above).
+* Part 2 (scripted): one window, 110 columns by 34 rows or larger, `PS1='$ '`.
+
+## The 90-second recording (Part 1; steps 5 to 9 are OWNER, interactive)
+
+Goal: show that the mechanism works, not that it is better. Say none of "better", "faster", "more
+reliable". Total 1:20 to 1:30. The full timed table is step 9 above; the short form is:
+
+1. 0:00 both windows, one folder. "Two Claude Code sessions, one project, sharing only a folder."
+2. 0:08 beta reads `client.py` (B1): old v1 URL, no mail block.
+3. 0:16 alpha runs `discover.py` (A) and sends the ASK. "Only alpha can see the registry."
+4. 0:40 beta gets B2: the hook has put the mail in front of it (if the block is not visible, say
+   "its host ran a hook" and point at the ANSWER; do not claim you can see the mail).
+5. 0:55 beta's ANSWER, then the `refund_url` edit.
+6. 1:05 `live_demo.py check` on camera: six `OK` lines.
+7. 1:20 closing line: "This shows delivery and a model acting on a message. It does not show it beats a
+   shared notes file, and a model decides whether to act, so it can fail."
+
+If the interactive run is not available, the honest substitutes are: the Part 2 recording (labelled
+scripted), or a recording of `rehearse` output labelled "headless, `claude -p`".
+
+## The longer technical script (about 4 minutes, scripted, no model; SCRIPTED)
+
+Run `python3 examples/two-agents/run.py --pause --takeover` and talk over each step (a headless
+rehearsal can be added at the end as a separate, labelled segment).
+
+1. Header (0:00): "A script plays two agents. The installer, CLI and hook are the real ones."
+2. Install (0:15): "One command copies the tool, creates the mailbox, registers the hook."
+3. ASK (0:35): "A message is one Markdown file with an immutable id. Status is derived, not stored."
+4. Pickup for agent-b (0:55): the adapter's output. "This is what a host puts in front of the model before
+   its next prompt. It owes a reply to one open ASK."
+5. CLAIM and ANSWER (1:25): "A claim is a lease with a mandatory expiry. The ANSWER's `DONE` is a claim by
+   the sender, not proof."
+6. Pickup for agent-a (1:55): answer and held claim.
+7. Contest (2:15): "A second claim on the same scope: exit 3, nothing written. Advisory: it stops nobody
+   who ignores it."
+8. Status (2:35): "Open ASKs, held claims with holder and time left, results marked claimed, not proven."
+9. Takeover (2:55): the holder stops, the lease lapses, `expired=1`, the rival claims. "The expired claim
+   stays in the history; nothing was deleted."
+10. Close (3:50): "Scripted agents, real tool. It shows exclusive claims with expiry, derived status and
+    an inspectable history. It does not show that models coordinate better."
+
+## Troubleshooting alternatives (no interactive session, or a step fails)
+
+| Situation | Alternative |
+|---|---|
+| No interactive Claude Code, or it is not signed in | Part 2 (`run.py --takeover`); label it scripted |
+| Want real-model evidence without a terminal | `live_demo.py rehearse --max-calls 2 --max-cost 0.5` (about USD 0.005); label it headless |
+| Hook block not visible in the TUI | Show the ANSWER and `check`; say the host ran a hook; do not paste the block |
+| Beat 6 fails (v1 URL used) | A model choice; re-record or publish as a failure |
+| `--takeover` is slow | It waits about 4 seconds for a real 3-second lease; this is the point, do not cut it |
+| `run.py` fails at a step | Report it (CONTRIBUTING.md, field reports); do not retake around it |
