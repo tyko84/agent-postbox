@@ -9,16 +9,20 @@ behaviour is a new numbered `PROTOCOL.md` section, never an edit that changes
 what an old one means; a new check asserts on content that must appear; POSIX
 only; `CHANGELOG.md` gets a line under `[Unreleased]`.
 
-Every observation below was re-run on 2026-10-12 against the tree at version
-0.5.0 (`agent_mail.py --version` prints `agent-postbox 0.5.0`), Python 3.12,
-macOS, in a throwaway directory with `AGENT_MAIL_DIR` pointing at it. Line
-numbers are for that tree and drift; the names beside them are stable.
+Every observation below was first run on 2026-10-12 against the tree at version
+0.5.0 and re-checked on 2026-10-16 against `main` at `618a818` (Python 3.13, macOS,
+a throwaway directory with `AGENT_MAIL_DIR` pointing at it; `agent_mail.py --version`
+still prints `agent-postbox 0.5.0`). Entries C and D were re-run on that date and
+reproduce; E was not re-run (the code it names is unchanged in kind, but its line numbers
+moved). Line numbers are for the 2026-10-16 tree and drift; the names beside them are stable.
+A refreshed proposal for the next starter issues is at the end ([Refreshed
+proposal](#refreshed-proposal-2026-10-16)); it is text for the owner, nothing has been opened.
 
 ## Ranked: open now / hold
 
 | Rank | Entry | Decision | Labels | Why |
 | --- | --- | --- | --- | --- |
-| 1 | A. CONTRIBUTING.md names 6 of the 26 files CI type-checks | opened as #20 | `documentation`, `good first issue`, `help wanted` | A demonstrated gap (26 files in `ci.yml` against 6 in CONTRIBUTING.md), one file to edit, checkable by diffing two strings |
+| 1 | A. CONTRIBUTING.md names 6 of the 38 files CI type-checks (26 when #20 was filed) | opened as #20, still open | `documentation`, `good first issue`, `help wanted` | A demonstrated gap (38 files in `ci.yml` against 6 in CONTRIBUTING.md on 2026-10-16; the list has grown by 12 since the issue was filed, which is the argument for pointing at `ci.yml` instead of copying it), one file to edit, checkable by diffing two strings |
 | 2 | B. Run the pickup adapter inside a real Codex and record the result | opened as #21 | `field-report`, `help wanted` | `docs/hosts.md` states that nothing was observed inside Codex and gives a five-step checklist with a positive control; needs only a Codex install |
 | 3 | C. `status --json`: report ask results as keys | hold | `enhancement` | Reverses a choice section 39 made on purpose, and a consumer can already derive the numbers from `list --json`; no one has asked for it |
 | 4 | D. `inbox` / `list` exit 2 while the listing is complete and a file is quarantined | hold | `enhancement` | The behaviour is documented and intended; whether to change an exit status is the owner's decision (three options, one is "do nothing") |
@@ -33,23 +37,25 @@ ever accepted, take them one after the other.
 ## Traps that apply to any code change (put a link to this list in the issue)
 
 * `test_hardening.py` (the check named "documented key set is exactly stable",
-  line 279) compares the top-level keys of `status --json`, and the keys of
+  line 279, unchanged on 2026-10-16) compares the top-level keys of `status --json`, and the keys of
   six of its sub-objects, with an exact list. Adding a key fails it until the
   list is edited on purpose, with a comment naming the new `PROTOCOL.md`
   section. Keep it an exact comparison.
 * `test_publication.py` requires every `.py` file in the root, `hooks/`,
   `scripts/` and `examples/` to be on the one `mypy` line of
-  `.github/workflows/ci.yml` (`mypy_files`, `python_files`, line 1652 and
-  following), and a new test file to be on every list that names the test
+  `.github/workflows/ci.yml` (the `mypy_files` helper and the tests that call it,
+  from about line 1550), and a new test file to be on every list that names the test
   files: the steps of `ci.yml`, the `test` job of `release.yml`,
   `.github/pull_request_template.md`, `CONTRIBUTING.md` and
-  `scripts/preflight.sh`. A new file added in one place only fails
-  `python test_publication.py`; copy what `test_team_sim.py` did.
+  `scripts/preflight.sh`. `ci.yml` now runs the test files through one step,
+  `python scripts/ci_run.py` (it names them), so a new test file also goes on that list.
+  A new file added in one place only fails `python test_publication.py`; copy what
+  `test_team_sim.py` did.
 * `test_readme_examples.py` executes every `bash runnable` block of
   `README.md` and resolves every "section N" reference to a real `PROTOCOL.md`
   heading. Change an example or renumber nothing without running it.
 * `PROTOCOL.md` section numbers are never reused. The next free number is the one after the last heading in `PROTOCOL.md`
-  (the last heading is "40. Identity binding").
+  (on 2026-10-16 the last heading is "41. Two silent failures made visible: a recipient nobody has, a pickup that cannot run", so the next free number is 42).
 * Never run the CLI against the checkout as a mailbox (SECURITY.md): set
   `AGENT_MAIL_DIR` to a temporary directory, as the commands below do.
 
@@ -74,7 +80,7 @@ adds a protocol section and edits an exact pin.
 **Hold because.** Section 39 chose not to add these keys ("No other key is
 added: which result stands on which ASK is a row of `list --json --type ASK`,
 and a consumer that wants only the ASKs with results filters that document on
-`result`", PROTOCOL.md lines 1922 to 1927). Reversing that is a design
+`result`", PROTOCOL.md lines 1956 to 1961). Reversing that is a design
 decision, and the derivation it points to works today. Open it only when a
 real consumer reports that deriving the numbers is a problem.
 
@@ -100,8 +106,8 @@ ask results (claimed, not proven): with_result=1 (DONE=1)  answered=0  unanswere
 which carries the line above; `problems` is `[]`. A planted unattached result
 shows as a text table row (`UNATTACHED_RESULT  -  <answer id>  agent-b  DONE`)
 and as `{"code": "UNATTACHED_RESULT", "count": 1}`, with no row in JSON. The
-text comes from `_results_lines` (`agent_mail.py` line 3204), called from
-`cmd_status` (line 3241).
+text comes from `_results_lines` (`agent_mail.py` line 3335), called from
+`cmd_status` (line 3372).
 
 **Proposal.** Two keys: `ask_results` (`with_result`, `by_value`,
 `answered_without_result`, `unanswered`) and `results_attention` (rows of
@@ -123,10 +129,10 @@ with a `results_attention_truncated` count).
       `results_attention` with the reason code `problems` counts.
 - [ ] Subjects and bodies appear in neither key.
 - [ ] `python selftest.py`, `test_hardening.py`, `test_cli.py` and
-      `test_readme_examples.py` pass; README.md "Observability: `status`" (line
-      408) lists the keys; `CHANGELOG.md` has a line.
+      `test_readme_examples.py` pass; README.md "Observability: `status`" (about line
+      319) lists the keys; `CHANGELOG.md` has a line.
 
-**Files.** `agent_mail.py` (`build_status`, line 3009), `PROTOCOL.md`,
+**Files.** `agent_mail.py` (`build_status`, line 3140), `PROTOCOL.md`,
 `README.md`, `test_hardening.py`, `test_cli.py`, `CHANGELOG.md`.
 
 **Out of scope.** Any change to `list`/`inbox`/`show` rows; any new result value.
@@ -141,7 +147,7 @@ with a `results_attention_truncated` count).
 status that wrappers depend on.
 
 **Hold because.** The exit status is documented and deliberate (README.md
-line 502, PROTOCOL.md lines 1142, 1642 and 1782, and the command says so on
+"Exit statuses" (line 369), PROTOCOL.md lines 1142, 1642 and 1782, and the command says so on
 stderr). Whether to change a documented exit status in a 0.x tool is the
 owner's call. The only part that needs no decision, the documentation, already
 exists. If the owner wants to keep exit 2, close this as "working as
@@ -186,15 +192,15 @@ exit table (line 1142) and need a new section; they also touch
 
 - [ ] The decision is a new numbered section (option 1 may be a README
       clarification only).
-- [ ] README.md "Exit statuses" (line 496), `agent-postbox --help` and
+- [ ] README.md "Exit statuses" (line 369), `agent-postbox --help` and
       `list`/`inbox --help` agree.
 - [ ] A test plants the `ACK` file next to one real ASK and asserts stdout,
       the `REJECT` line on stderr and the exit status for `list`, `inbox`,
       `inbox --json` and `latency`; the adapter still exits 0.
 - [ ] `python scripts/scenario.py --quick --seed 1` and `python test_scenario.py` pass.
 
-**Files.** `agent_mail.py` (`cmd_list` line 2645, `cmd_inbox` line 2686,
-`cmd_latency` line 1545), `PROTOCOL.md`, `README.md`, `test_cli.py`,
+**Files.** `agent_mail.py` (`cmd_list` line 2776, `cmd_inbox` line 2817,
+`cmd_latency` line 1598), `PROTOCOL.md`, `README.md`, `test_cli.py`,
 `scripts/scenario.py`, `docs/benchmarking.md`.
 
 **Dependencies.** None.
@@ -207,10 +213,10 @@ exit table (line 1142) and need a new section; they also touch
 
 **Hold because.** The behaviour is reproduced but intended (PROTOCOL.md
 section 33: nothing younger than `PROBE_MIN_AGE_SECONDS`, which is
-`IDEM_WAIT_MAX`, 60 s, is probed; `agent_mail.py` lines 2793 and 2902). The
+`IDEM_WAIT_MAX`, 60 s, is probed; `agent_mail.py` line 2924). The
 only consumer that needs more is this repository's own harness, which already
 works around it with a second reading at `--now` +61 s
-(`GRACE_SHIFT`, `scripts/scenario.py` line 199). The fix is a design choice
+(`GRACE_SHIFT`, `scripts/scenario.py` line 199, unchanged). The fix is a design choice
 (a flag, a per-file list, or neither) with a safety argument that has to be
 made first: the grace exists because a sender may have created a file and not
 yet locked it. Open it when someone other than the harness needs it.
@@ -267,10 +273,10 @@ with `kind`, `age_seconds` and `holder` (`held` | `free` | `unknown`).
 - [ ] `status` still writes nothing and exits 0 (the probe stays read-only).
 - [ ] `test_hardening.py` line 279 (key-set pin) updated deliberately if a
       key is added; `test_field.py` covers live and dead holders.
-- [ ] README.md (line 408) and `status --help` mention it.
+- [ ] README.md ("Observability: `status`", about line 319) and `status --help` mention it.
 
-**Files.** `agent_mail.py` (`scan_hidden` line 2839, `build_status`, `cmd_status`
-line 3241 and its parser), `PROTOCOL.md`, `README.md`, `test_hardening.py`,
+**Files.** `agent_mail.py` (`scan_hidden` line 2970, `build_status`, `cmd_status`
+line 3372 and its parser), `PROTOCOL.md`, `README.md`, `test_hardening.py`,
 `test_field.py`, `CHANGELOG.md`; optionally `scripts/scenario.py` and
 `docs/benchmarking.md`.
 
@@ -286,3 +292,57 @@ PROTOCOL.md section 31, "Refused at the scope stage" (line 949);
 `agent_mail.py` line 1895 (the helper that clears it); `test_field.py` lines
 570 to 640 (the same sequence, a live-holder control and the later retry);
 CHANGELOG.md line 207; `docs/benchmarking.md` lines 203 to 211. Do not open.
+
+---
+
+# Refreshed proposal (2026-10-16)
+
+Text for the owner; nothing here has been opened or posted. Basis: `main` at `618a818`, the open
+issues (#20, #21), the labels that exist (`bug`, `documentation`, `duplicate`, `enhancement`,
+`field-report`, `good first issue`, `help wanted`, `invalid`, `question`, `wontfix`; **`tried-it` does not exist**
+and the `Tried it` form applies it), and `docs/product-direction.md` (the maintainers' assessment that the
+defensible value is claims with expiry, owed replies, derived status and the history). Contributions that
+add a claim of benefit are out of scope (CONTRIBUTING.md, "No claim of benefit").
+
+## Still valid, keep
+
+| Entry | State on 2026-10-16 | Action |
+|---|---|---|
+| A / #20 (CONTRIBUTING.md `mypy` command) | Open. CONTRIBUTING.md still names 6 files; `ci.yml` names 38; PR #24 by an outside contributor addresses it and has had no reply since the maintainer's comment of 2026-10-13 | Edit the issue body's numbers (26 becomes 38) when #24 is resolved; prefer the durable fix (CONTRIBUTING.md says "run the `mypy` command in `ci.yml`"; `test_publication.py` keeps the template in step) |
+| B / #21 (Codex field check) | Open, no comments; `docs/hosts.md` still has the five-step checklist (line 191) and says Codex was never run | Keep. Needs a Codex install, not code |
+| C, D, E | Hold, unchanged; C and D re-run and reproduce | Keep on hold. None has a demonstrated user |
+| Former issue 3 | Dropped, stays dropped | - |
+
+## Gaps found by this review (candidates; each checked against the current tree)
+
+1. **CONTRIBUTING.md omits `test_experiment_v3.py`** (`good first issue`, `documentation`). Of the
+   `test_*.py` files in the root, CONTRIBUTING.md names all but `test_experiment_v3.py` (the PR template
+   names all). Fix: add it to the "Code changes" list; `test_publication.py` today pins the lists only for
+   some files, so extend its check in the same change (a positive control: it must fail when a file is
+   removed from the list). Overlaps with #20; open as one issue if #24 is closed, otherwise fold into the
+   follow-up to #24. File: `CONTRIBUTING.md`, `test_publication.py`.
+2. **Field check: the claim contest on a real second machine or a networked filesystem** (`field-report`,
+   `help wanted`). README and PROTOCOL.md section 30 say `flock` is trusted on local filesystems only and
+   that a network mount may refuse it (exit 2) or grant it twice. Nobody has reported what actually happens
+   on NFS/SMB. A reporter runs the two-line contest from the README ("Claims and findings") on their mount and
+   pastes exit statuses. No code change; the report goes into the Security-and-limitations wording.
+3. **Field check: interactive Claude Code** (`field-report`, `help wanted`). Every real-host run is headless;
+   README and `docs/hosts.md` say interactive mode was not run. A reporter follows
+   `examples/two-agents/RECORDING.md` section B (dry run) and records the trust dialog, whether the
+   `Agent mail` block is visible, and the `check` result. The owner needs the same pass for the demo, so this
+   can also be done by the owner.
+4. **Field check: WSL or Windows** (`field-report`, `help wanted`, optional). README says "WSL has not
+   been tried". A reporter runs `python3 examples/two-agents/run.py` and `python3 selftest.py` under WSL and
+   reports the output. No promise of support; CONTRIBUTING.md forbids Windows claims without a CI job.
+5. **Error-message review of `send --type CLAIM`** (`good first issue`, `enhancement`). Hold until a
+   concrete confusing message is demonstrated; this review did not find one, so do not open it speculatively.
+
+Not proposed: anything that changes `status --json` or exit statuses (C, D, E stay on hold), anything about
+orchestration, and any "benchmark it" task: the next experiment is designed by the maintainers
+(`docs/product-direction.md`, section 5).
+
+## Label housekeeping
+
+* Create `tried-it` (owner; the command is in `docs/adoption/invite-five.md`) before inviting testers, or the
+  `Tried it` form's label is silently dropped.
+* `good first issue` has exactly one open issue (#20). Items 1 and 5 are the only ones above that fit it.
