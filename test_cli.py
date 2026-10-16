@@ -23,6 +23,7 @@ import datetime as dt
 import faulthandler
 import hashlib
 import io
+import datetime
 import json
 import os
 import re
@@ -1730,6 +1731,39 @@ def test_visibility(root: Path) -> None:
           r.returncode == base.returncode, f"{r.returncode} vs {base.returncode}")
 
 
+def test_claim_in_linked_worktree_warns(root: Path) -> None:
+    """A scoped CLAIM in a linked worktree's own default mailbox excludes nobody else, and
+    `send` now says so on stderr (PROTOCOL.md section 43). Stderr only: exit and stdout as before."""
+    def fresh(name: str, git_is_file: bool) -> Path:
+        d = root / name
+        (d / "docs" / "agent-mail").mkdir(parents=True)
+        if git_is_file:
+            (d / ".git").write_text("gitdir: /elsewhere/.git/worktrees/wt\n", encoding="utf-8")
+        else:
+            (d / ".git").mkdir()
+        return d
+
+    exp = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    claim = ("send", "--type", "CLAIM", "--from", "alice", "--to", "bob", "--subject", "taking x",
+             "--scope", "x", "--expires", exp, "--body", "mine")
+    tag = "is filed in THIS linked git worktree's own mailbox"
+    wt = fresh("cw-linked", True)
+    r = run(None, *claim, cwd=wt)
+    check("a scoped CLAIM in a linked worktree succeeds and warns on stderr, naming AGENT_MAIL_DIR",
+          r.returncode == 0 and tag in r.stderr and "AGENT_MAIL_DIR" in r.stderr
+          and "wrote " in r.stdout and tag not in r.stdout, r.stderr[-400:])
+    main_co = fresh("cw-main", False)
+    check("control: the same CLAIM in a main checkout prints no such warning",
+          tag not in run(None, *claim, cwd=main_co).stderr)
+    named = run(wt / "docs" / "agent-mail", *claim[:-1], "mine2", cwd=wt)
+    check("control: with the mailbox directory named (AGENT_MAIL_DIR) there is no warning",
+          tag not in named.stderr, named.stderr[-300:])
+    noscope = fresh("cw-noscope", True)
+    r = run(None, "send", "--type", "NOTICE", "--from", "alice", "--to", "bob", "--subject", "hi",
+            "--body", "x", cwd=noscope)
+    check("control: a NOTICE in a linked worktree prints no claim warning", tag not in r.stderr)
+
+
 def test_send_permission_line(root: Path) -> None:
     """`doctor` says whether Claude Code's allow rules cover `send` (PROTOCOL.md section
     41). Informational only: it never changes the exit status and never writes a rule."""
@@ -2025,6 +2059,7 @@ def main() -> int:
         test_visibility(root)
         test_linked_worktree(root)
         test_send_permission_line(root)
+        test_claim_in_linked_worktree_warns(root)
     faulthandler.cancel_dump_traceback_later()
     if KNOWN:
         print(f"\nKNOWN ({len(KNOWN)}; defects outside this file's reach, not failures):")
