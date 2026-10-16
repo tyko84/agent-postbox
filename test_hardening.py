@@ -1553,6 +1553,41 @@ def main() -> int:
               fin18.returncode == 0 and "'f18' is released" in fin18.stderr and riv18.returncode == 0,
               fin18.stderr + riv18.stderr)
 
+        print("19. a fan-out copy filed to an alias name reaches nobody and says so "
+              "(PROTOCOL.md sections 27 and 41)")
+        r19 = Path(td) / "rec19"
+        r19.mkdir()
+        (r19 / "PARTICIPANTS.md").write_text(
+            "# Participants\n\n| Identity | Reachable | Mechanism | Verified | can | cannot | uid |\n"
+            "|---|---|---|---|---|---|---|\n| `alice` | no | poll | no | | | |\n"
+            "| `bob` | no | poll | no | | | |\n\n## Aliases\n\n| Alias | Writers |\n|---|---|\n"
+            "| `crew` | `bob`, `crew` |\n| `outer` | `inner`, `bob` |\n| `inner` | `bob` |\n"
+            "| `ok` | `alice`, `bob` |\n| `ghost` | `bob`, `nobody` |\n")
+
+        def n19(to: str) -> subprocess.CompletedProcess:
+            return run(r19, "send", "--type", "NOTICE", "--from", "alice", "--to", to,
+                       "--subject", "s19", "--body", "b")
+
+        okc = n19("ok")
+        check("control: an alias of two real identities files two copies and warns about neither",
+              okc.returncode == 0 and okc.stdout.count("wrote ") == 2 and "warning" not in okc.stderr,
+              okc.stdout + okc.stderr)
+        for alias19, bad19 in (("crew", "crew"), ("outer", "inner")):
+            cp19 = n19(alias19)
+            check(f"an alias naming the alias {bad19!r} as a writer: exit 0 and every copy filed, "
+                  f"one warning naming {bad19!r} and that aliases do not nest",
+                  cp19.returncode == 0 and cp19.stdout.count("wrote ") == 2
+                  and cp19.stderr.count("warning:") == 1 and f"--to '{bad19}' is an alias" in cp19.stderr
+                  and "do not nest" in cp19.stderr, cp19.stdout + cp19.stderr)
+        gh19 = n19("ghost")
+        check("control: a writer that is neither a row nor an alias still gets the section 41 "
+              "wording", gh19.returncode == 0 and "--to 'nobody' is not a row" in gh19.stderr,
+              gh19.stderr)
+        direct19 = n19("inner")
+        check("control: a send to an alias directly is a fan-out to its writers, no warning",
+              direct19.returncode == 0 and direct19.stdout.count("wrote ") == 1
+              and "warning" not in direct19.stderr, direct19.stdout + direct19.stderr)
+
     faulthandler.cancel_dump_traceback_later()
     if FAILS:
         print("\nFAILED:")

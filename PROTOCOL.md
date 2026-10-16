@@ -2110,7 +2110,13 @@ match is `difflib`'s closest row, when there is one. The message is filed anyway
 like that. Nothing is said for a mailbox with no table, an empty table, or one that
 cannot be read (those commands already refuse on an unreadable table). The check reads
 `PARTICIPANTS.md` only; it never scans the mailbox. A fan-out through an alias warns
-for none of its writers that have a row.
+for none of its writers that have a row. A writer that is itself an alias (an alias naming
+another alias, or its own name) is not a row: aliases expand at send time and do not nest
+(section 27), so the copy filed to that name is read by nobody, and `send` says so once per
+such copy (`warning: --to 'inner' is an alias, not an Identity row in PARTICIPANTS.md, so
+this copy of the fan-out is filed but nobody will read it ...`). Exit status, stdout and the
+copies filed are unchanged; `status` reports the stranded copy later as `ALIAS_MAIL_UNDELIVERED`
+(section 46). `test_hardening.py` section 19 pins it.
 
 **A broadcast word (`send`, `ask`).** `all`, `any`, `*` and `everything` are not identities.
 The pickup adapter and `list --to <name>` match a message's `to` against one name, so a
