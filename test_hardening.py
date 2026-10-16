@@ -1607,8 +1607,8 @@ def main() -> int:
                        "--subject", "s20", "--body", "b", cwd=cwd20)
 
         fall20 = n20("team")
-        want20 = (f"warning: alias 'team' was read from {alias20}, but this mailbox's registry is "
-                  f"{reg20}; the copies go to that table's writers.")
+        want20 = (f"warning: alias 'team' was read from {alias20.resolve()}, but this mailbox's registry is "
+                  f"{reg20.resolve()}; the copies go to that table's writers.")
         check("alias from a later registry warns once and still files its copy",
               fall20.returncode == 0 and fall20.stdout.count("wrote ") == 1
               and fall20.stderr.count(want20) == 1, fall20.stdout + fall20.stderr)
