@@ -50,6 +50,8 @@ SHOWN = 5          # rows per list; the rest is "+N more"
 MAX_LIVE = 20      # live messages spelled out per prompt (the newest); the rest is counted
 MAX_SUBJECT = 500  # what `send` accepts (agent_mail.MAX_SUBJECT_CHARS)
 MAX_IDENT = 128    # agent_mail.MAX_IDENT_CHARS
+# Context cost (docs/context-cost.md): this text is put in front of a model before EVERY prompt.
+# One `show <id>` line serves the whole list, and the Reply template appears only when a reply is owed.
 MAX_STAMP = 64     # characters of a hand-written date or expiry the prompt may carry
 NOT_A_HOLD = ("EXPIRED", "NO_EXPIRES", "MALFORMED_EXPIRES")   # section 34 reasons
 
@@ -165,7 +167,9 @@ def main() -> int:
             "",
         ]
         # The newest MAX_LIVE (this runs before EVERY prompt), plus every message that is
-        # awaiting your reply: an unanswered ASK is never dropped by the cap.
+        # awaiting your reply: an unanswered ASK is never dropped by the cap. Nothing is hidden
+        # because it was shown before: the hook keeps no state, and a skipped pickup must never
+        # make a message vanish (docs/context-cost.md, "A rejected idea").
         listed = [m for i, m in enumerate(mine) if i >= len(mine) - MAX_LIVE or m.id in owed_ids]
         if len(listed) < len(mine):
             out += [f"  ({len(mine) - len(listed)} older live message(s) not listed; "
@@ -179,8 +183,9 @@ def main() -> int:
             ]
             if m.type == "CLAIM" and m.meta.get("expires"):
                 out.append(f"    holds until: {_clip(m.meta['expires'], MAX_STAMP)}")
-            out.append(f'    read: {py} {tool} show {m.id}')
-        if mine:
+        if listed:
+            out += ["", f"Full text of one: {py} {tool} show <id>"]
+        if owed_ids:
             out += ["", f'Reply: {py} {tool} send --type ANSWER --from {me} '
                         "--to <sender> --reply-to <id> --subject ... --body-file <file, or - for stdin>"]
         if held:

@@ -7,6 +7,16 @@ behaviour).
 
 ## [Unreleased]
 
+### Changed
+
+- The pickup hook prints one `Full text of one: ... show <id>` line for the whole list instead of one
+  `read:` line per message, and the Reply template only when a reply is owed. Every id, subject and
+  owed ASK is still listed; the full message is one `show` away. Measured on a real 31-message task:
+  21.7 to 36.7 percent fewer hook bytes (about 45 to 49 percent at five or more live messages, none
+  for a single owed ASK); real token cost measured at about 0.55 input tokens per byte
+  (docs/context-cost.md). A rule that also collapsed messages the identity had since replied after was
+  tried and rejected: it lowered the delivery rate in `test_scenario.py`.
+
 ### Fixed
 
 - A recipient who never writes is no longer invisible: `status` counts a name that has an
