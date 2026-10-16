@@ -978,9 +978,11 @@ class ReliabilityProbes(unittest.TestCase):
             cp = install(project, "--adapter", "claude-code")
         finally:
             (project / ".claude").chmod(0o755)
-        self.assertEqual(cp.returncode, 1)
+        # Refused up front (exit 2, nothing copied) rather than stopping partway with exit 1.
+        self.assertEqual(cp.returncode, 2)
         self.assertNotIn("Traceback", cp.stderr)
-        self.assertIn("ABORT: cannot write", cp.stderr)
+        self.assertIn("is not writable", cp.stderr)
+        self.assertFalse((project / "tools").exists())
         self.assertEqual(install(project, "--adapter", "claude-code").returncode, 0)  # re-run heals
 
 

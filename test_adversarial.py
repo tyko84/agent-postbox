@@ -897,6 +897,26 @@ def hostile_output(root: Path) -> None:
           r.returncode == 2 and "leading outside the project" in r.stderr and not list(elsewhere.iterdir()),
           r.stdout + r.stderr)
 
+    if hasattr(os, "geteuid") and os.geteuid() != 0:   # root can write anywhere
+        cases: list[tuple[str, str, tuple[str, ...]]] = [
+            ("an unwritable .claude (hook step)", ".claude", ("--adapter", "claude-code")),
+            ("an unwritable docs/ (mailbox step)", "docs", ())]
+        for label, mk, extra in cases:
+            ro_p = root / f"inst-ro-{mk.strip('.')}"
+            (ro_p / ".git").mkdir(parents=True)
+            (ro_p / mk).mkdir()
+            os.chmod(ro_p / mk, 0o555)
+            try:
+                r = install(ro_p, *extra)
+                tree = sorted(p.relative_to(ro_p).as_posix() for p in ro_p.rglob("*")
+                              if ".git" not in p.relative_to(ro_p).parts)
+            finally:
+                os.chmod(ro_p / mk, 0o755)
+            check(f"{label} is refused up front (exit 2, names the directory), not after the tool "
+                  "was copied",
+                  r.returncode == 2 and "is not writable" in r.stderr and mk in r.stderr
+                  and "Nothing was changed" in r.stderr and tree == [mk], repr((tree, r.stderr)))
+
 
 def main() -> int:
     faulthandler.dump_traceback_later(WATCHDOG, exit=True)
