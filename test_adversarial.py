@@ -901,13 +901,13 @@ def hostile_output(root: Path) -> None:
         cases: list[tuple[str, str, tuple[str, ...]]] = [
             ("an unwritable .claude (hook step)", ".claude", ("--adapter", "claude-code")),
             ("an unwritable docs/ (mailbox step)", "docs", ())]
-        for label, mk, extra in cases:
+        for label, mk, ro_flags in cases:
             ro_p = root / f"inst-ro-{mk.strip('.')}"
             (ro_p / ".git").mkdir(parents=True)
             (ro_p / mk).mkdir()
             os.chmod(ro_p / mk, 0o555)
             try:
-                r = install(ro_p, *extra)
+                r = install(ro_p, *ro_flags)
                 tree = sorted(p.relative_to(ro_p).as_posix() for p in ro_p.rglob("*")
                               if ".git" not in p.relative_to(ro_p).parts)
             finally:
