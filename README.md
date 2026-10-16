@@ -635,6 +635,11 @@ No performance advantage has been demonstrated. What exists, most important firs
   The shared notes file completed 20 of 20, so the run stopped at its ceiling gate; Postbox also
   completed 20 of 20, delivered by the hook every time, at about 45% more cost per run. It does not
   show an advantage or a disadvantage: [docs/experiment-v3-results.md](docs/experiment-v3-results.md).
+* **Pilot v4** (interrupted holder, 6 instances per arm, same host and model): **failed its
+  validity gates** (a host refusal in two arms), so it claims nothing. Descriptively: the host
+  already prevented lost updates without any coordination, an agent never overrode a stale note or
+  lock, and only the Postbox lease let the surviving agent through (5 of 6):
+  [docs/experiment-v4-results.md](docs/experiment-v4-results.md).
 * **Micro-experiment** (20 paired instances, haiku): **null**. The fact reached the consumer in
   most runs under every arrangement, and a notes file the agents were told to read did at
   least as well: [docs/micro-experiment.md](docs/micro-experiment.md).
