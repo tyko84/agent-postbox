@@ -77,8 +77,8 @@ git clone https://github.com/tyko84/agent-postbox
 #    in a throwaway directory).
 python3 agent-postbox/examples/two-agents/run.py
 
-# 3. Install into your own project (it must be a git repository: `git init` there if it
-#    is not), and register the pickup hook for Claude Code. Use --adapter codex for Codex, or no --adapter to poll.
+# 3. Install into your own project (it should be a git repository, because mailbox
+#    discovery stops at `.git`: the installer warns if it is not; `git init` there), and register the pickup hook for Claude Code. Use --adapter codex for Codex, or no --adapter to poll.
 python3 agent-postbox/install.py /path/to/your/project --adapter claude-code
 
 # 4. Your first exchange. Run from the project's root; works as written with the two
@@ -117,7 +117,7 @@ For real use, then:
    verified identity.
 3. Commit `.claude/settings.json` (or `.codex/hooks.json`) **and `tools/agent-postbox/`** so the
    hook reaches the next clone and its worktrees (a worktree with the settings but without the
-   tool runs a hook that cannot find its script: the prompt still goes through, minus the mail); the `.bak` files next to them are your pre-install originals.
+   tool runs a hook that cannot find its script: the prompt still goes through, minus the mail); the `.bak` files next to them, where the installer replaced an existing file, are your pre-install originals.
 4. `selftest.py` takes about 20 seconds.
 
 The whole path with output and timings:
@@ -362,8 +362,12 @@ leftover temp files, and agents that have been silent past `--stalled-hours`
 It also counts what a crashed sender leaves behind (orphaned lock files and idempotency
 markers, stale mutexes, replies that cite a missing id). `status --json` carries a `problems`
 list of fixed codes with counts, empty for a clean mailbox, so tooling does not parse prose;
-the codes are in PROTOCOL.md sections 29, 33 and 34. `status` exits 0 whenever the mailbox
-exists; `doctor` prints the same counts with file names. When any ANSWER carries a `result:`,
+the codes are in PROTOCOL.md sections 29, 33, 34, 39, 45, 46 and 48. `status` exits 0 whenever the
+mailbox exists; `doctor` prints the same counts with file names. One of them is worth knowing on
+day one: an `ASK` that has owed a reply for `--stalled-hours` (72 by default) to a name that has
+never sent anything in this mailbox is counted as `SILENT_RECIPIENT`, and `doctor` names it. The
+tool cannot tell why: the recipient's session may never have run, or it may write under another
+name (PROTOCOL.md section 48). When any ANSWER carries a `result:`,
 text `status` adds one `ask results (claimed, not proven): ...` line (PROTOCOL.md section 39).
 
 **Who holds what.** `status` also names the holders of unexpired claims (scope, holder, expiry
@@ -570,7 +574,11 @@ canary, participant capabilities, shell metacharacters before argv, the handoff 
 later sections cover input policy and `status` (29), kernel-held scope locks (30), keyed-send
 locking (31), crash diagnostics and the exit-status table (33), who holds what (34), filters,
 `--limit` and `--json` (37), the command line's own obligations (38), ask results (39),
-identity binding (40) and the permission line of `doctor` (41). Sections 5 and 5a cover lease
+identity binding (40), the permission line of `doctor` and a recipient nobody has (41), and a
+run of small reports that name a silent failure instead of changing behaviour: a claim filed in
+a linked worktree's own mailbox (43), a mailbox that cannot be written (44), a plain `ANSWER` from
+someone the `ASK` was not addressed to (45), mail filed to an alias before it was declared (46),
+one alias fan-out counted as one hold (47) and a recipient who never writes (48). Sections 5 and 5a cover lease
 rules, retry-safe sends and quarantine. Take those even if you keep your own transport.
 
 Full spec: [PROTOCOL.md](PROTOCOL.md). It is self-contained: an agent that has
@@ -653,8 +661,8 @@ No performance advantage has been demonstrated. What exists, most important firs
   recipient at the first awake prompt. That is a property of the mechanism; it says nothing
   about what a model does with mail ([docs/benchmarks-summary.md](docs/benchmarks-summary.md)).
 
-A follow-up experiment has been proposed but not approved or run
-([docs/experiment-v3-proposal.md](docs/experiment-v3-proposal.md)).
+No further experiment is approved. A next one would need a scenario the host does not already
+protect, and a pre-registered design ([docs/product-direction.md](docs/product-direction.md)).
 
 ## Permissions
 
