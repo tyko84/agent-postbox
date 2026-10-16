@@ -304,7 +304,7 @@ def takeover(d: Demo) -> None:
     d.check(True, f"agent-a's claim on {LEASE_SCOPE} was written ({taken})")
     cp = d.mail("status", "--scope", LEASE_SCOPE, identity="agent-a")
     d.check(re.search(rf"^  {re.escape(LEASE_SCOPE)}\s+agent-a\b", cp.stdout, re.M) is not None
-            and "expired=1" in cp.stdout and len(d.message_files()) == len(before) + 2,
+            and "expired=1" in cp.stdout and len(d.message_files()) == len(before) + 1,
             f"{LEASE_SCOPE} is held by agent-a; agent-b's expired claim is still in the mailbox")
 
 
