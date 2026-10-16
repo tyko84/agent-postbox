@@ -1,7 +1,8 @@
-# Positioning proposal (draft, not applied)
+# Positioning proposal (README patch applied 2026-10-16; the GitHub repository description is not changed)
 
-Status: a proposal for the owner. **Nothing here is merged into `README.md` or any other
-document, and the GitHub repository description has not been changed.** It follows the
+Status: the README patch in section 7 was applied (with one added caveat about worktrees and
+`AGENT_MAIL_DIR`, section 43); **the GitHub repository description has not been changed** (the
+proposed text below is for the owner to set). It follows the
 maintainers' assessment in `docs/product-direction.md` (pending on the branch
 `docs/product-direction`, pull request #57 when this was written): three experiments measured
 delivery and did not show an advantage; the defensible value is exclusive claims with mandatory
