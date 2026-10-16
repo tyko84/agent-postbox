@@ -34,7 +34,7 @@ was not caught by readiness.
 
 ## Descriptive counts (scenario 2, 6 instances per arm; no test, no rate claim)
 
-| Arm | final_ok | recovered | time to recovery (median) | notes |
+| Arm | final_ok | recovered | time to recovery (analysis column `ttr_s`) | notes |
 |---|---|---|---|---|
 | N0 (nothing) | 6 | 6 | about 5 s | the survivor was never blocked |
 | S (soft notes) | 0 | 0 | none | all 6 survivors waited the whole window and none overrode the stale note |
