@@ -1854,6 +1854,32 @@ def test_alias_mail_undelivered(root: Path) -> None:
     check("status and doctor wrote nothing", all(snapshot(box).get(k) == v for k, v in snap.items()))
 
 
+def test_fanout_holds(root: Path) -> None:
+    """One alias fan-out is one hold, not one per writer (PROTOCOL.md section 47)."""
+    box = root / "holds"
+    box.mkdir()
+    NOW = "2030-01-01T10:00:00Z"
+    EXP = "2030-01-01T20:00:00Z"
+    plain = doc(run(box, "status", "--json", "--now", NOW))
+    check("an empty mailbox has no holds key (output as before)", "holds" not in plain, repr(plain.keys()))
+    for n, to in (("H1", "bob"), ("H2", "carol")):   # the two copies of one fan-out to `crew`
+        hand(box, n, "CLAIM", "alice", to, "2030-01-01T09:00:00Z", "hold", scope="file:x.py", expires=EXP)
+    hand(box, "H3", "CLAIM", "alice", "bob", "2030-01-01T09:01:00Z", "other", scope="file:y.py", expires=EXP)
+    hand(box, "H4", "CLAIM", "dave", "bob", "2030-01-01T09:02:00Z", "unscoped", expires=EXP)
+    hand(box, "H5", "CLAIM", "dave", "carol", "2030-01-01T09:02:00Z", "unscoped too", expires=EXP)
+    snap = snapshot(box)
+    sj = doc(run(box, "status", "--json", "--now", NOW))
+    check("five held messages are four holds: the two copies are one, unscoped claims are never merged",
+          sj.get("claims", {}).get("held") == 5 and sj.get("holds") == 4
+          and len(sj.get("claims_held", [])) == 5, repr((sj.get("claims"), sj.get("holds"))))
+    txt = run(box, "status", "--now", NOW).stdout
+    check("text status says so beside the count", "held=5" in txt and "(4 holds: " in txt, txt[:300])
+    only = doc(run(box, "status", "--json", "--now", NOW, "--scope", "file:x.py"))
+    check("--scope keeps the count over the whole mailbox, as claims does",
+          only.get("holds") == 4 and len(only.get("claims_held", [])) == 2, repr(only.get("holds")))
+    check("status wrote nothing", snapshot(box) == snap)
+
+
 def test_doctor_writable_line(root: Path) -> None:
     """`doctor` names a mailbox this account cannot write (PROTOCOL.md section 44)."""
     if hasattr(os, "geteuid") and os.geteuid() == 0:
@@ -2206,6 +2232,7 @@ def main() -> int:
         test_doctor_writable_line(root)
         test_answer_from_third_party(root)
         test_alias_mail_undelivered(root)
+        test_fanout_holds(root)
     faulthandler.cancel_dump_traceback_later()
     if KNOWN:
         print(f"\nKNOWN ({len(KNOWN)}; defects outside this file's reach, not failures):")
