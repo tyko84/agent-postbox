@@ -2227,6 +2227,21 @@ def _fanout_claim_siblings(args: argparse.Namespace, writers: list[str]) -> dict
     return out
 
 
+def _claim_worktree_note(scope: str) -> str | None:
+    """PROTOCOL.md section 43: a CLAIM filed in a linked worktree's own default mailbox
+    excludes only agents in that worktree. Stderr only; None when it does not apply."""
+    try:
+        line = linked_worktree_line(project_root())
+    except Exception:  # noqa: BLE001 - a note must never fail a send that has already written
+        return None
+    if line is None:
+        return None
+    return (f"warning: this claim on {scope!r} is filed in THIS linked git worktree's own mailbox "
+            "(AGENT_MAIL_DIR is unset), so agents in other worktrees or clones of the repository "
+            "do not see it and are not excluded by it. Point every agent's AGENT_MAIL_DIR at one "
+            "shared directory if the claim is meant to exclude them")
+
+
 def cmd_send(args: argparse.Namespace) -> int:
     _Stdout.optional = True  # section 35: the mail matters more than the confirmation
     mtype = args.type.upper()
@@ -2535,6 +2550,8 @@ def cmd_send(args: argparse.Namespace) -> int:
     print(f"id: {msg_id}")
     if (note := unknown_recipient_note(to, mtype)) is not None:
         print(note, file=sys.stderr)
+    if mtype == "CLAIM" and scope and (wt := _claim_worktree_note(scope)) is not None:
+        print(wt, file=sys.stderr)
     return 0
 
 

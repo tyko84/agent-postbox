@@ -2187,3 +2187,25 @@ released` and the older claim's id and not `is released`, and a rival is still
 refused (exit 3). Superseding the older one too prints `is released` and the
 rival then succeeds. A sender with one claim gets the §32 note unchanged.
 `test_hardening.py` section 18 pins this.
+
+---
+
+## 43. A claim filed where nobody else looks says so
+
+§30 makes a scope claim exclusive **within one mailbox**. Each linked `git worktree` (and each
+clone) has its own checkout of the default mailbox directory, so two agents in two worktrees
+that both `send --type CLAIM --scope X` to the default mailbox both succeed: each one's claim
+sits in a directory the other never reads. `doctor` has said so since §41; `send` was silent at
+the moment the false assurance was created.
+
+**Rule.** After a CLAIM that names a scope is written, `send` writes one line to **stderr**
+when `AGENT_MAIL_DIR` is unset and `.git` at the project root is a file (a linked worktree),
+exactly the condition of the §41 `worktree:` line. The line starts `warning: this claim on
+'X' is filed in THIS linked git worktree's own mailbox` and names `AGENT_MAIL_DIR` as the way to
+share one. Exit status, stdout, files and fields are unchanged; a main checkout, a named
+`AGENT_MAIL_DIR`, a CLAIM without a scope and every other type print nothing extra.
+
+**Invariant a test must pin.** In a hand-made linked worktree (a `.git` file) a scoped CLAIM
+exits 0 and stderr carries the warning; the same CLAIM in a main checkout, with `AGENT_MAIL_DIR`
+set, without `--scope`, and a NOTICE in the worktree, do not. `test_cli.py` pins it.
+
