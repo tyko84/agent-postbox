@@ -59,6 +59,7 @@ TESTS: tuple[Test, ...] = (
     Test(("test_field.py",), 23),
     Test(("test_experiment_v2.py",), 22),
     Test(("test_experiment_v3.py",), 20),
+    Test(("test_experiment_v4.py",), 55),
     Test(("test_publication.py",), 16, once=True),
     Test(("scripts/scenario.py", "--quick", "--seed", "1"), 14),
     Test(("test_scenario.py",), 14),
