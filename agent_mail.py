@@ -1961,8 +1961,16 @@ def _idem_legacy_takeover(marker: Path, seen: bytes) -> None:
         return
     os.close(mfd)
     try:
-        # compare-and-delete: only remove the orphan we observed
-        if marker.read_bytes() == seen:
+        # compare-and-delete: only remove the orphan we observed. `seen` is the first 4096
+        # bytes (all that _idem_claim reads), so the same 4096 are compared: a marker longer
+        # than that, which only a hand-written file can be, used to compare unequal to its own
+        # head and could never be taken over.
+        rfd = os.open(marker, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+        try:
+            same = os.pread(rfd, 4096, 0) == seen
+        finally:
+            os.close(rfd)
+        if same:
             marker.unlink(missing_ok=True)
     except OSError:
         pass
