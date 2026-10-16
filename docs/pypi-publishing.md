@@ -76,7 +76,7 @@ setuptools 84.0.0):
   | `Requires-Python` | `>=3.10` |
   | `Description-Content-Type` | `text/markdown` (the README) |
   | `Project-URL` | `Homepage`, `Documentation`, `Changelog`, `Source`, `Issues` |
-  | `Classifier` | ten, each present in PyPI's list of valid classifiers |
+  | `Classifier` | eleven, each present in PyPI's list of valid classifiers |
   | `Author` | the `authors` entry of `pyproject.toml` |
 
 * The wheel and the sdist each install into a fresh environment on CPython
