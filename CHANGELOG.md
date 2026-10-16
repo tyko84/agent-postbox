@@ -9,6 +9,9 @@ behaviour).
 
 ### Fixed
 
+- A recipient who never writes is no longer invisible: `status` counts a name that has an
+  unanswered ASK as old as `--stalled-hours` and never sent a message as `SILENT_RECIPIENT`, and
+  `doctor` names it (PROTOCOL.md section 48). `agents` itself is unchanged.
 - One alias fan-out is one hold: `status --json` adds a top-level `holds` (only when it differs from
   `claims.held`), and text `status` says "N holds" beside the count, so a claim to a two-writer alias
   no longer reads as two holds (PROTOCOL.md section 47). `claims.held` still counts messages.

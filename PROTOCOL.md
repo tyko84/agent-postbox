@@ -1167,6 +1167,7 @@ may be added; an existing code never changes meaning.
 | `DANGLING_REPLY` | `dangling_replies` |
 | `ALIAS_MAIL_UNDELIVERED` | live messages whose `to` is an alias declared now (§46) |
 | `STALLED_AGENT` | number of `stalled_agents` |
+| `SILENT_RECIPIENT` | names asked and unanswered for the stalled threshold that never wrote (§48) |
 
 `problems` is `[]` for a clean mailbox. It does not change `status`'s exit
 status, which stays 0 whenever the mailbox exists: `status` reports, `doctor`
@@ -2310,3 +2311,27 @@ does not narrow `holds`, as it does not narrow `claims`. No exit status and no p
 **Invariant a test must pin.** Two copies of one fan-out plus three other held claims read
 `held=5`, `holds=4`; a mailbox without a fan-out has no `holds` key; nothing is written.
 `test_cli.py` pins it.
+
+---
+
+## 48. A recipient who never writes is reported
+
+`agents` and `stalled_agents` (§19) are built from the senders of messages. A name that only ever
+receives has no row, so an ASK to an agent that is not running (or never was) read as a quiet,
+healthy mailbox: `STALLED_AGENT` cannot fire for a name it has never seen.
+
+**Rule.** `status --json` adds the problem code `SILENT_RECIPIENT` (after `ALIAS_MAIL_UNDELIVERED`):
+the number of names that are the `to` of at least one ASK that still owes a reply (§8) and is at
+least `--stalled-hours` old (72 by default, a dated ASK only), and that have never sent any message
+in this mailbox. A name that has sent anything is not silent: it has an `agents` row and the usual
+`active|stalled` state decides. An alias token is not a recipient (§27, §46). `doctor` prints
+`silent_recipients: N: ...` and the names (at most 20), only when N is not zero. It is a report: no
+exit status changes, `doctor` does not FAIL on it, the ASK stays open and is delivered as before.
+
+**Why no `agents` row.** A new state in `agents` would add a row to every mailbox that has a pure
+reader, and change `status --json` for mailboxes without any problem. The code appears only when
+something is wrong.
+
+**Invariant a test must pin.** An unanswered ASK to a name that never wrote is counted once it is
+as old as the threshold and not before; a name that wrote, an ASK that was answered by anyone, and
+a young ASK are not counted; nothing is written. `test_cli.py` pins it.
