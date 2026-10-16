@@ -1579,6 +1579,12 @@ def test_fuzz(root: Path) -> None:
     check("send with a very long AGENT_MAIL_DIR: NO MAILBOX, not a traceback",
           r.returncode == 2 and "Traceback" not in r.stderr and r.stdout == ""
           and r.stderr.startswith("NO MAILBOX at ") and r.stderr.count("\n") == 1, r.stderr[-120:])
+    for argv in (send, ("list",), ("status",), ("doctor",)):
+        r = run(None, *argv, env={"AGENT_MAIL_DIR": "~no-such-user-zz/mail"}, cwd=root)
+        check(f"{argv[0]} with AGENT_MAIL_DIR=~<a user nobody has>: exit 2 and no traceback "
+              "(it used to end in RuntimeError, exit 1)",
+              r.returncode == 2 and "Traceback" not in r.stderr and "RuntimeError" not in r.stderr
+              and "~no-such-user-zz/mail" in r.stdout + r.stderr, r.stderr[-160:])
     r = run(None, "list", env={"AGENT_MAIL_PROJECT": "d" * 5000}, cwd=root)
     check("a very long AGENT_MAIL_PROJECT with no AGENT_MAIL_DIR: NO MAILBOX, not a traceback",
           r.returncode == 2 and "Traceback" not in r.stderr and r.stdout == ""

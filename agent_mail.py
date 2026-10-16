@@ -234,6 +234,16 @@ class WorkingDirectoryGone(RuntimeError):
     worktree or a branch switch deletes it): the walk-up search has no starting point."""
 
 
+def _expand(path: Path) -> Path:
+    """`path.expanduser()`; a `~name` (or a `~` with no home directory) that cannot be
+    expanded stays as written, so it is a mailbox that does not exist (exit 2, section 38)
+    rather than a traceback."""
+    try:
+        return path.expanduser()
+    except RuntimeError:
+        return path
+
+
 def discovery_root() -> Path:
     for key in ("AGENT_MAIL_PROJECT", "CLAUDE_PROJECT_DIR"):
         env = os.environ.get(key)
@@ -280,7 +290,7 @@ def is_tool_checkout(root: Path) -> bool:
 def mailbox_in_tool_checkout(box: Path) -> bool:
     """True when `box` is the spec repo's own docs/agent-mail (the public artifact).
     A `box` the OS will not look at (too long) is nowhere, so not there either."""
-    resolved = box.expanduser().resolve()
+    resolved = _expand(box).resolve()
     try:
         for parent in [resolved, *resolved.parents]:
             if is_tool_checkout(parent) and (parent / MAILBOX_REL).resolve() == resolved:
@@ -297,7 +307,7 @@ def discover_mailbox() -> tuple[Path, bool]:
     env = os.environ.get("AGENT_MAIL_DIR")
     if env:
         # Explicit path must already exist. A typo must not mkdir a fourth root.
-        return Path(env).expanduser(), False
+        return _expand(Path(env)), False
     start = discovery_root()
     first_git: Path | None = None
     for parent in [start, *start.parents]:

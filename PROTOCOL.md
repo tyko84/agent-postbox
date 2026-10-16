@@ -1801,6 +1801,7 @@ write no mail.
 | `send` with stdin closed and no body, or `--body-file -` with stdin closed | traceback, exit 1 | one line, exit 2 |
 | `send --body-file -` given bytes that are not UTF-8 | traceback, exit 1 | one line, exit 2 |
 | `send` with `AGENT_MAIL_DIR` set to a path the OS refuses (too long) | traceback, exit 1 | `NO MAILBOX`, one line, exit 2 |
+| any command with `AGENT_MAIL_DIR` set to `~name` for a user the system does not know (or `~` where no home directory is known) | `RuntimeError` traceback, exit 1 | the text is taken as written, which names no mailbox: `NO MAILBOX`, exit 2 |
 | any command with `AGENT_MAIL_PROJECT` set to a path the OS refuses | traceback, exit 1 | ignored, as a value that names no directory always was: the search starts at the working directory |
 | text output (`list`, `inbox`, `show`, `status`) of a subject, path or body in another alphabet when stdout can only carry ASCII (`PYTHONIOENCODING=ascii`, a C locale) | traceback after a partial listing, exit 1 | the line is printed with each character stdout cannot carry as its `\x`, `\u` or `\U` escape (`caf\xe9`), exit 0 |
 | `--help` with stdout closed | the help on stderr, exit 0 | nothing said, exit 0, as §35 has every command do when stdout is gone |
