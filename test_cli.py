@@ -1845,7 +1845,7 @@ def test_alias_mail_undelivered(root: Path) -> None:
           == [{"code": "ALIAS_MAIL_UNDELIVERED", "count": 1}], repr(sj.get("problems")))
     dr = run(box, "doctor").stdout
     check("doctor names it by id and alias, with the way out",
-          f"alias_mail_undelivered: 1" in dr and f"{P}W1 (to crew)" in dr and "re-send" in dr, dr[-500:])
+          "alias_mail_undelivered: 1" in dr and f"{P}W1 (to crew)" in dr and "re-send" in dr, dr[-500:])
     hand(box, "W4", "ANSWER", "bob", "alice", "2030-01-01T09:10:00Z", "re: billing", reply_to=P + "W1")
     sj = doc(run(box, "status", "--json", "--now", NOW))
     check("an ASK that was answered is no longer live, so it is no longer reported",
