@@ -1,9 +1,12 @@
 # Why Postbox exists
 
-Postbox is a small communication layer for coding agents that run as separate sessions in one
-repository. It is not an orchestration framework: it does not plan, assign, schedule or
-supervise anything. It carries messages between agents that someone else is already running,
-and, with a hook installed, puts them in front of the receiver at its next prompt.
+Postbox is a small file-based coordination ledger for coding agents that run as separate sessions
+in one repository: exclusive claims with mandatory expiry, owed-reply tracking, and a history you
+can inspect afterwards. It is not an orchestration framework: it does not plan, assign, schedule
+or supervise anything. It records and enforces the claim rules between agents that someone else
+is already running, carries their messages, and, with a hook installed, puts mail in front of the
+receiver at its next prompt. Pickup is a convenience on top, not the point
+([../product-direction.md](../product-direction.md)).
 
 ## The problem
 
@@ -15,7 +18,10 @@ Agents can write that down themselves in a notes file. The weak point is the *re
 an agent that has to remember to look will sometimes not look, and an inbox nobody read
 looks exactly like an empty one. In the repository this tool came from, a clear written
 instruction to leave notes for the next agent produced no notes in 22 hours (one anecdote, not
-a study). Postbox is built around that failure.
+a study). Postbox's first design was built around that failure. Three experiments then measured
+only that part, delivery, and a shared notes file did as well or better, so the case for it now
+rests on what a notes file cannot do: refuse a second claim, expire a dead holder's claim, keep a
+reply owed, and leave a history.
 
 ## What it does
 
@@ -28,7 +34,9 @@ a study). Postbox is built around that failure.
   adapter prints waiting mail into the agent's context before it sees the prompt, so there
   is no decision to look. Codex support has never run inside the real Codex, and Codex
   asks you to trust the hook in `/hooks` first. Hosts without a hook poll with one command.
-* Claims are advisory leases that expire, so a crashed session does not hold a task forever.
+* Claims are advisory leases that expire, so a crashed session does not hold a task forever. A
+  second claim on a held scope is refused (exit 3, nothing written); nothing stops an agent that
+  ignores a claim. `status` and `doctor` name who holds what and what a crash left behind.
 * The tool is one standard-library Python file (`agent_mail.py`), plus a small hook script
   and an installer. No daemon, no database, no network, no accounts.
 

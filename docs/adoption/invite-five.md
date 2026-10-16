@@ -2,7 +2,8 @@
 
 Purpose: learn, from five people other than the author, three things. **Does it install?**
 **Does a message reach the receiving agent without anyone telling the agent to look?**
-**Where does permission friction hit?** This is a private ask, not a launch. It is not a
+**Where does permission friction hit?** And: **do the claim and expiry rules behave as documented in
+someone else's use?** This is a private ask, not a launch. It is not a
 test of whether Postbox makes agents better: the project's experiments did not show that
 (see below), and five testers cannot.
 
@@ -22,16 +23,21 @@ repository.
   20 paired instances, stopped at its ceiling gate) was **uninformative**: the notes file
   completed 20 of 20 and Postbox also 20 of 20, at about 45% more cost per run. The three
   experiments measured delivery only; none tested claims, expiry, owed replies or the history
-  (the maintainers' assessment is in `docs/product-direction.md` once it is merged).
+  (the maintainers' assessment is [product-direction.md](../product-direction.md)).
+* A pilot of a fourth design ([experiment-v4-results.md](../experiment-v4-results.md), interrupted
+  holder, 6 per arm) **failed its validity gates** and claims nothing. Descriptively, the host
+  already prevented lost updates, an agent never overrode a stale note or lock, and only the
+  Postbox lease let the surviving agent through (5 of 6). It is not evidence of a benefit.
 * The hook has been run in real Claude Code only in headless sessions, on one small model.
   Codex has never been run in the real host. Cursor is documented, not run.
 * So we are **not** asking you to confirm that it helps. We want to know whether it installs,
-  whether the pickup reaches the agent, and where permissions get in the way.
+  whether the pickup reaches the agent, where permissions get in the way, and whether claims,
+  expiry and the history held up.
 
-## Verdict as of 2026-10-16
+## Verdict as of 2026-10-16 (refreshed against `main` at `c832fe1`)
 
 Ready to invite five people by direct message once the `tried-it` label exists (blocker 2) and
-the owner has decided the support channel (blocker 3). A public Show HN or Reddit post is not appropriate: see
+the owner has decided the support channel (blocker 3). Nothing has been sent. A public Show HN or Reddit post is not appropriate: see
 [launch-drafts.md](launch-drafts.md).
 
 ### Blockers
@@ -49,18 +55,24 @@ Must fix before any invitation (owner action):
 
 Must fix before any public post:
 
-4. The demo recording does not exist. Both drafts depend on it.
+4. The demo recording does not exist. Both drafts depend on it. A script with real output from a
+   scripted run exists ([../demo-script.md](../demo-script.md)); a recording of two real Claude Code
+   sessions needs the owner (`examples/two-agents/RECORDING.md`, steps marked OWNER).
 5. No tester reports yet. Five is the minimum for a post to say what others found.
 
 Should fix (re-checked 2026-10-16, unchanged): no repository homepage; no CODE_OF_CONDUCT file;
-Discussions off; whether a "start here" issue is pinned was not checked.
+Discussions off; whether a "start here" issue is pinned was not checked. The GitHub repository
+description and the v0.5.0 release notes still lead with delivery ("messages appear in the
+receiving agent's next prompt"); the proposed description is in
+[../positioning-proposal.md](../positioning-proposal.md) and the owner sets it. An invitation that
+quotes the old description would contradict the README.
 
 ### The `tried-it` label
 
 The `Tried it` issue form (`.github/ISSUE_TEMPLATE/tried-it.yml`) applies the label `tried-it`,
 which does not exist yet (re-checked 2026-10-16: the repository has `bug`, `documentation`,
 `duplicate`, `enhancement`, `field-report`, `good first issue`, `help wanted`, `invalid`,
-`question` and `wontfix`; no `tried-it`); GitHub drops a label that does not exist. Create it once, as the
+`question`, `accessibility` and `wontfix`; no `tried-it`; re-run 2026-10-16 at `c832fe1`); GitHub drops a label that does not exist. Create it once, as the
 repository owner (this has not been run):
 
 ```sh
@@ -93,18 +105,21 @@ on a repository that matters.
 
 ## The message
 
-> I have a small open-source tool, agent-postbox, that lets coding agents in one repository
-> send each other messages (Markdown files) and, with a Claude Code hook, shows incoming mail
-> to the receiving session at its next prompt. I would like to know whether it works for
-> someone other than me. Could you try it in a throwaway project and tell me where it broke?
+> I have a small open-source tool, agent-postbox: a file-based ledger for coding agents that share
+> a repository. A second claim on a file another agent holds is refused, every claim expires so a
+> dead session cannot hold it forever, a question stays owed until it is answered, and you can
+> inspect the history afterwards. Messages are Markdown files, and with a Claude Code hook the
+> receiving session sees waiting mail at its next prompt. I would like to know whether it works
+> for someone other than me. Could you try it in a throwaway project and tell me where it broke?
 >
 > Please read this first: my own experiments did **not** show that it makes agents better.
 > A small pilot found no advantage over a shared notes file the agents were told to read, and
 > a larger pre-registered experiment came out against it (the host refused the agents' `send`
 > command in some runs), and a third was uninformative because the notes file already succeeded
-> every time. I am not asking you to confirm a benefit. I want to learn three
-> things: does it install, does a message reach the other agent's context, and where do
-> permission prompts or denials get in the way.
+> every time. None of them tested the claim rules. I am not asking you to confirm a benefit. I
+> want to learn four things: does it install, does a message reach the other agent's context,
+> where do permission prompts or denials get in the way, and do the claim and expiry rules
+> behave as documented when you use them.
 >
 > It is POSIX only (Linux/macOS). The installer edits `.claude/settings.json` in the target
 > project (backup kept, removal steps documented) and nothing global. Codex support has never
@@ -130,9 +145,17 @@ wall-clock, which is exactly what we have not measured.
    after you told it to look).**
 5. Note every permission prompt or denial on a mail command: what the command was, what you
    chose, and what the agent did next.
-6. Follow the removal steps and say whether the project is back to how it was.
+6. Claims (about 5 minutes; optional): from one identity send a `CLAIM` on a scope with an expiry
+   (README, "Claims and findings"), try the same scope from another identity and note the
+   refusal (exit 3), then either wait for a short lease to run out (`demo-script.md` uses 3
+   seconds) and claim it again, or say you did not try. Note anything that differed from the README.
+7. Follow the removal steps and say whether the project is back to how it was.
 
 ### What we measure
+
+By whom, with which command, and where each answer is recorded:
+[beta-measurements.md](beta-measurements.md). The questions to ask:
+[feedback-questionnaire.md](feedback-questionnaire.md).
 
 | Measure | Definition | Where it comes from |
 |---|---|---|
@@ -141,6 +164,8 @@ wall-clock, which is exactly what we have not measured.
 | Pickup reached the agent | the receiving session showed the mail without being told to look: yes, no, only when told | tester report, optionally `doctor` output |
 | Permission friction | count of permission prompts or denials on mail commands, and what resolved each | tester report |
 | Removal clear | the project is back to its previous state | tester report |
+| Claim rules held | a rival claim was refused (exit 3), a lapsed lease stopped counting, no scope held by two senders | tester report for refusals; `status --json` for the rest |
+| Manual interventions | relays, repairs and nudges the person had to do | tester tally |
 
 ## Collecting feedback
 
@@ -159,7 +184,9 @@ Success (of the testers who tried; report with the denominator):
 * at least 3 of 5 find removal clear;
 * in every host run, the pickup either reached the agent or the failure is explained and
   filed;
-* no report of a lost, corrupted or hidden message.
+* no report of a lost, corrupted or hidden message;
+* (added 2026-10-16, before any invitation was sent) no report of a second claim accepted on a
+  scope while the first lease was live.
 
 Failure, needing work before wider sharing: 2 or more stall at the same step (fix that step);
 any message lost or silently hidden (stop, fix, tell the others); a hook that blocks prompts;
