@@ -2187,7 +2187,7 @@ def _send_input_error(args: argparse.Namespace, body: str) -> str:
     return ""
 
 
-def unknown_recipient_note(to: str, msg_type: str = "") -> str | None:
+def unknown_recipient_note(to: str, msg_type: str = "", fanout_copy: bool = False) -> str | None:
     """PROTOCOL.md section 41: one stderr line when `--to` names nobody the mailbox
     knows. Only a mailbox whose PARTICIPANTS.md has at least one row can be compared
     with, so nothing is said for one without a table (or one that cannot be read).
@@ -2214,7 +2214,14 @@ def unknown_recipient_note(to: str, msg_type: str = "") -> str | None:
     known = set(rows)
     if not known:
         return None
-    known |= set(load_aliases())
+    aliases = load_aliases()
+    if fanout_copy and to in aliases and to not in rows:
+        # A copy a fan-out filed to a writer that is itself an alias (or to the alias's own
+        # name) is not read by anyone: aliases expand at send time only and do not nest.
+        return (f"warning: --to {to!r} is an alias, not an Identity row in PARTICIPANTS.md, so "
+                "this copy of the fan-out is filed but nobody will read it: aliases do not "
+                "nest (PROTOCOL.md section 27). Name the real writers in the Aliases table.")
+    known |= set(aliases)
     known |= _SOFT_CAN_TOKENS
     if to in known:
         return None
@@ -2584,7 +2591,7 @@ def cmd_send(args: argparse.Namespace) -> int:
                   file=sys.stderr)
     print(f"wrote {final}")
     print(f"id: {msg_id}")
-    if (note := unknown_recipient_note(to, mtype)) is not None:
+    if (note := unknown_recipient_note(to, mtype, bool(getattr(args, "_alias_fanout_done", False)))) is not None:
         print(note, file=sys.stderr)
     if mtype == "CLAIM" and scope and (wt := _claim_worktree_note(scope)) is not None:
         print(wt, file=sys.stderr)

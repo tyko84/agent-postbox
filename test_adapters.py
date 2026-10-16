@@ -1102,5 +1102,43 @@ class DeliveryTimeline(unittest.TestCase):
         self.assertEqual(self.hook("bobb").count("ASK from alice"), 1)   # only the typo'd name does
 
 
+@unittest.skipUnless(os.name == "posix", "the printed commands are POSIX shell commands")
+class PrintedCommandQuoting(unittest.TestCase):
+    """The `read:` and `Reply:` lines are commands a model runs verbatim, so they must survive a
+    project path with spaces, quotes and shell metacharacters (found 2026-10-16 in a real
+    Claude Code project named `it's a "q" dir`: the path sat inside double quotes unescaped)."""
+
+    def check(self, dirname: str) -> None:
+        tmp = tempfile.TemporaryDirectory(prefix="test-adapters-")
+        self.addCleanup(tmp.cleanup)
+        tool_dir = Path(tmp.name).resolve() / dirname
+        (tool_dir / "hooks").mkdir(parents=True)
+        for name in ("agent_mail.py",):
+            shutil.copy(TOOL, tool_dir / name)
+        shutil.copy(HOOK, tool_dir / "hooks" / HOOK.name)
+        box = Path(tmp.name).resolve() / "mail"
+        box.mkdir()
+        send(box, tool_dir / "agent_mail.py", type="ASK", **{"from": "alice"}, to="bob", subject="q?")
+        cp = subprocess.run([sys.executable, "-I", str(tool_dir / "hooks" / HOOK.name)],
+                            capture_output=True, text=True, timeout=TIMEOUT, cwd=tmp.name,
+                            env=clean_env(AGENT_MAIL_DIR=str(box), AGENT_MAIL_IDENTITY="bob"))
+        self.assertEqual(cp.returncode, 0, cp.stderr)
+        lines = [ln for ln in cp.stdout.splitlines() if ln.startswith(("    read: ", "Reply: "))]
+        self.assertEqual(len(lines), 2, cp.stdout)
+        for ln in lines:
+            cmd = ln.split(": ", 1)[1]
+            # What the shell makes of the line: the script path must be ONE word, the real file.
+            prefix = cmd.split(" send ")[0].split(" show ")[0]
+            words = subprocess.run(["/bin/sh", "-c", f'set -- {prefix}; printf "%s\\n" "$@"'],
+                                   capture_output=True, text=True, timeout=TIMEOUT).stdout.splitlines()
+            self.assertEqual(Path(words[1]), tool_dir / "agent_mail.py", ln)
+
+    def test_plain_path_keeps_the_double_quoted_spelling(self) -> None:
+        self.check("plain dir")      # a space alone must stay `python3 "<path>"` (doctor's rule form)
+
+    def test_quote_dollar_and_backtick_in_the_path(self) -> None:
+        self.check("it's a \"q\" $HOME `x` dir")
+
+
 if __name__ == "__main__":
     unittest.main()

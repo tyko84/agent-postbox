@@ -48,9 +48,11 @@ Safety rules for a settings merge, in priority order:
      is copied, when `.claude/settings.json` cannot be merged safely.
   8. A file where a directory must go (the mailbox path, `--dest`, a parent of
      either, `<dest>/hooks`) is refused the same way, with any adapter or none.
-  9. A directory the install writes into, or a payload file it would overwrite, that
-     is not writable is refused the same way (exit 2, before anything is copied), so a
-     failure cannot leave the tool installed and the hook not.
+  9. A copy of install.py that lacks a file it copies (the script run without its checkout)
+     is refused first, naming the files: exit 2, nothing copied.
+  10. A directory the install writes into, or a payload file it would overwrite, that
+      is not writable is refused the same way (exit 2, before anything is copied), so a
+      failure cannot leave the tool installed and the hook not.
 """
 from __future__ import annotations
 
@@ -78,6 +80,20 @@ CODEX_INLINE_HOOKS = re.compile(r"^\s*\[\[?\s*hooks\s*[.\]]", re.M)
 CODEX_TRUST = ("Codex skips a new or changed hook until it is trusted: start codex in the "
                "project, run /hooks, review and trust it, then run the positive control in "
                "docs/hosts.md")
+
+
+def source_refusal() -> str | None:
+    """Why this copy of install.py cannot install, or None. Reads only. It copies files
+    that sit next to it (`PAYLOAD`, `hooks/agent_mail_check.py`, `PARTICIPANTS.template.md`);
+    run from a partial copy (the script alone, or a clone that lost a file), it used to
+    copy what it found, then fail with "cannot write (<its own source file>)", which names
+    the wrong problem and leaves a half-copied tool behind."""
+    needed = [*PAYLOAD, f"hooks/{HOOK_MARKER}", "PARTICIPANTS.template.md"]
+    missing = [n for n in needed if not (HERE / n).is_file()]
+    if missing:
+        return (f"{HERE} is missing {', '.join(missing)}, which install.py copies from its own "
+                "directory; run it from a complete agent-postbox checkout (re-clone it)")
+    return None
 
 
 def is_tool_checkout(root: Path) -> bool:
@@ -463,6 +479,11 @@ def main() -> int:
                     help="optional host adapter to register (poll is the default pickup)")
     ap.add_argument("--check", action="store_true", help="report only, change nothing")
     args = ap.parse_args()
+
+    incomplete = source_refusal()
+    if incomplete:
+        print(f"ABORT: {incomplete}. Nothing was changed.", file=sys.stderr)
+        return 2
 
     project = Path(args.project).expanduser().resolve()
     if not project.is_dir():

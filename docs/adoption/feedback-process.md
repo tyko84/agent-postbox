@@ -17,7 +17,9 @@ it and got stuck is not a field report; use the questions below for them.
 
 ## What to ask someone who tried it
 
-Copy this into a reply or a new issue:
+The full questionnaire (ten questions, each mapped to a measure) is
+[feedback-questionnaire.md](feedback-questionnaire.md). The short form, six questions, to copy into a
+reply or a new issue:
 
 ```text
 Thanks for trying agent-postbox. Six questions, answer any of them:
@@ -57,7 +59,8 @@ Label each issue with one of these and work in this order.
 
 ## Summary format after the trial
 
-Write it in `docs/` in a pull request, with the denominator on every number:
+Write it in `docs/` in a pull request, with the denominator on every number (what is measured,
+by whom and with which command: [beta-measurements.md](beta-measurements.md)):
 
 ```text
 Trial summary, <date>. Testers who tried: N of 5 invited.
@@ -65,6 +68,8 @@ Installed: x of N. Message exchanged without owner help: x of N. Median minutes 
 message (human clock): m (range a to b).
 Pickup reached the agent: yes x, no x, only when told x (hosts: ...).
 Permission friction: x testers hit a prompt or denial; causes: ...; fixed by: ...
+Claims: x testers used a CLAIM; rival refused x; leases lapsed x; a claim ignored by an agent x.
+Manual interventions (relays / repairs / nudges): median a / b / c (range ...).
 Removal clear: x of N.
 Stuck points by step: step -> count.
 Issues opened: #..., #... (one per distinct problem).

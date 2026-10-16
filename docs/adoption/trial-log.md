@@ -3,14 +3,16 @@
 One row per person who tried it. Fill it in from their replies or `Tried it` / field-report
 issues; do not put names, emails or real mailbox content here, only a label (T1 to T5).
 Update the table in a pull request, not in chat, so the evidence stays with the code.
+What each column measures, who records it and with which command: [beta-measurements.md](beta-measurements.md).
+No row has been filled in: no tester has been invited.
 
-| ID | Profile (invite-five.md) | Host, OS | Furthest step | Minutes to first message | Pickup reached the agent? | Permission friction (count, cause) | Needed owner help? | Stuck point (exact step) | Removal clear? | Would use again? | Issue links |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| T1 | | | | | | | | | | | |
-| T2 | | | | | | | | | | | |
-| T3 | | | | | | | | | | | |
-| T4 | | | | | | | | | | | |
-| T5 | | | | | | | | | | | |
+| ID | Profile (invite-five.md) | Host, OS | Furthest step | Minutes to first message | Pickup reached the agent? | Permission friction (count, cause) | Claims, refusals, takeovers | Interventions (relays / repairs / nudges) | Needed owner help? | Stuck point (exact step) | Removal clear? | Would use again? | Issue links |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| T1 | | | | | | | | | | | | | |
+| T2 | | | | | | | | | | | | | |
+| T3 | | | | | | | | | | | | | |
+| T4 | | | | | | | | | | | | | |
+| T5 | | | | | | | | | | | | | |
 
 "Furthest step" uses the choices in the `Tried it` form: cloned, ran the example, installed,
 sent a first message, a second session picked it up, used for real work, removed.

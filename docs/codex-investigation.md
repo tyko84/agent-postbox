@@ -58,6 +58,101 @@ against the earlier reading:
 * Trust is per exact definition hash, so the command string (including `|| true`) is part of it: an
   installer upgrade of the command needs re-trusting.
 
+## Re-confirmation, 2026-10-16 (Codex is still not installed; nothing was run)
+
+Every row of this page and of the Codex section of [hosts.md](hosts.md) was re-checked against the
+current public pages on **2026-10-16**. The pages were read through a fetch tool that summarises
+(it is not a verbatim copy, and on one page its summary contradicted itself), so every row marked
+"confirmed" is the tool's extraction, to be re-read at the source before anything is built on it.
+**Not run in a real Codex.**
+
+Sources fetched 2026-10-16: hooks <https://learn.chatgpt.com/docs/hooks>; AGENTS.md
+<https://learn.chatgpt.com/docs/agent-configuration/agents-md>; approvals and security
+<https://learn.chatgpt.com/docs/agent-approvals-security>; non-interactive mode
+<https://learn.chatgpt.com/docs/non-interactive-mode>; config
+<https://learn.chatgpt.com/docs/config-file/config-basic> (the `developers.openai.com/codex/local-config`
+URL answers 308 to it).
+
+| Claim in these docs | Status 2026-10-16 | Source |
+|---|---|---|
+| `UserPromptSubmit` plain stdout is added as developer context; exit 2 or `{"decision":"block"}` blocks | confirmed | hooks |
+| Config in `~/.codex/hooks.json`, `~/.codex/config.toml`, `<repo>/.codex/hooks.json`, `<repo>/.codex/config.toml` | confirmed (plugin-bundled `hooks/hooks.json` was not in this pass: unverified) | hooks |
+| JSON shape: event, matcher groups, handlers with `type`, `command`, `timeout`, `statusMessage` | confirmed (nesting by the page's own description) | hooks |
+| New or changed hooks need review and trust in `/hooks`, recorded against the hook's hash, skipped until trusted | confirmed | hooks |
+| Project-local hooks load only when the project `.codex/` layer is trusted | confirmed | hooks |
+| Commands run with the session `cwd` | confirmed ("child processes with the session's working directory") | hooks |
+| Hook process inherits `AGENT_MAIL_IDENTITY` | **still not stated**: the page says only "child processes". Unverified | hooks |
+| Default timeout 600 s | confirmed ("for most hooks"; `SessionEnd` and `Interrupt` default to 1 s, 3 s maximum: new) | hooks |
+| `additionalContextLimit`, about 2,500 tokens, overflow saved to disk | confirmed | hooks |
+| `SessionStart` sources `startup`, `resume`, `clear`, `compact`, `fork` | confirmed | hooks |
+| Hooks on by default; `[features] hooks = false` disables | confirmed | hooks |
+| Exit codes other than 2 on this event | **still not stated** | hooks |
+| Command hooks unsupported in Work Cloud | **wording changed**: the page now says "Work Cloud without local access ... do not use these enterprise hooks". Treat as unverified | hooks |
+| IDE extension, Windows (`commandWindows`), worktree "resolve relative to the active worktree's git root", full stdin field list, the event list | **not re-fetched in this pass**; last read 2026-10-15; unverified today | |
+| `codex exec` runs hooks | **still not stated** ("consult the hooks reference or test") | non-interactive |
+| `codex exec` defaults to a read-only sandbox; `--full-auto` gone; `--approve-for-me`; `--ignore-user-config` | confirmed; `--ignore-rules` (skip execpolicy rules files) and `--sandbox workspace-write` are also listed | non-interactive |
+| Default sandbox `workspace-write` with `on-request` approvals; network off | confirmed; also new: a folder that is not under version control is suggested `read-only` | approvals |
+| Protected paths `.git` (and gitdir pointer targets), `.agents`, `.codex`, `.aws`, recursive | confirmed | approvals |
+| An `AGENT_MAIL_DIR` outside the workspace needs approval under `workspace-write` | **refined**: the workspace is "the current directory and temporary directories like `/tmp`", so a mailbox under `/tmp` is writable; elsewhere the page names no setting (a `sandbox_workspace_write.writable_roots` key appears only in search snippets, not on a fetched page): unverified | approvals, search |
+| "`untrusted` is deprecated in favour of a per-project `trust_level`" | **stale or unverified**: the approvals page now lists `on-request`, `never` and granular policies and does not mention `untrusted` or `trust_level` | approvals |
+| AGENTS.md read once per run, 32 KiB combined cap (`project_doc_max_bytes`), global then root-to-cwd | confirmed; `AGENTS.override.md` takes precedence at both scopes (new); Codex home is `CODEX_HOME`, default `~/.codex` | AGENTS.md |
+| `shell_environment_policy` controls the environment forwarded to spawned commands | stated by the config page; whether it governs the hook process is **unstated** (the fetch summary contradicted itself) | config |
+
+Nothing in this table makes the Codex adapter "work"; two items the plan depends on (environment
+inheritance, hooks in `codex exec`) are still unstated by the vendor.
+
+### Static review of what `install.py --adapter codex` writes
+
+Read, not edited (`install.py`, `hook_command`, `codex_refusal`, `CODEX_TRUST`; a project installed with
+both adapters in a scratch directory produced the file below).
+
+| Aspect | What it does | Verdict |
+|---|---|---|
+| Path | `<project>/.codex/hooks.json` | matches the documented repo location |
+| Shape | `{"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"..."}]}]}}` | matches the documented nesting; no `timeout` (600 s default applies) and no `statusMessage` |
+| Command | `python3 "$(git rev-parse --show-toplevel)/tools/agent-postbox/hooks/agent_mail_check.py" \|\| true` | quoting is sound: the substitution's output is not re-split, so a repository path with spaces or quotes is fine; `--dest` is limited to `[A-Za-z0-9._/ -]`, so nothing else can reach the shell |
+| Refusals | not a git repository, unquotable `--dest`, `.codex` is a file, `config.toml` already defines hooks inline, unmergeable `hooks.json` | sensible; the git requirement matches the command |
+| Trust | prints `CODEX_TRUST` (start codex, `/hooks`, review and trust, run the control) | accurate; a changed command needs re-trusting (hash) |
+
+Gaps, none of them a defect in a file this task could fix:
+
+1. **Identity binding is not installed.** Nothing sets or checks `AGENT_MAIL_IDENTITY` for Codex; if
+   the hook process does not inherit it, delivery is silent forever. Mitigation today: the manual
+   check in step 4 of the procedure below and `doctor`'s identity line.
+2. **A nested git repository defeats the command.** Started inside a nested repo, `git rev-parse
+   --show-toplevel` names the inner repo, the script is not found, python exits 2 and `|| true` hides
+   it: silent. (Claude Code never runs the hook there at all; see [host-findings-3.md](host-findings-3.md).)
+3. **No `AGENTS.md` fallback is written.** The installer does not add the polling instruction; the
+   snippet is in [hosts.md](hosts.md) ("Codex: manual pickup").
+4. **`|| true` makes every failure silent** by design (a moved tool must not block a prompt). The cost is
+   that a hook that cannot start looks like an empty inbox; only the real-host control tells them apart.
+5. **Windows**: the command is POSIX shell; `commandWindows` is not written.
+6. **Protected `.codex`**: an agent inside `workspace-write` cannot edit its own hook file, which is
+   the desired property; the human runs `install.py`.
+
+### Smallest viable Codex integration
+
+1. **Today, no code**: the `AGENTS.md` snippet plus `AGENT_MAIL_IDENTITY=<id> codex` (hosts.md). Works
+   as polling, identity bound by the shell that starts Codex, needs no trust step.
+2. **After one real run passes steps 3, 4 and 8** of the procedure below: the existing hook, unchanged.
+3. Only if the real run shows the variable is not inherited: a handler or wrapper that sets it
+   (for example `AGENT_MAIL_IDENTITY=<id> python3 ...` in the registered command, one identity per
+   project clone), or a `[shell_environment_policy]` setting if Codex documents that it covers hooks.
+   Not built: unobserved.
+
+### Prerequisites for the real run (issue #21)
+
+About 15 minutes by hand; needs the owner's OpenAI account (nothing here can supply one).
+
+* Codex CLI installed and signed in with the owner's OpenAI account (subscription or API key; a few
+  model turns, under about US$0.50); `codex --version` recorded.
+* Python 3.10+ and `git`; a throwaway git repository; no global Codex config touched (a scratch
+  `CODEX_HOME` if Codex honours it, which the AGENTS.md page implies but does not promise).
+* This repository's `install.py` and the procedure below; two terminals (one to send the control).
+* The owner to answer the `/hooks` trust prompt and any project-trust prompt interactively.
+* Record: the Codex version, the exact `/hooks` text, whether `AGENT_MAIL_IDENTITY` reached the hook
+  (the pass criterion in step 4), and whether `codex exec` runs the hook (step 5).
+
 ## Compatibility matrix
 
 Status: S supported by the documentation, U unsupported by it, V unverifiable (not stated, or only

@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import datetime as dt
 import os
+import shlex
 import sys
 from pathlib import Path
 from typing import Any
@@ -60,6 +61,14 @@ def _clip(value: object, cap: int) -> str:
     when written, not when read)."""
     text = str(value)
     return text if len(text) <= cap else f"{text[:cap]}... (+{len(text) - cap} characters)"
+
+
+def _quoted(tool: str) -> str:
+    """The tool path as a shell word in a command the model is told to run. Double quotes
+    when that is exact (the usual case, and the spelling `doctor`'s allow rules use); a path
+    holding `"`, `$`, a backtick, a backslash or a newline would break or be re-interpreted
+    inside double quotes, so only then is it single-quoted."""
+    return shlex.quote(tool) if any(c in tool for c in '"$`\\\n') else f'"{tool}"'
 
 
 def _left(seconds: object) -> str:
@@ -147,7 +156,7 @@ def main() -> int:
         if not mine and not held:
             return 0
 
-        tool = str(Path(sys.path[0]) / "agent_mail.py")
+        tool = _quoted(str(Path(sys.path[0]) / "agent_mail.py"))
         py = agent_mail.python_cmd()
         out = [
             f"Agent mail - {len(mine)} live message(s) addressed to '{me}'.",
@@ -160,7 +169,7 @@ def main() -> int:
         listed = [m for i, m in enumerate(mine) if i >= len(mine) - MAX_LIVE or m.id in owed_ids]
         if len(listed) < len(mine):
             out += [f"  ({len(mine) - len(listed)} older live message(s) not listed; "
-                    f'`{py} "{tool}" list --to {me} --live` shows them all)', ""]
+                    f'`{py} {tool} list --to {me} --live` shows them all)', ""]
         for m in listed:
             needs = " [awaiting your reply]" if m.id in owed_ids else ""
             out += [
@@ -170,9 +179,9 @@ def main() -> int:
             ]
             if m.type == "CLAIM" and m.meta.get("expires"):
                 out.append(f"    holds until: {_clip(m.meta['expires'], MAX_STAMP)}")
-            out.append(f'    read: {py} "{tool}" show {m.id}')
+            out.append(f'    read: {py} {tool} show {m.id}')
         if mine:
-            out += ["", f'Reply: {py} "{tool}" send --type ANSWER --from {me} '
+            out += ["", f'Reply: {py} {tool} send --type ANSWER --from {me} '
                         "--to <sender> --reply-to <id> --subject ... --body-file <file, or - for stdin>"]
         if held:
             out += ["", *held]
