@@ -302,11 +302,13 @@ def main() -> int:
               str(st["claims"]))
         check("quarantined 1, stale_tmp 1", st["quarantined"] == 1 and st["stale_tmp"] == 1)
         check("problems lists exactly the conditions planted in this box (the four of the sections "
-              "before plus the bare ANSWER from a non-addressee, section 45), in the fixed order",
+              "before plus the bare ANSWER from a non-addressee, section 45, and the nine-day-old ASK to a name that "
+              "never wrote, section 48), in the fixed order",
               st["problems"] == [{"code": "QUARANTINED", "count": 1}, {"code": "STALE_TMP", "count": 1},
                                  {"code": "MALFORMED_CLAIM_EXPIRY", "count": 1},
                                  {"code": "STALLED_AGENT", "count": 1},
-                                 {"code": "ANSWER_FROM_THIRD_PARTY", "count": 1}], str(st["problems"]))
+                                 {"code": "ANSWER_FROM_THIRD_PARTY", "count": 1},
+                                 {"code": "SILENT_RECIPIENT", "count": 1}], str(st["problems"]))
         check("control: no lock, marker, foreign supersede or dangling reply is invented",
               st["scope_locks"]["total"] == 0 and st["idem_markers"]["total"] == 0
               and st["takeover_mutexes"]["total"] == 0 and st["foreign_supersedes"] == 0

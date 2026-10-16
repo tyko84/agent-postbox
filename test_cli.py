@@ -1880,6 +1880,34 @@ def test_fanout_holds(root: Path) -> None:
     check("status wrote nothing", snapshot(box) == snap)
 
 
+def test_silent_recipient(root: Path) -> None:
+    """A name that was asked, has not answered and never wrote is reported (PROTOCOL.md section 48)."""
+    box = root / "silent"
+    box.mkdir()
+    LATE, EARLY = "2030-01-05T00:00:00Z", "2030-01-01T10:00:00Z"   # 86 h, then 14 h after the ASKs
+    hand(box, "S1", "ASK", "alice", "ghost", "2030-01-01T09:00:00Z", "are you there?")
+    hand(box, "S2", "ASK", "alice", "bob", "2030-01-01T09:01:00Z", "and you?")
+    hand(box, "S3", "ASK", "alice", "late", "2030-01-04T20:00:00Z", "asked an hour before LATE")
+    hand(box, "S4", "ASK", "alice", "gone", "2030-01-01T09:02:00Z", "answered by someone else")
+    hand(box, "S5", "ANSWER", "carol", "alice", "2030-01-01T09:03:00Z", "re", reply_to=P + "S4")
+    hand(box, "S6", "NOTICE", "bob", "alice", "2030-01-01T09:04:00Z", "bob has written")
+    snap = snapshot(box)
+
+    def silent(now: str) -> list[dict]:
+        return [q for q in doc(run(box, "status", "--json", "--now", now)).get("problems", [])
+                if q["code"] == "SILENT_RECIPIENT"]
+
+    check("early (14 h): nobody is reported, the threshold is the stalled threshold", silent(EARLY) == [])
+    check("later (86 h): ghost only; bob wrote, late was asked an hour ago, gone's ASK was answered",
+          silent(LATE) == [{"code": "SILENT_RECIPIENT", "count": 1}], repr(silent(LATE)))
+    hand(box, "S7", "NOTICE", "ghost", "alice", "2030-01-04T23:00:00Z", "hello")
+    check("once the name writes anything it is no longer silent", silent(LATE) == [])
+    sj = doc(run(box, "status", "--json", "--now", LATE))
+    check("no key or agents row is added: a name appears in agents when it writes, as before",
+          "silent_recipients" not in sj and "ghost" in {a["agent"] for a in sj["agents"]})
+    check("status wrote nothing", all(snapshot(box).get(k) == v for k, v in snap.items()))
+
+
 def test_doctor_writable_line(root: Path) -> None:
     """`doctor` names a mailbox this account cannot write (PROTOCOL.md section 44)."""
     if hasattr(os, "geteuid") and os.geteuid() == 0:
@@ -2233,6 +2261,7 @@ def main() -> int:
         test_answer_from_third_party(root)
         test_alias_mail_undelivered(root)
         test_fanout_holds(root)
+        test_silent_recipient(root)
     faulthandler.cancel_dump_traceback_later()
     if KNOWN:
         print(f"\nKNOWN ({len(KNOWN)}; defects outside this file's reach, not failures):")

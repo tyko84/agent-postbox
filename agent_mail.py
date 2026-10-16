@@ -3002,7 +3002,7 @@ PROBLEM_CODES = (
     "STALE_TAKEOVER_MUTEX", "MALFORMED_CLAIM_EXPIRY", "FOREIGN_SUPERSEDE", "DANGLING_REPLY",
     "STALLED_AGENT", "CONTESTED_SCOPE",
     "MALFORMED_RESULT", "UNATTACHED_RESULT", "CONTESTED_RESULT", "RESULT_FROM_THIRD_PARTY",
-    "ANSWER_FROM_THIRD_PARTY", "ALIAS_MAIL_UNDELIVERED",
+    "ANSWER_FROM_THIRD_PARTY", "ALIAS_MAIL_UNDELIVERED", "SILENT_RECIPIENT",
     "IDENTITY_MISMATCH", "IDENTITY_UNRESOLVED", "IDENTITY_SHARED_INODE",   # section 40
 )
 CLAIMS_LIST_CAP = 200    # rows per list in status --json (PROTOCOL.md section 34)
@@ -3232,6 +3232,27 @@ def undelivered_alias_mail(everything: list[Message], now: dt.datetime,
             if m.to in table and m.to not in identities and live(m, everything, now, idx)]
 
 
+def silent_recipients(everything: list[Message], now: dt.datetime,
+                      stalled_hours: float = DEFAULT_STALLED_HOURS,
+                      aliases: dict[str, list[str]] | None = None,
+                      idx: _Index | None = None) -> list[str]:
+    """Sorted names that were asked something at least `stalled_hours` ago, have not answered, and
+    have never sent any message at all (PROTOCOL.md section 48). `agents` is built from senders, so
+    such a name has no row there and a silent addressee looked like a quiet mailbox. An alias token
+    is not a recipient (its writers are, section 27; mail stranded on it is section 46)."""
+    try:
+        table = aliases if aliases is not None else load_aliases()
+    except (ParticipantsUnreadable, OSError):
+        table = {}
+    senders = {m.sender for m in everything}
+    limit = dt.timedelta(hours=stalled_hours)
+    idx = idx or _Index(everything)
+    out = {m.to for m in everything
+           if m.type == "ASK" and owes_reply(m, everything, idx) and m.to not in senders
+           and m.to not in table and m.to and (m.sent_at is not None and now - m.sent_at >= limit)}
+    return sorted(out)
+
+
 def build_status(everything: list[Message], rejects: list[str], box: Path,
                  now: dt.datetime, stalled_hours: float = DEFAULT_STALLED_HOURS,
                  scope_filter: str | None = None,
@@ -3365,6 +3386,7 @@ def build_status(everything: list[Message], rejects: list[str], box: Path,
         "CONTESTED_SCOPE": report["contested_scopes"],
         **idx.results().counts(),
         "ALIAS_MAIL_UNDELIVERED": len(undelivered_alias_mail(everything, now, aliases, idx)),
+        "SILENT_RECIPIENT": len(silent_recipients(everything, now, stalled_hours, aliases, idx)),
     }
     st: dict[str, Any] = {
         "schema": STATUS_SCHEMA,
@@ -3752,6 +3774,11 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         print(f"alias_mail_undelivered: {len(stranded)}: filed to an alias before it was "
               "declared, so no writer's pickup shows it; re-send it to the alias or to each writer"
               + "".join(f"\n  - {m.id} (to {m.to})" for m in stranded[:20]))
+    silent = silent_recipients(everything, now, idx=idx)
+    if silent:   # PROTOCOL.md section 48: only when there is something to say
+        print(f"silent_recipients: {len(silent)}: asked at least {DEFAULT_STALLED_HOURS:g} h ago, "
+              "never wrote a message; the ASK is not lost, but nobody may be reading this mailbox"
+              + "".join(f"\n  - {n}" for n in silent[:20]))
     # PROTOCOL.md section 34: reported, never a new reason to FAIL.
     contested = claim_report(everything, idx, now)["contested"]
     print(f"contested_scopes: {len(contested)}")
