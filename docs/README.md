@@ -54,5 +54,6 @@ benefit: see [Evidence](#evidence) for what was and was not shown.
 ## Adoption and contributing
 
 * [adoption/](adoption/why-postbox.md): [why-postbox.md](adoption/why-postbox.md) (what it is and is not), [invite-five.md](adoption/invite-five.md) (the private five-tester beta), [trial-log.md](adoption/trial-log.md), [feedback-process.md](adoption/feedback-process.md), [launch-drafts.md](adoption/launch-drafts.md) (not posted), [communities.md](adoption/communities.md).
+* [liveness-design-note.md](liveness-design-note.md): why there is no "holder is dead" signal and what would change that (decision: not built).
 * [issues-to-open.md](issues-to-open.md): starter issues drafted for the tracker.
 * [../CONTRIBUTING.md](../CONTRIBUTING.md): field-report walkthrough and the checks a change must pass.
