@@ -234,6 +234,16 @@ class WorkingDirectoryGone(RuntimeError):
     worktree or a branch switch deletes it): the walk-up search has no starting point."""
 
 
+def _expand(path: Path) -> Path:
+    """`path.expanduser()`; a `~name` (or a `~` with no home directory) that cannot be
+    expanded stays as written, so it is a mailbox that does not exist (exit 2, section 38)
+    rather than a traceback."""
+    try:
+        return path.expanduser()
+    except RuntimeError:
+        return path
+
+
 def discovery_root() -> Path:
     for key in ("AGENT_MAIL_PROJECT", "CLAUDE_PROJECT_DIR"):
         env = os.environ.get(key)
@@ -280,7 +290,7 @@ def is_tool_checkout(root: Path) -> bool:
 def mailbox_in_tool_checkout(box: Path) -> bool:
     """True when `box` is the spec repo's own docs/agent-mail (the public artifact).
     A `box` the OS will not look at (too long) is nowhere, so not there either."""
-    resolved = box.expanduser().resolve()
+    resolved = _expand(box).resolve()
     try:
         for parent in [resolved, *resolved.parents]:
             if is_tool_checkout(parent) and (parent / MAILBOX_REL).resolve() == resolved:
@@ -297,7 +307,7 @@ def discover_mailbox() -> tuple[Path, bool]:
     env = os.environ.get("AGENT_MAIL_DIR")
     if env:
         # Explicit path must already exist. A typo must not mkdir a fourth root.
-        return Path(env).expanduser(), False
+        return _expand(Path(env)), False
     start = discovery_root()
     first_git: Path | None = None
     for parent in [start, *start.parents]:
@@ -1149,11 +1159,17 @@ def load_participants(path: Path | None = None) -> dict[str, dict[str, set[str]]
     rows: dict[str, dict[str, set[str]]] = {}
     # Find header to locate can/cannot column indices
     can_idx = cannot_idx = ident_idx = None
+    in_alias_table = False
     for line in text.splitlines():
         if not line.strip().startswith("|"):
+            in_alias_table = False
             continue
         cells = [c.strip() for c in line.strip().strip("|").split("|")]
         lower = [c.lower().strip("`*") for c in cells]
+        if "alias" in lower and "writers" in lower:
+            in_alias_table = True   # section 27: the Aliases table is not a table of Identity rows
+        if in_alias_table:
+            continue
         if "identity" in lower and can_idx is None:
             try:
                 ident_idx = lower.index("identity")
@@ -1177,6 +1193,9 @@ def load_participants(path: Path | None = None) -> dict[str, dict[str, set[str]]
             can = _split_cap_cell(cells[can_idx])
         if cannot_idx is not None and cannot_idx < len(cells):
             cannot = _split_cap_cell(cells[cannot_idx])
+        if ident in rows:   # two rows for one identity: neither silently wins; `cannot` still outranks `can`
+            can |= rows[ident]["can"]
+            cannot |= rows[ident]["cannot"]
         rows[ident] = {"can": can, "cannot": cannot}
     return rows
 
@@ -1468,7 +1487,10 @@ def _parse_aliases_text(text: str) -> dict[str, list[str]]:
             if w:
                 writers.append(w)
         if writers:
-            out[alias] = writers
+            # a second row for one alias adds its writers (it used to replace the first row's);
+            # a writer named twice is still one recipient (it used to get two copies)
+            merged = out.get(alias, [])
+            out[alias] = merged + [w for i, w in enumerate(writers) if w not in merged and w not in writers[:i]]
     return out
 
 
@@ -2325,6 +2347,14 @@ def cmd_send(args: argparse.Namespace) -> int:
                 print(f"refusing to send: {err}", file=sys.stderr)
                 return 2
             fanout.append(a)
+        try:
+            collides = dest in load_participants()
+        except ValueError:
+            collides = False
+        if collides:   # section 27: forbidden, and it is the identity that gets nothing
+            print(f"warning: --to {dest!r} is both an alias and an Identity row in PARTICIPANTS.md: "
+                  f"the message goes to {', '.join(aliases[dest])} and {dest!r} itself receives "
+                  "nothing. Rename the alias or the row.", file=sys.stderr)
         rc = 0
         for a in fanout:
             one = cmd_send(a)

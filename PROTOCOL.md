@@ -567,6 +567,10 @@ Declare in `PARTICIPANTS.md` as explicit capability ids:
 |---|---|---|---|
 | `agent-a` | … | `review`, `ro` | `press` |
 
+Two rows for one identity are merged: their `can` sets are united, their `cannot`
+sets are united, and `cannot` outranks `can` for a capability named in both
+(whichever row comes first; the later row used to erase the earlier).
+
 **Undeclared ⇒ `CANNOT_VERIFY`.** Never infer capability from a prior ANSWER
 shape, from `from:` matching a known agent id, or from silence. Route or assign
 only against declared `can`. A status/route that would treat an undeclared
@@ -730,6 +734,13 @@ Declare aliases in an **Aliases** table (separate from Identity rows):
 - Alias tokens must not collide with an Identity row id.
 - Writers must be Identity ids declared in the same file.
 - Undeclared alias ⇒ no expansion (treat as a normal identity string).
+- A hand-edited table is read leniently, not guessed at. Two rows for one alias
+  give it the writers of both (the later row used to replace the earlier, so a
+  writer silently got nothing); a writer named twice is one recipient and gets one
+  copy. The Aliases table is never read as Identity rows (its header word and each
+  alias used to count as identities). An alias that is also an Identity row is
+  still fanned out, as it always was, but `send` now says on stderr that the
+  identity itself receives nothing; exit status and stdout are unchanged.
 - A CLAIM sent `--to <alias>` is filed once per writer, and each copy holds
   its scope. A renewal or release that cites one copy in `--supersedes` (§5,
   §32) and is itself sent to the alias supersedes every sibling copy (same
@@ -1790,6 +1801,7 @@ write no mail.
 | `send` with stdin closed and no body, or `--body-file -` with stdin closed | traceback, exit 1 | one line, exit 2 |
 | `send --body-file -` given bytes that are not UTF-8 | traceback, exit 1 | one line, exit 2 |
 | `send` with `AGENT_MAIL_DIR` set to a path the OS refuses (too long) | traceback, exit 1 | `NO MAILBOX`, one line, exit 2 |
+| any command with `AGENT_MAIL_DIR` set to `~name` for a user the system does not know (or `~` where no home directory is known) | `RuntimeError` traceback, exit 1 | the text is taken as written, which names no mailbox: `NO MAILBOX`, exit 2 |
 | any command with `AGENT_MAIL_PROJECT` set to a path the OS refuses | traceback, exit 1 | ignored, as a value that names no directory always was: the search starts at the working directory |
 | text output (`list`, `inbox`, `show`, `status`) of a subject, path or body in another alphabet when stdout can only carry ASCII (`PYTHONIOENCODING=ascii`, a C locale) | traceback after a partial listing, exit 1 | the line is printed with each character stdout cannot carry as its `\x`, `\u` or `\U` escape (`caf\xe9`), exit 0 |
 | `--help` with stdout closed | the help on stderr, exit 0 | nothing said, exit 0, as §35 has every command do when stdout is gone |
