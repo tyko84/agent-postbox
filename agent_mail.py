@@ -3164,6 +3164,9 @@ def claim_report(everything: list[Message], idx: _Index, now: dt.datetime,
                 flagged.append(("TOO_LONG", m, scope))
         else:
             flagged.append(("EXPIRED", m, scope))
+    # A fan-out (section 27) files one CLAIM per writer; the copies agree on sender, scope and
+    # expiry and are one hold. Unscoped claims cannot be matched and each count as one.
+    holds = len({(m.sender, scope, exp) if scope else m.id for m, scope, exp in held})
     contested: dict[str, list[tuple[str, str]]] = {
         s: [] for s, who in holders.items() if len(who) > 1}
     for m, scope, _exp in held:
@@ -3204,6 +3207,7 @@ def claim_report(everything: list[Message], idx: _Index, now: dt.datetime,
         "claims_attention": attention[:CLAIMS_LIST_CAP],
         "claims_attention_truncated": max(0, len(attention) - CLAIMS_LIST_CAP),
         "contested_scopes": len(contested),
+        "holds": holds,
         "scope_filter": scope_filter,
         "contested": {s: sorted(v, key=lambda p: (p[0], p[1].upper())) for s, v in contested.items()},
     }
@@ -3381,8 +3385,10 @@ def build_status(everything: list[Message], rejects: list[str], box: Path,
         "foreign_supersedes": len(idx.foreign_supersedes),
         "dangling_replies": dangling,
         "problems": [{"code": c, "count": counts[c]} for c in PROBLEM_CODES if counts.get(c, 0) > 0],
-        **{k: v for k, v in report.items() if k != "contested"},
+        **{k: v for k, v in report.items() if k not in ("contested", "holds")},
     }
+    if report["holds"] != claims["held"]:   # section 47: only when a fan-out makes them differ,
+        st["holds"] = report["holds"]       # so a mailbox without one prints what it always did
 
     # --- PROTOCOL.md section 40: Unix-user identity binding. Opt-in: with no
     # binding declared nothing below runs and the dict above is returned as it
@@ -3499,7 +3505,9 @@ def cmd_status(args: argparse.Namespace) -> int:
         f"{t}={n}" for t, n in msgs["live_by_type"].items()) + ")")
     print(f"asks: open={asks['open']}  oldest_open_age={_fmt_age(asks['oldest_open_age_seconds'])}"
           + (f"  ({asks['oldest_open_id']})" if asks["oldest_open_id"] else ""))
-    print("claims: " + "  ".join(f"{k}={v}" for k, v in claims.items()))
+    print("claims: " + "  ".join(f"{k}={v}" for k, v in claims.items())
+          + (f"  ({st['holds']} hold{'s' if st['holds'] != 1 else ''}: "
+             "one fan-out files a copy per writer)" if "holds" in st else ""))
     for line in _held_table(st):
         print(line)
     for line in _results_lines(everything, st):

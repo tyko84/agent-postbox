@@ -2291,3 +2291,22 @@ the tool makes sure someone is told.
 **Invariant a test must pin.** With no alias declared nothing is reported. Once declared, one live
 message filed to it earlier is counted; a copy filed after, and a message to a writer, are not;
 `doctor` names the id; an answered ASK drops out; nothing is written. `test_cli.py` pins it.
+
+---
+
+## 47. One fan-out is one hold
+
+`send --claim --to <alias>` files one CLAIM per writer (§27), each holding the scope. `status` counted
+messages, so one hold by one agent read as `held=2` for a two-writer alias, three for three, and so on.
+
+**Rule.** `claims.held` and `claims_held` still count messages, as §34 says; nothing in them
+changes. `status --json` adds a top-level `holds` key, **only when it differs from `claims.held`**:
+the number of distinct holds, where copies with the same sender, scope and `expires` are one hold, and
+a claim with no scope is always its own hold (nothing identifies its copies). The key is absent for a
+mailbox without a fan-out, so that output is byte for byte what it was. Text `status` appends
+`(N holds: one fan-out files a copy per writer)` to the `claims:` line in the same case. `--scope`
+does not narrow `holds`, as it does not narrow `claims`. No exit status and no problem code changes.
+
+**Invariant a test must pin.** Two copies of one fan-out plus three other held claims read
+`held=5`, `holds=4`; a mailbox without a fan-out has no `holds` key; nothing is written.
+`test_cli.py` pins it.
