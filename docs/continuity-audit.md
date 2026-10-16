@@ -74,7 +74,7 @@ below as not fixed.
 
 | Area | What was run | Result |
 | --- | --- | --- |
-| Discovery | send from a nested directory with spaces; from `.git/hooks`; via a symlinked project path; after `mv repo repo2`; two `docs/agent-mail` (nested repo with its own `.git`, and a non-git subdirectory box); no `.git` anywhere | nearest box wins, repo root otherwise; paths are not stored in messages, so a moved or renamed tree keeps its mail. A subdirectory box without `.git` shadows the outer one (by design, section 9) |
+| Discovery | send from a nested directory with spaces; from `.git/hooks`; via a symlinked project path; after `mv repo repo2`; two `docs/agent-mail` (nested repo with its own `.git`, and a non-git subdirectory box); no `.git` anywhere | nearest box wins, repo root otherwise; paths are not stored in messages, so a moved or renamed tree keeps its mail. A subdirectory box without `.git` shadows the outer one |
 | Env | `AGENT_MAIL_DIR` relative, absolute, symlink, empty (= unset), a file, missing; `AGENT_MAIL_PROJECT` absolute, relative, nonexistent; `CLAUDE_PROJECT_DIR` | as specified; missing or file: `NO MAILBOX`, exit 2; a nonexistent project is ignored (section 38) |
 | Deleted working directory | send, list, status, inbox, hook with and without `AGENT_MAIL_DIR`, `AGENT_MAIL_PROJECT`, `CLAUDE_PROJECT_DIR` | one-line refusal exit 2 when nothing names the box; works when something does; hook silent by design |
 | Box deleted under use | list, status, doctor, hook, then send | `NO MAILBOX` plus hint, doctor `store: MISSING`, hook silent; a send re-mints the box at the walk-up default |
