@@ -118,3 +118,38 @@ return to the original tree hash through the documented removal.
 - A concurrent second installer run, and a full disk.
 - `python3 -m pip install` of the sdist into a venv (the sdist was unpacked and its
   `install.py` run instead).
+
+## Lifecycle re-run, 2026-10-16 (cycle 4)
+
+Throwaway projects under a scratch directory with `HOME` set to a temp dir; a tree snapshot
+(path, mode, SHA-256 of every file, symlink targets; `.git/` excluded) before and after each
+case. Main at `c832fe1`. Machine-run, macOS, Python 3.13; Linux not run here (CI covers it).
+"v0.5.0" means `git archive v0.5.0` unpacked and its own `install.py` run.
+
+| # | Case | Result | Tree and settings diff |
+|---|------|--------|------------------------|
+| L1 | Reinstall, same arguments (`--adapter claude-code`) | exit 0, `already registered (no change)` | Empty tree diff |
+| L2 | Upgrade v0.5.0 to current over a `settings.json` with `permissions`, another `UserPromptSubmit` hook and a `Stop` hook | exit 0 | Only the four payload files that changed between the versions differ; `settings.json` byte-identical; `settings.json.bak` is the pre-install original; both other hooks and the `permissions` object kept in order |
+| L3 | Documented removal (`troubleshooting.md`, zsh) after claude-code and codex on a project with its own `settings.json` | exit 0 | Snapshot equals the pre-install one; `settings.json` restored byte for byte from `.bak`; `.codex/hooks.json` removed |
+| L4 | Read-only project dir; read-only `tools/` | exit 1, `ABORT: cannot write (<path>): Permission denied ...` | Empty diff (nothing was reached) |
+| L5 | Read-only `.claude/` holding a `settings.json`; read-only `docs/` | Before the fix: exit 1, **half-installed** (tool copied; mailbox too for `.claude/`; no hook). Fixed: exit 2, `<dir> is not writable ... Nothing was changed.` | Before: tool and mailbox files added. After: empty diff, and a re-run after `chmod` completes |
+| L6 | Malformed `settings.json` (`{"hooks": {oops`); `[1,2]` | exit 2, names the file, the parser's line and column, `fix it by hand, then re-run`, `Nothing was changed.`; `--check` exits 0 and prints `WOULD REFUSE` | Empty diff |
+| L7 | `.claude` a symlink to a directory outside the project | exit 2, `is a symlink leading outside the project; remove it` | Empty diff; the outside directory untouched |
+| L8 | `settings.json` itself a symlink to a file outside | exit 0 (accepted in `docs/threat-model.md`): written through, the link kept, `.bak` a regular file | The linked file gains the hook; nothing else |
+| L9 | `tools/` a symlink out of the project / into the project | out: exit 2 `leads outside the project through a symlink`; in: installs through the link | Out: empty diff |
+| L10 | `--adapter cursor` (unsupported host) | argparse exit 2, usage and `invalid choice: 'cursor' (choose from claude-code, codex)` | Nothing created |
+| L11 | `--adapter codex` with no git repository | exit 2, `needs a git repository ... Nothing was changed.` | Empty diff |
+| L12 | Nonexistent project path | exit 2, `not a directory: <path>` | n/a |
+| L13 | Missing dependency: `install.py` run without `PARTICIPANTS.template.md`, `selftest.py` or the hook script beside it | Before the fix: exit 1, `cannot write (<its own source file>): No such file` (wrong cause, wrong advice) and a **partial** tool copy. Fixed: exit 2, the missing files named, nothing copied | Before: partial `tools/agent-postbox/`. After: empty diff |
+| L14 | No `python3` on `PATH` (installer run by absolute path, `PATH=/nonexistent`) | exit 0; the hook command uses the installer's interpreter path | n/a |
+| L15 | An older registration with bare `python` where only `python3` exists | `repaired the claude-code adapter (...)`, `.bak` made | Only that command changes |
+
+Exit codes: a refusal is 2 in every case above; 1 is reserved for an OS-level write failure
+the up-front checks cannot foresee (read-only mount, ACL, full disk). Both name the path and the
+next step.
+
+Two defects, each with a minimal repro, an expected/actual pair and a regression check
+(`test_adversarial.py`, install section), each in its own PR: L5 (unwritable target leaves a
+half install; PR #79) and L13 (a copy of `install.py` without its payload reports a write
+failure and leaves a partial copy; PR #80). Not reproduced as defects: everything else in the
+table.
