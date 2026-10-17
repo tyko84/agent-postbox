@@ -384,6 +384,34 @@ class RemovalInstructions(unittest.TestCase):
             self.assertEqual(sh("bash", str(script)).returncode, 0)
             self.assertFalse((proj / "docs").exists())
 
+class WindowsGuide(unittest.TestCase):
+    """docs/windows.md: every bullet carries a status label, and the installer's printed
+    advice is shell-neutral on Windows (and unchanged on POSIX)."""
+
+    LABELS = ("Verified", "Works but unverified in a real host", "Unsupported", "Untested")
+
+    def test_every_bullet_has_a_status_label_and_page_is_indexed(self) -> None:
+        text = (ROOT / "docs" / "windows.md").read_text(encoding="utf-8")
+        bullets = [ln for ln in text.splitlines() if ln.startswith("* ")]
+        self.assertGreater(len(bullets), 20)
+        bad = [ln[:60] for ln in bullets if not ln[2:].startswith(tuple(f"{k}:" for k in self.LABELS))
+               and not ln[2:].startswith("**")]
+        self.assertEqual(bad, [])
+        self.assertIn("(windows.md)", (ROOT / "docs" / "README.md").read_text(encoding="utf-8"))
+
+    def test_installer_next_steps_by_platform(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="pbD_ ") as tmp:
+            r = subprocess.run([sys.executable, str(ROOT / "install.py"), tmp],
+                               capture_output=True, text=True, encoding="utf-8", errors="replace")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        if os.name == "nt":
+            self.assertIn("$env:AGENT_MAIL_IDENTITY", r.stdout)
+            self.assertNotIn(" && ", r.stdout)
+            self.assertNotIn("cd '", r.stdout)
+        else:
+            self.assertIn("(there is no default):  export AGENT_MAIL_IDENTITY=<name>", r.stdout)
+            self.assertIn(" && ", r.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
