@@ -2117,6 +2117,77 @@ def test_linked_worktree(root: Path) -> None:
           "across" in shared.stdout, shared.stdout)
 
 
+def test_exit_code(root: Path) -> None:
+    print("\ninbox --exit-code (#97): owed (10), none (0), cannot tell (2); read-only")
+    box = root / "exit-code"
+    box.mkdir()
+    idle = run(box, "inbox", "--to", "bob", "--exit-code")
+    check("an empty mailbox: exit 0 (nothing owed)", idle.returncode == 0, idle.stderr)
+    run(box, "send", "--type", "NOTICE", "--from", "alice", "--to", "carol", "--subject", "n",
+        "--body", "x")
+    r = run(box, "inbox", "--to", "bob", "--exit-code")
+    check("mail only for someone else: exit 0", r.returncode == 0, r.stdout + r.stderr)
+    run(box, "send", "--type", "NOTICE", "--from", "alice", "--to", "bob", "--subject", "fyi",
+        "--body", "x")
+    r = run(box, "inbox", "--to", "bob", "--exit-code")
+    check("a NOTICE to bob is not owed work: exit 0", r.returncode == 0, r.stdout + r.stderr)
+    run(box, "send", "--type", "ASK", "--from", "alice", "--to", "bob", "--subject", "q",
+        "--body", "x")
+    before = snapshot(box)
+    r = run(box, "inbox", "--to", "bob", "--exit-code")
+    check("an owed ASK: exit 10, the normal listing on stdout", r.returncode == 10
+          and "q" in r.stdout and r.stderr == "", repr((r.returncode, r.stdout[:200], r.stderr)))
+    r = run(box, "inbox", "--to", "bob", "--exit-code", "--json")
+    check("an owed ASK, --json: exit 10 and valid JSON with owes_reply true",
+          r.returncode == 10 and any(m["owes_reply"] for m in doc(r)["messages"]), r.stdout[:200])
+    r = run(box, "inbox", "--to", "bob")
+    check("without the flag the exit status is still 0 for an owed ASK", r.returncode == 0)
+    r = run(box, "inbox", "--to", "carol", "--exit-code")
+    check("another identity with no owed ASK: exit 0", r.returncode == 0, r.stdout)
+    r = run(box, "inbox", "--exit-code")
+    check("no identity: exit 2 (cannot tell)", r.returncode == 2, r.stderr)
+    r = run(root / "absent-box", "inbox", "--to", "bob", "--exit-code")
+    check("missing mailbox: exit 2", r.returncode == 2 and "NO MAILBOX" in r.stderr, r.stderr)
+    check("the checks wrote nothing", snapshot(box) == before)
+    # an ASK that was superseded but never answered still owes a reply (PROTOCOL.md section 29):
+    # the pickup hook lists it, so the preflight must not say "nothing owed" (C2 review)
+    sup = root / "exit-code-superseded"
+    sup.mkdir()
+    r = run(sup, "send", "--type", "ASK", "--from", "alice", "--to", "bob", "--subject", "q",
+            "--body", "x")
+    ask_id = next(ln.split(": ", 1)[1] for ln in r.stdout.splitlines() if ln.startswith("id: "))
+    run(sup, "send", "--type", "NOTICE", "--from", "alice", "--to", "bob", "--subject", "never mind",
+        "--body", "x", "--supersedes", ask_id)
+    r = run(sup, "inbox", "--to", "bob", "--exit-code")
+    check("a superseded, unanswered ASK: exit 10 (the hook lists it, so the preflight agrees)",
+          r.returncode == 10, repr((r.returncode, r.stdout[:200])))
+    r = run(sup, "inbox", "--to", "bob", "--exit-code", "--type", "NOTICE", "--limit", "0")
+    check("filters and --limit 0 do not hide owed work from the exit status: still 10",
+          r.returncode == 10, repr(r.returncode))
+    # a quarantined file hides what it might have said: cannot tell, unless an owed ASK is known
+    q = root / "exit-code-quarantine"
+    q.mkdir()
+    (q / "notes.md").write_text("no frontmatter at all\n", encoding="utf-8")
+    r = run(q, "inbox", "--to", "bob", "--exit-code")
+    check("only a quarantined file: exit 2 (cannot tell), REJECT on stderr",
+          r.returncode == 2 and "REJECT" in r.stderr, r.stderr)
+    run(q, "send", "--type", "ASK", "--from", "alice", "--to", "bob", "--subject", "q2",
+        "--body", "x")
+    r = run(q, "inbox", "--to", "bob", "--exit-code")
+    check("an owed ASK beside a quarantined file: exit 10 (act; the REJECT is still on stderr)",
+          r.returncode == 10 and "REJECT" in r.stderr, repr((r.returncode, r.stderr)))
+    if os.name == "posix" and os.geteuid() != 0:
+        locked = root / "exit-code-locked"
+        locked.mkdir()
+        locked.chmod(0)
+        try:
+            r = run(locked, "inbox", "--to", "bob", "--exit-code")
+            check("unreadable mailbox: exit 2 (never 0, which would read as nothing owed)",
+                  r.returncode == 2 and r.stderr.startswith("UNREADABLE MAILBOX"), r.stderr)
+        finally:
+            locked.chmod(0o700)
+
+
 def _py310_fromisoformat(text: str) -> dt.datetime:
     """What Python 3.10's `datetime.fromisoformat` accepts, in outline: a fraction of
     exactly 3 or 6 digits, a zone only as +HH:MM[:SS], no comma. Used to emulate 3.10 on
@@ -2258,6 +2329,7 @@ def main() -> int:
         test_help(root)
         test_refusals(root)
         test_empty(root)
+        test_exit_code(root)
         test_views(root)
         test_results(root)
         test_reader_gone(root)
