@@ -1,0 +1,41 @@
+# context_bench  root=<checkout>/agent_mail.py  seed=7  reps=5  python=3.13.7
+# bytes exact; tokens ESTIMATED at 0.55 tokens/byte (docs/context-cost.md), not measured here
+
+## Hook output and idle inbox per scenario
+| scenario                             | hook B | est tok | hook ms | inbox --json B | inbox ms |
+|--------------------------------------|--------|---------|---------|----------------|----------|
+| no mail for ME                       |      0 |       0 |      40 |            529 |       58 |
+| 1 owed ASK                           |    713 |     392 |      39 |            823 |       56 |
+| 50 owed ASKs                         |   5991 |    3295 |      41 |          15322 |       59 |
+| 200 owed ASKs                        |  21394 |   11767 |      51 |          59826 |       71 |
+| mixed (37 msgs: 15N 6ANS 5ASK 3C 2D) |   2788 |    1533 |      41 |           2574 |       57 |
+
+## 10 simulated prompts, no new mail (hook is stateless: same text every turn)
+| scenario                             | turn 1 B | turn 10 B | 10-turn B | est tok | distinct sizes |
+|--------------------------------------|----------|-----------|-----------|---------|----------------|
+| no mail for ME                       |        0 |         0 |         0 |       0 |              1 |
+| 1 owed ASK                           |      713 |       713 |      7130 |    3922 |              1 |
+| 50 owed ASKs                         |     5991 |      5991 |     59910 |   32950 |              1 |
+| 200 owed ASKs                        |    21394 |     21394 |    213940 |  117667 |              1 |
+| mixed (37 msgs: 15N 6ANS 5ASK 3C 2D) |     2788 |      2788 |     27880 |   15334 |              1 |
+
+## Scan cost by mailbox size (ms median incl. interpreter start-up; B = stdout)
+| messages | hook ms | hook B | inbox ms | inbox B | status ms | status B | doctor ms | doctor B |
+|----------|---------|--------|----------|---------|-----------|----------|-----------|----------|
+| 100      |      42 |   2795 |       75 |    2949 |        66 |      811 |        65 |      758 |
+| 1000     |      88 |  10194 |      102 |   28780 |       107 |      820 |       104 |      760 |
+| 10000    |     558 |  84913 |      542 |  290681 |       647 |      830 |       521 |      762 |
+
+## Large bodies (the hook never prints a body; `inbox --json` is checked for body echo)
+| mailbox                | hook B | hook ms | inbox --json B | inbox ms |
+|------------------------|--------|---------|----------------|----------|
+| 2 x 10,000 B bodies    |    791 |      37 |           1094 |       55 |
+| 2 x 100,000 B bodies   |    791 |      37 |           1095 |       56 |
+| 2 x 1,000,000 B bodies |    791 |      43 |           1096 |       60 |
+
+## Many participants
+| participants | hook B | hook ms | status B | status ms |
+|--------------|--------|---------|----------|-----------|
+| 10           |    732 |      38 |     1232 |        56 |
+| 100          |    732 |      42 |     7805 |        60 |
+| 1000         |    732 |      84 |    73508 |       103 |

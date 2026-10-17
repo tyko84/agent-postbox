@@ -1,0 +1,23 @@
+listed  main: interruption BEFORE ack (nothing filed)                                             unacknowledged NOTICE still listed on the next prompt
+listed  main: after the ack                                                                       acknowledged NOTICE not listed (by design)
+listed  main: context loss AFTER ack (fresh process, fresh session)                               the pickup cannot tell a fresh session that this was acknowledged; the model has no record of it either unless it runs `list --live` (a count line is the only trace)
+listed  main: self-ack of a DISPUTE with --result DONE (no work done)                             a one-line assertion removes a DISPUTE from the pickup; nothing verifies the dispute was acted on
+listed  main: ANY message from me citing the id (even to a third party, even a forward)           forwarding or quoting a notice counts as acknowledging it
+listed  main: ack filed by another writer claiming from: me                                       authorship is CANNOT_VERIFY, so a forged ack hides it from me
+HIDDEN  main: self-ack citing an ASK                                                              citing an ASK closes it (owes_reply is any citation); true on main too
+HIDDEN  main: a THIRD PARTY (eve) cites my owed ASK                                               any message citing an ASK closes it for the pickup, whoever wrote it (pre-existing)
+listed  ack-prototype: interruption BEFORE ack (nothing filed)                                    unacknowledged NOTICE still listed on the next prompt
+HIDDEN  ack-prototype: after the ack                                                              acknowledged NOTICE not listed (by design)
+HIDDEN  ack-prototype: context loss AFTER ack (fresh process, fresh session)                      the pickup cannot tell a fresh session that this was acknowledged; the model has no record of it either unless it runs `list --live` (a count line is the only trace)
+HIDDEN  ack-prototype: self-ack of a DISPUTE with --result DONE (no work done)                    a one-line assertion removes a DISPUTE from the pickup; nothing verifies the dispute was acted on
+HIDDEN  ack-prototype: ANY message from me citing the id (even to a third party, even a forward)  forwarding or quoting a notice counts as acknowledging it
+HIDDEN  ack-prototype: ack filed by another writer claiming from: me                              authorship is CANNOT_VERIFY, so a forged ack hides it from me
+HIDDEN  ack-prototype: self-ack citing an ASK                                                     citing an ASK closes it (owes_reply is any citation); true on main too
+HIDDEN  ack-prototype: a THIRD PARTY (eve) cites my owed ASK                                      any message citing an ASK closes it for the pickup, whoever wrote it (pre-existing)
+listed  main: 60 owed ASKs, count still stated                                                    60 spelled out
+listed  main: after answering one, the count falls and the next ask appears                       reconstructed from files; no state
+listed  overflow-prototype: 60 owed ASKs, count still stated                                      20 spelled out
+listed  overflow-prototype: overflow line names an exact command                                  retrieval command printed
+listed  overflow-prototype: that command lists every owed ASK                                     60/60 ids
+listed  overflow-prototype: the oldest owed ASK is among those spelled out                        oldest first, so the longest-waiting ask is never the hidden one
+listed  overflow-prototype: after answering one, the count falls and the next ask appears         reconstructed from files; no state
