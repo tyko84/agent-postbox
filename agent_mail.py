@@ -3930,6 +3930,27 @@ def _no_such_message(msg_id: str) -> int:
     return 1
 
 
+def _no_such_shown(box: Path, msg_id: str) -> int:
+    """`show` of an id that no admitted message has: say so, and when a file of that id
+    sits in the mailbox quarantined (a REJECT line in `list`), name it, so the reader does
+    not conclude the mail never arrived. Exit status and the first line are unchanged."""
+    rc = _no_such_message(msg_id)
+    want = msg_id.upper()
+    try:
+        names = sorted(e.name for e in os.scandir(box)
+                       if e.name.endswith(".md") and not e.name.startswith("."))
+    except OSError:
+        return rc
+    for name in names:
+        stem = name[:-3]
+        if (_is_ulid(msg_id) and stem.upper().startswith(want + "-")) or msg_id == stem:
+            print(f"note: {_shown(name)} is in the mailbox but quarantined, so it is not mail "
+                  "(see the REJECT line in `list` for why); it was never deleted",
+                  file=sys.stderr)
+            break
+    return rc
+
+
 def cmd_show(args: argparse.Namespace) -> int:
     box = mail_dir()
     if not _has_mailbox(box):
@@ -3938,7 +3959,7 @@ def cmd_show(args: argparse.Namespace) -> int:
         return _show_json(args, box)
     m = _find_message(args.id)
     if m is None:
-        return _no_such_message(args.id)
+        return _no_such_shown(box, args.id)
     text, why = _read_mail_file(m.path)
     if text is None:
         print(f"cannot show {_shown(m.path.name)}: {why}", file=sys.stderr)
@@ -3957,7 +3978,7 @@ def _show_json(args: argparse.Namespace, box: Path) -> int:
     everything, rejects = load_messages()
     m = _find_message(args.id, everything)
     if m is None:
-        return _no_such_message(args.id)
+        return _no_such_shown(box, args.id)
     idx = _Index(everything)
     doc = {
         "schema": LIST_SCHEMA, "view": "show", "mailbox": str(box), "now": _utc_text(v.now),

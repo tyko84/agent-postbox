@@ -1645,6 +1645,25 @@ def main() -> int:
         check("no registry has no fall-through warning", bare.returncode == 0
               and "was read from" not in bare.stderr, bare.stdout + bare.stderr)
 
+    print("A2: show of a quarantined id says it is quarantined")
+    with tempfile.TemporaryDirectory() as tdq:
+        qbox = Path(tdq) / "q"
+        qbox.mkdir()
+        qid = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+        (qbox / f"{qid}-bad.md").write_text(
+            f"---\nid: {qid}\ntype: BOGUS\nfrom: x\nto: all\ndate: 2026-01-01T00:00:00Z\nsubject: bad\n---\n\nb\n")
+        cp = run(qbox, "show", qid)
+        cpj = run(qbox, "show", "--json", qid)
+        cp_none = run(qbox, "show", "01ARZ3NDEKTSV4RRFFQ69G5FAW")
+        check("show <quarantined id> exits 1 and names the quarantine and the file",
+              cp.returncode == 1 and "quarantine" in cp.stderr.lower() and f"{qid}-bad.md" in cp.stderr,
+              cp.stderr)
+        check("show --json <quarantined id> says the same", cpj.returncode == 1
+              and "quarantine" in cpj.stderr.lower(), cpj.stderr)
+        check("control: show of an id that exists nowhere still says only 'no message with id'",
+              cp_none.returncode == 1 and "no message with id" in cp_none.stderr
+              and "quarantine" not in cp_none.stderr.lower(), cp_none.stderr)
+
     faulthandler.cancel_dump_traceback_later()
     if FAILS:
         print("\nFAILED:")

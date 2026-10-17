@@ -9,6 +9,9 @@ behaviour).
 
 ### Changed
 
+- `show <id>` for an id that only a quarantined file carries still exits 1 with `no message with id
+  <id>` as its first line, and now adds a second stderr line naming the quarantined file, so a
+  reader does not conclude the mail never arrived.
 - `doctor` separates installation health from pickup verification (PROTOCOL.md section 20). A mailbox
   on which no canary was ever filed is healthy but unverified: `canary: UNVERIFIED`, exit 0, final line
   `PASS (pickup unverified: no canary has been filed)`; it used to end in `FAIL`, exit 2. A canary that
