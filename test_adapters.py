@@ -216,6 +216,32 @@ class CodexPickup(unittest.TestCase):
                 self.assertEqual((cp.returncode, cp.stdout, cp.stderr), (0, b"", b""))
         self.assert_delivered(self.codex(AGENT_MAIL_IDENTITY="bob"))
 
+    def test_an_unreadable_mailbox_prints_one_fixed_line_and_exits_0(self) -> None:
+        if os.name != "posix" or (hasattr(os, "geteuid") and os.geteuid() == 0):
+            self.skipTest("needs a POSIX user that mode 000 actually locks out (not root)")
+        locked = self.tmp / "private-name-locked"
+        locked.mkdir()
+        empty = self.tmp / "empty"
+        empty.mkdir()
+        locked.chmod(0)
+        try:
+            cp = self.codex(AGENT_MAIL_IDENTITY="bob", AGENT_MAIL_DIR=str(locked))
+        finally:
+            locked.chmod(0o700)
+        out = cp.stdout.decode()
+        self.assertEqual((cp.returncode, cp.stderr), (0, b""))
+        self.assertEqual(out.count("\n"), 1, out)
+        self.assertIn("cannot read the mailbox directory", out)
+        self.assertIn("'bob'", out)
+        for leak in (str(locked), locked.name, str(self.tmp), "Permission denied", "EACCES", "Errno"):
+            self.assertNotIn(leak, out)
+        self.assertFalse(is_json(out))
+        # the neighbours stay silent, and the same mailbox delivers once it is readable again
+        for box in (empty, self.tmp / "missing"):
+            quiet = self.codex(AGENT_MAIL_IDENTITY="bob", AGENT_MAIL_DIR=str(box))
+            self.assertEqual((quiet.returncode, quiet.stdout, quiet.stderr), (0, b"", b""), box.name)
+        self.assert_delivered(self.codex(AGENT_MAIL_IDENTITY="bob"))
+
     def test_a_missing_script_cannot_block_the_prompt(self) -> None:
         # The interpreter exits 2 when it cannot open its script, and Codex reads
         # exit 2 from this event as "block the prompt". `|| true` is what stands
