@@ -53,6 +53,21 @@ under a restrictive permission mode), and a third stopped at its ceiling and was
 | You need proof that a requested action was done | Not this | `--result` is the sender's claim, never proof (PROTOCOL.md section 39) |
 | Several machines, a network filesystem, or Windows | Not supported | Local filesystems and POSIX only (Security and limitations) |
 
+## Words used below
+
+| Word | Means here |
+|---|---|
+| `ASK` | "I need something from you." It is **owed** a reply, and stays `open`, until a later message cites its id |
+| `ANSWER` | The reply: it cites the ASK's id with `--reply-to`. It closes the ASK and owes nothing itself |
+| `NOTICE` | "You should know this." Nobody owes a reply; it is `fresh` for 7 days, then `stale` |
+| `CLAIM` | "I am working on this scope until T": a lease that must expire. Advisory: nothing stops an agent that ignores it |
+| `DISPUTE` | "I think that CLAIM or ANSWER is wrong", or "do not proceed until X". Delivered like any live mail; owes nothing |
+| owed | An ASK addressed to you that nothing has answered yet (`inbox` marks it `!`) |
+| live | Still delivered to its recipient: open ASKs, unexpired CLAIMs, other mail under 7 days old |
+| quarantined | A malformed or ambiguous file that is reported (a `REJECT` line, `doctor`) but never delivered as mail, and never deleted (PROTOCOL.md section 5a) |
+| canary | A test NOTICE you file to yourself with `canary`; if your host's hook then shows it to you, pickup works (PROTOCOL.md section 20) |
+| pickup | How a session learns it has mail: a hook that prints it into context, or you running `list --live` |
+
 ## Quickstart
 
 Nothing here needs a model, an account or a network connection after the
@@ -181,8 +196,10 @@ identity that holds a claim sees that block even with no mail addressed to it.
 
 Every `bash runnable` block in this README is executed, in order, in a
 scratch mailbox by `test_readme_examples.py`, so these commands are known to
-work against the code in this checkout. (Shown with the pip-installed command;
-`python3 agent_mail.py` is identical.)
+work against the code in this checkout. (Shown with the pip-installed command. If you
+installed with `install.py` as in the Quickstart, there is no `agent-postbox` command
+(`command not found`): use `python3 tools/agent-postbox/agent_mail.py` from the project
+root in its place; the arguments are identical.)
 
 ```bash runnable
 export AGENT_MAIL_DIR="$PWD/mailbox"      # the shared inbox
@@ -475,6 +492,12 @@ git clone https://github.com/tyko84/agent-postbox
 python3 -m pip install ./agent-postbox
 agent-postbox --version
 ```
+
+On Debian and Ubuntu (24.04 observed) and other systems whose `python3` is distribution-managed,
+that `pip install` stops with `error: externally-managed-environment` (PEP 668) and installs
+nothing. Install into a virtual environment instead:
+`python3 -m venv .venv && .venv/bin/python -m pip install ./agent-postbox`, then run
+`.venv/bin/agent-postbox`. Options 2 and 3 below need no pip and are not affected.
 
 The `./` matters: `pip install ./agent-postbox` installs the directory you just
 cloned, while `pip install agent-postbox` would ask PyPI for the unrelated
