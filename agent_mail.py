@@ -2014,6 +2014,34 @@ def _idem_content(mtype: str, subject: str, body: str) -> str:
     return hashlib.sha256(f"{mtype}\0{subject}\0{body}".encode()).hexdigest()
 
 
+_IDEM_HEADERS = ("result", "reason", "namespace", "resolved_at", "falsifier", "do_not_infer",
+                 "artifact_class", "claim_currentness", "evidence_scope",
+                 "fingerprint_head", "fingerprint_worktree",
+                 "blocked_action", "blocker", "not_blocked", "unblock_condition",
+                 "safe_parallel_work")
+
+
+def _idem_header_drift(box: Path, old_id: str, want: dict[str, str]) -> str:
+    """Name of the first header on which the landed message `old_id` differs from this
+    retry (empty: same, or the landed file cannot be read, which stays a duplicate).
+    The content hash covers type/subject/body only (section 31), so a retry that adds the
+    --reply-to the first try lacked would otherwise report `duplicate` and leave the ASK
+    open. `expires` is not compared: a retry computes it afresh."""
+    for path in box.glob(f"{old_id}-*.md"):
+        text, _why = _read_mail_file(path)
+        if text is None:
+            return ""
+        meta, _body, _problem = _parse_frontmatter(text)
+        for k, v in want.items():
+            have = (meta.get(k) or "").strip()
+            if (have.upper(), v.strip().upper()) != ("", "") and (
+                    have.upper() != v.strip().upper() if k in ("reply_to", "supersedes")
+                    else have != v.strip()):
+                return k
+        return ""
+    return ""
+
+
 def _idem_drop_orphan(box: Path, sender: str, to: str, key: str, content: str) -> None:
     """A keyed send refused at the scope stage never reaches _idem_claim, so it
     clears its own key's ORPHAN here (PROTOCOL.md section 31, "Refused at the
@@ -2574,6 +2602,14 @@ def cmd_send(args: argparse.Namespace) -> int:
                       "nothing written; retry", file=sys.stderr)
                 return 3
             if prior:
+                drift = _idem_header_drift(box, prior, {
+                    "reply_to": reply_to, "supersedes": supersedes, "scope": scope,
+                    **{k: str(getattr(args, k, "") or "") for k in _IDEM_HEADERS}})
+                if drift:
+                    print(f"idempotency key {idem!r} already published {prior} with a different "
+                          f"{drift}; nothing written (the retry would otherwise be reported as a "
+                          "duplicate and its header lost): use a new key to send it", file=sys.stderr)
+                    return 2
                 print(f"duplicate of {prior} (key {idem!r}); nothing written")
                 print(f"id: {prior}")
                 return 0
