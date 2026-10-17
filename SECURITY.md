@@ -93,8 +93,10 @@ that grants something.
 
 ## The pickup fails silently, on purpose
 
-Every error path in the adapter exits 0 with no output, because a broken
-mailbox must never block you from prompting. The security-relevant consequence
+Every error path in the adapter exits 0, and all but one print nothing, because a broken
+mailbox must never block you from prompting. The exception is a mailbox directory that exists
+but that this user cannot list: the adapter prints one fixed line saying so (no path, no message,
+no error text) and still exits 0. The security-relevant consequence
 is that **a pickup that has been disabled, misconfigured, or broken looks
 exactly like an empty inbox.** Do not infer "no messages" from silence. Run
 `selftest.py`, which asserts on content that must appear (PROTOCOL.md §8).
