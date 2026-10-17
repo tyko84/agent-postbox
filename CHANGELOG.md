@@ -35,6 +35,10 @@ behaviour).
   `UNREADABLE MAILBOX at <path>` and a `hint:` on stderr, nothing on stdout, and exit 2, the status a
   missing store already had; `doctor` already said `store: UNREADABLE`. A readable empty mailbox is
   unchanged (exit 0). Root is unaffected (permission bits do not bind it). Issue #94.
+- A mailbox that becomes unlistable AFTER the readability check (a mode change in between, an ACL or a
+  network filesystem `os.access` does not see) no longer loads as empty: `Path.glob` swallowed the listing
+  error. The load now reports one `REJECT <mailbox>: mailbox cannot be listed (...)` and `list` / `inbox`
+  exit 2 on it as for any quarantined file. Follow-up to #94.
 - `send --key` takes over a key marker longer than 4096 bytes instead of refusing it.
 - `send --to <alias>` now warns on stderr when the alias was read from a different PARTICIPANTS.md than
   the mailbox's own registry (a working directory's or a public checkout's example table could fan mail

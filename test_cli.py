@@ -34,6 +34,7 @@ import tempfile
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 HERE = Path(__file__).resolve().parent
 TOOL = str(HERE / "agent_mail.py")
@@ -1920,6 +1921,59 @@ def test_silent_recipient(root: Path) -> None:
     check("status wrote nothing", all(snapshot(box).get(k) == v for k, v in snap.items()))
 
 
+def test_listing_race(root: Path) -> None:
+    """The readability gate can pass and the listing still fail (a mode change, a network
+    filesystem, an ACL `os.access` does not see). That is the same refusal, never an empty
+    mailbox (issue #94). The gate is bypassed in-process to make the race deterministic."""
+    print("\nlisting fails after the gate: a refusal, never an empty mailbox")
+    if os.name != "posix" or os.geteuid() == 0:   # root reads any file; Windows has no mode 000
+        print("  SKIP  running as root, or not POSIX: a listing cannot be denied there")
+        return
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("am_race", str(TOOL))
+    assert spec is not None and spec.loader is not None
+    am: Any = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(am)
+    box = root / "race"
+    box.mkdir()
+    hand(box, "R1", "ASK", "carol", "bob", "2030-01-01T09:00:00Z", "owed through the race")
+    saved_env = os.environ.get("AGENT_MAIL_DIR")
+    os.environ["AGENT_MAIL_DIR"] = str(box)
+
+    def call(*argv: str) -> tuple[int, str, str]:
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = am.main(list(argv))
+        return rc, out.getvalue(), err.getvalue()
+
+    rc, so, se = call("inbox", "--to", "bob", "--now", NOW)
+    check("control: the readable mailbox shows the owed ASK through the same harness",
+          rc == 0 and "owed through the race" in so, repr((rc, so, se)))
+    gate = am._readable_mailbox
+    am._readable_mailbox = lambda _b: True      # the gate says yes; the listing then fails
+    box.chmod(0o000)
+    try:
+        for argv in (("list",), ("inbox", "--to", "bob"), ("list", "--json"),
+                     ("inbox", "--to", "bob", "--json")):
+            rc, so, se = call(*argv, "--now", NOW)
+            check(f"{' '.join(argv)}: exit 2 and a REJECT line that says the mailbox cannot be listed",
+                  rc == 2 and "REJECT" in se and "cannot be listed" in se,
+                  repr((rc, so[:120], se[:200])))
+        rows, rejects = am.load_messages()
+        check("load_messages: no rows and ONE reject that names the cause, not (0, 0)",
+              rows == [] and len(rejects) == 1 and "cannot be listed" in rejects[0], repr((rows, rejects)))
+    finally:
+        box.chmod(0o700)
+        am._readable_mailbox = gate
+    rc, so, se = call("inbox", "--to", "bob", "--now", NOW)
+    check("recovery: once readable again the same command shows the owed ASK",
+          rc == 0 and "owed through the race" in so, repr((rc, so, se)))
+    if saved_env is None:
+        os.environ.pop("AGENT_MAIL_DIR", None)
+    else:
+        os.environ["AGENT_MAIL_DIR"] = saved_env
+
+
 def test_unreadable_mailbox(root: Path) -> None:
     """A mailbox directory this account cannot list is not an empty mailbox (PROTOCOL.md
     section 15: a silent broker is not an empty inbox). Every reader says so and exits 2, the
@@ -2350,6 +2404,7 @@ def main() -> int:
         test_refusals(root)
         test_empty(root)
         test_unreadable_mailbox(root)
+        test_listing_race(root)
         test_views(root)
         test_results(root)
         test_reader_gone(root)

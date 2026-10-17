@@ -585,7 +585,17 @@ def load_messages() -> tuple[list[Message], list[str]]:
     seen_ids: dict[str, str] = {}
     if not box.is_dir():
         return out, rejects
-    for path in sorted(box.glob("*.md")):
+    # `Path.glob` swallows a listing error and yields nothing, so a mailbox that turned
+    # unreadable after the gate (a mode change, an ACL or a network filesystem that
+    # `os.access` does not see) would load as empty. `scandir` raises; say so loudly.
+    try:
+        with os.scandir(box) as it:
+            names = sorted(e.name for e in it if e.name.endswith(".md"))
+    except OSError as e:
+        rejects.append(f"REJECT {_shown(box.name or str(box))}: mailbox cannot be listed ({e.strerror or e})"
+                       " (CANNOT_VERIFY; an unlistable mailbox is not an empty one)")
+        return out, rejects
+    for path in (box / n for n in names):
         if path.name.lower() in ("readme.md", "participants.md", "protocol.md"):
             continue
         text, why = _read_mail_file(path)

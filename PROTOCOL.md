@@ -279,7 +279,9 @@ this, in a throwaway mailbox; run it whenever you touch delivery.
   `NO MAILBOX at <path>` exit 2, not an empty list. So is a store this account cannot
   list (mode 000, or no read or search bit): `UNREADABLE MAILBOX at <path>`, exit 2, from every
   read-only command (`list`, `inbox`, `status`, `latency`, `show`, `verify`), the same refusal
-  `doctor` reports as `store: UNREADABLE`. An unreadable directory never reads as an empty one.
+  `doctor` reports as `store: UNREADABLE`. An unreadable directory never reads as an empty one,
+  including when the permission changes between that check and the listing: the load then ends in a
+  `REJECT <mailbox>: mailbox cannot be listed (...)` line, which `list` and `inbox` already answer with exit 2.
 
 ---
 
