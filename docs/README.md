@@ -44,6 +44,7 @@ benefit: see [Evidence](#evidence) for what was and was not shown.
 
 * [threat-model.md](threat-model.md): assets, adversaries, trust assumptions, accepted risks.
 * [publication-safety.md](publication-safety.md): the pre-publication scanner and how to configure it.
+* [agent-intake.md](agent-intake.md): a clean-room procedure for adding agents, models, and reusable workflows from another repository without carrying private context into this public project.
 
 ## Releasing and distribution
 
