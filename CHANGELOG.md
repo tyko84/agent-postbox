@@ -9,6 +9,11 @@ behaviour).
 
 ### Changed
 
+- `send --key` retried after the message already landed, with a `reply_to`, `supersedes`, `scope`,
+  `result` or other optional header different from the landed one, now exits 2 (`already published
+  <id> with a different <header>`) and writes nothing. It used to print `duplicate of <id>` and exit
+  0, silently dropping the retry's header (an ANSWER retried with the right `--reply-to` left its
+  ASK open). An identical retry is unchanged (PROTOCOL.md section 31).
 - `doctor` separates installation health from pickup verification (PROTOCOL.md section 20). A mailbox
   on which no canary was ever filed is healthy but unverified: `canary: UNVERIFIED`, exit 0, final line
   `PASS (pickup unverified: no canary has been filed)`; it used to end in `FAIL`, exit 2. A canary that

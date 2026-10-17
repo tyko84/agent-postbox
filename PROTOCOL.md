@@ -1023,6 +1023,15 @@ wait against a **live** sender now gets exit 3 and writes nothing, where it
 used to take the key over and cause a second message; (c) SIGTERM during a
 send exits 143 after cleaning up instead of dying on the signal.
 
+**Headers the hash does not cover.** The content hash covers type, subject and
+body. A retry that finds the message already published and differs from it in
+`reply_to`, `supersedes`, `scope`, `result` or any other optional header
+(`expires` excepted: a retry computes it afresh) is refused, exit 2, `already
+published <id> with a different <header>`, and writes nothing, instead of
+`duplicate of`. Reporting a duplicate there lost the retry's header silently
+(an ANSWER retried with the correct `--reply-to` left its ASK open). An orphan
+whose message never landed is not affected: the retry publishes its own headers.
+
 **Invariant a test must pin.** (a) A marker whose holder is alive is never
 taken over, however long the retry waits: with a live process holding the
 marker lock and no message, a retry at key wait 0 exits 3, writes nothing and
