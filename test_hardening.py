@@ -1353,9 +1353,10 @@ def main() -> int:
         reached, rc, err = killed_send(r14c, "os.link = block", "canary", "--from", "alice", "--to", "all")
         doc14 = run(r14c, "doctor")
         check("canary SIGKILLed before its link: no canary message, one hidden temp, doctor still "
-              "says the canary is missing",
+              "says no canary exists (UNVERIFIED, not a failure: none was ever filed)",
               reached and rc == -9 and not list(r14c.glob("*.md")) and len(hidden(r14c)) == 1
-              and doc14.returncode == 2 and "PICKUP-CANARY" not in run(r14c, "list").stdout,
+              and doc14.returncode == 0 and "canary: UNVERIFIED" in doc14.stdout
+              and "PICKUP-CANARY" not in run(r14c, "list").stdout,
               f"rc={rc} {hidden(r14c)} {doc14.stdout[-200:]}")
         can = run(r14c, "canary", "--from", "alice", "--to", "all")
         check("control: the canary filed again is one live canary",

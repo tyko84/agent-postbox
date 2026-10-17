@@ -31,6 +31,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -561,16 +562,27 @@ def test_empty(root: Path) -> None:
     check("empty mailbox: latency says there is nothing to measure, exit 0",
           r.returncode == 0 and "(no answered ASKs)" in r.stdout and r.stderr == "", r.stdout)
     r = run(empty, "doctor")
-    check("empty mailbox: doctor FAILs on the missing canary and says how to file one",
-          r.returncode == 2 and r.stderr == ""
-          and "canary: MISSING_OR_STALE\n  - file one with `canary --from <you> --to <you>`"
-          in r.stdout and r.stdout.rstrip().endswith("FAIL: pickup canary missing or stale"),
-          r.stdout + r.stderr)
+    check("empty mailbox: doctor is healthy but says pickup is UNVERIFIED and how to verify, exit 0",
+          r.returncode == 0 and r.stderr == ""
+          and "canary: UNVERIFIED\n  - install is healthy; pickup has not been verified: file one with "
+              "`canary --from <you> --to <you>`" in r.stdout
+          and r.stdout.rstrip().endswith("PASS (pickup unverified: no canary has been filed)")
+          and "FAIL" not in r.stdout, r.stdout + r.stderr)
     c = run(empty, "canary", "--from", "alice", "--to", "alice")
     r = run(empty, "doctor")
     check("control: after the canary that line names, doctor PASSes and prints no next step",
           c.returncode == 0 and r.returncode == 0 and r.stdout.rstrip().endswith("PASS")
           and "file one with" not in r.stdout and r.stderr == "", r.stdout + r.stderr)
+    expired = Path(tempfile.mkdtemp()) / "expired"
+    expired.mkdir()
+    run(expired, "canary", "--from", "alice", "--to", "alice", "--hours", "0.0003")
+    time.sleep(2)
+    r = run(expired, "doctor")
+    check("a canary that was filed and has lapsed is still a FAIL (verification existed and lapsed), "
+          "naming the lapsed canary",
+          r.returncode == 2 and "canary: MISSING_OR_STALE" in r.stdout
+          and "last canary" in r.stdout and "expired" in r.stdout
+          and r.stdout.rstrip().endswith("FAIL: pickup canary missing or stale"), r.stdout + r.stderr)
 
     for argv, header in ((["list"], f"# mailbox: {quar}  (AGENT_MAIL_DIR)\n"),
                          (["inbox", "--to", "bob"], f"# inbox: bob  mailbox: {quar}  (AGENT_MAIL_DIR)\n")):
