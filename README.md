@@ -109,9 +109,10 @@ For real use, then:
    `--from` explicitly).
 2. File a canary and run `doctor`:
    `python3 tools/agent-postbox/agent_mail.py canary --from <name> --to <name>`, then
-   `... doctor`. The first `doctor` on a fresh install ends in
-   `FAIL: pickup canary missing or stale` (exit 2) until a canary exists, and a canary lasts
-   24 hours; read it as "pickup not yet verified", not a broken install. Two other lines are informational:
+   `... doctor`. The first `doctor` on a fresh install is healthy and says
+   `canary: UNVERIFIED` (exit 0): nothing is wrong, pickup just has not been verified. File the
+   canary and confirm your agent's hook shows it. A canary lasts 24 hours; after that `doctor`
+   says `canary: MISSING_OR_STALE` (exit 2) until you file another. Two other lines are informational:
    `AGENT_MAIL_IDENTITY: UNSET in this shell` describes the shell you ran `doctor` in, and
    `authorship: CANNOT_VERIFY` says a `from:` name is a claim anyone can write, not a
    verified identity.

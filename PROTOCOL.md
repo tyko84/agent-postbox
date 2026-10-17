@@ -530,9 +530,14 @@ Checks (minimum):
    `doctor` lists the same unsuperseded claims `status` counts as `expired`,
    `malformed_expiry` or `TOO_LONG` (§34).
 4. **Pickup canary freshness** — a recent self-NOTICE with subject prefix
-   `PICKUP-CANARY` and an unexpired `expires` must be present. Missing or stale
-   canary ⇒ doctor fails (exit 2). That proves the pickup loop, not only that
-   `send` can write a file.
+   `PICKUP-CANARY` and an unexpired `expires` must be present. A canary that was
+   filed and has lapsed ⇒ doctor fails (exit 2, `canary: MISSING_OR_STALE`, naming the
+   lapsed canary and the 24-hour default): pickup was verified once and is not now.
+   **A mailbox on which no canary was ever filed is healthy but unverified**:
+   `canary: UNVERIFIED` and a next step, exit 0, final line `PASS (pickup unverified: no
+   canary has been filed)`. Nothing was claimed, so nothing failed; install health and
+   end-to-end verification are different questions, and the canary answers only the
+   second. A canary proves the pickup loop, not only that `send` can write a file.
 5. **Authorship** — free-text `from:` and filename stamps are stamp-echo only.
    Doctor always reports `authorship: CANNOT_VERIFY` for unstamped mail and
    **must never** exit 0 while claiming an author known from mtime or git
@@ -1832,7 +1837,7 @@ not a contract.
 |---|---|
 | `NO MAILBOX at <path>` from a read-only command | a second line on stderr, `hint: ...`. With `AGENT_MAIL_DIR` set: it must name an existing directory and is never created (§9). Unset: none was found walking up, so set it or install into the project |
 | `list`, `inbox`, `latency` exit 2 because files are quarantined | a `hint: ...` line on stderr after the `REJECT` lines: the files are never delivered and never deleted, the listing is complete, and the status stays 2 until they are repaired or moved out |
-| `doctor` prints `canary: MISSING_OR_STALE` | one indented `  - ...` line under it on stdout, in the form of the detail lines `doctor` already prints (§33): file one with `canary`, run `doctor` again |
+| `doctor` prints `canary: UNVERIFIED` or `canary: MISSING_OR_STALE` | indented `  - ...` lines under it on stdout, in the form of the detail lines `doctor` already prints (§33): file one with `canary`, run `doctor` again; for a lapsed canary, also which one expired |
 | `doctor` prints `store: MISSING` | one indented `  - ...` line under it, with the text of the first row |
 
 `doctor` says it on stdout because its whole report is there and its stderr
@@ -1857,9 +1862,9 @@ traceback, each with a neighbouring valid value as the control that still
 succeeds. (d) `inbox` without `--to` shows the same rows as `--to X` when
 `AGENT_MAIL_IDENTITY=X`, and is refused when it is unset. (e) A missing
 mailbox prints `NO MAILBOX at <path>` first and a `hint:` line second;
-`doctor` on a mailbox without a canary names the next step under
-`canary: MISSING_OR_STALE`, still ends with its `FAIL:` line and prints
-nothing on stderr. (f) No argument drawn from a table of hostile values produces a
+`doctor` on a mailbox that never had a canary names the next step under
+`canary: UNVERIFIED`, exits 0 with `PASS (pickup unverified: ...)` and prints
+nothing on stderr (since this version; before it ended in `FAIL:`, exit 2). (f) No argument drawn from a table of hostile values produces a
 traceback on any command. `selftest.py` pins (a), (b), (d), (e) and the first
 four rows of (c); `test_cli.py` pins all six.
 
