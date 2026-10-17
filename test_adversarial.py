@@ -930,6 +930,35 @@ def hostile_output(root: Path) -> None:
                   and "Nothing was changed" in r.stderr and tree == [mk], repr((tree, r.stderr)))
 
 
+def keyed_retry_unlistable(root: Path) -> None:
+    """A retry with the same `--key` into a mailbox this account can write to but not list
+    (a drop box: mode 0300). `glob()` swallows the listing error, so the retry used to read
+    "the first send never landed", take the key over and file the message a second time."""
+    if not (hasattr(os, "geteuid") and os.geteuid() != 0):   # root lists anything
+        return
+    print("a keyed retry into a mailbox that cannot be listed")
+    keyed = ("--key", "k-unlistable")
+    for mode, label, listable in ((0o700, "control: a listable mailbox", True),
+                                  (0o300, "a write-only (unlistable) mailbox", False)):
+        d = root / f"keyed-{mode:o}"
+        d.mkdir()
+        first = send(d, subj="keyed once", extra=keyed)
+        d.chmod(mode)
+        try:
+            second = send(d, subj="keyed once", extra=keyed)
+        finally:
+            d.chmod(0o700)
+        n = len(md_files(d))
+        if listable:
+            check(f"{label}: the retry is a duplicate of the first, one message",
+                  first.returncode == 0 and second.returncode == 0 and "duplicate of" in second.stdout
+                  and n == 1, repr((second.returncode, second.stdout, n)))
+        else:
+            check(f"{label}: the retry cannot tell, so it files nothing (exit 1), never a second copy",
+                  first.returncode == 0 and second.returncode == 1 and n == 1
+                  and "Traceback" not in second.stderr, repr((second.returncode, second.stderr, n)))
+
+
 def main() -> int:
     faulthandler.dump_traceback_later(WATCHDOG, exit=True)
     with tempfile.TemporaryDirectory() as td:
@@ -1517,6 +1546,7 @@ def main() -> int:
               and not [f.name for f in kbox.iterdir() if f.name.endswith((".lock", ".takeover"))],
               str(sorted(f.name for f in kbox.iterdir() if f.name.startswith("."))[:6]))
 
+        keyed_retry_unlistable(root)
         hostile_output(root)
         identity_binding(root)
         reader_goes_away(root)
