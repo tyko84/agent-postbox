@@ -186,5 +186,38 @@ class SupportedPythons(unittest.TestCase):
         self.assertEqual(re.findall(r'"(3\.\d+)"', 'python: ["3.10", "3.11"]'), ["3.10", "3.11"])
 
 
+class FirstReaderPath(unittest.TestCase):
+    """What a reader who has never seen the project meets before the first exchange."""
+
+    README = (ROOT / "README.md").read_text(encoding="utf-8")
+
+    @staticmethod
+    def glossary_terms(text: str) -> set[str]:
+        m = re.search(r"^## Words used below\n(.*?)(?=^## )", text, re.S | re.M)
+        if not m:
+            return set()
+        return set(re.findall(r"^\| `?([A-Za-z]+)`? \|", m.group(1), re.M)) - {"Word"}
+
+    def test_glossary_defines_every_message_type_and_the_unfamiliar_words(self) -> None:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("agent_mail_for_docs", ROOT / "agent_mail.py")
+        assert spec is not None and spec.loader is not None
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        terms = self.glossary_terms(self.README)
+        self.assertEqual(sorted(set(mod.TYPES) - terms), [], "README glossary omits a message type")
+        for word in ("owed", "live", "quarantined", "canary", "pickup"):
+            self.assertIn(word, terms)
+        # the glossary comes before the first command a reader runs
+        self.assertLess(self.README.index("## Words used below"), self.README.index("## Quickstart"))
+
+
+    def test_positive_control_glossary_check_sees_a_missing_term(self) -> None:
+        self.assertEqual(self.glossary_terms("## Words used below\n| Word | x |\n| `ASK` | a |\n\n## Next\n"),
+                         {"ASK"})
+        self.assertEqual(self.glossary_terms("no glossary here"), set())
+
+
+
 if __name__ == "__main__":
     unittest.main()

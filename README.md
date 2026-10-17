@@ -53,6 +53,21 @@ under a restrictive permission mode), and a third stopped at its ceiling and was
 | You need proof that a requested action was done | Not this | `--result` is the sender's claim, never proof (PROTOCOL.md section 39) |
 | Several machines, a network filesystem, or Windows | Not supported | Local filesystems and POSIX only (Security and limitations) |
 
+## Words used below
+
+| Word | Means here |
+|---|---|
+| `ASK` | "I need something from you." It is **owed** a reply, and stays `open`, until a later message cites its id |
+| `ANSWER` | The reply: it cites the ASK's id with `--reply-to`. It closes the ASK and owes nothing itself |
+| `NOTICE` | "You should know this." Nobody owes a reply; it is `fresh` for 7 days, then `stale` |
+| `CLAIM` | "I am working on this scope until T": a lease that must expire. Advisory: nothing stops an agent that ignores it |
+| `DISPUTE` | "I think that CLAIM or ANSWER is wrong", or "do not proceed until X". Delivered like any live mail; owes nothing |
+| owed | An ASK addressed to you that nothing has answered yet (`inbox` marks it `!`) |
+| live | Still delivered to its recipient: open ASKs, unexpired CLAIMs, other mail under 7 days old |
+| quarantined | A malformed or ambiguous file that is reported (a `REJECT` line, `doctor`) but never delivered as mail, and never deleted (PROTOCOL.md section 5a) |
+| canary | A test NOTICE you file to yourself with `canary`; if your host's hook then shows it to you, pickup works (PROTOCOL.md section 20) |
+| pickup | How a session learns it has mail: a hook that prints it into context, or you running `list --live` |
+
 ## Quickstart
 
 Nothing here needs a model, an account or a network connection after the
