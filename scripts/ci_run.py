@@ -87,6 +87,7 @@ TESTS: tuple[Test, ...] = (
     Test(("test_readme_examples.py",), 3),
     Test(("test_handoff.py",), 1),
     Test(("test_e2e_script.py",), 1),
+    Test(("test_fake_claude.py",), 1),
     Test(("test_micro_experiment.py",), 1),
 )
 
