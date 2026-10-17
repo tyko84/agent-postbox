@@ -103,15 +103,15 @@ For real use, then:
 
 0. Start `claude` from the project root: started in a subdirectory it did not run the
    hook (Claude Code 2.1.300, headless).
-1. Rename the example rows `agent-a` and `agent-b` in `docs/agent-mail/PARTICIPANTS.md` to
-   your agents' names, and start each session from a shell with its own name:
+1. Optional for a trial (the example rows `agent-a` and `agent-b` work as shipped): rename them in
+   `docs/agent-mail/PARTICIPANTS.md` to your agents' names. Start each session from a shell with its own name:
    `export AGENT_MAIL_IDENTITY=<name>` (`inbox` and the hook read it; `send` always takes
    `--from` explicitly).
 2. File a canary and run `doctor`:
    `python3 tools/agent-postbox/agent_mail.py canary --from <name> --to <name>`, then
    `... doctor`. The first `doctor` on a fresh install ends in
    `FAIL: pickup canary missing or stale` (exit 2) until a canary exists, and a canary lasts
-   24 hours; that is not a broken install. Two other lines are informational:
+   24 hours; read it as "pickup not yet verified", not a broken install. Two other lines are informational:
    `AGENT_MAIL_IDENTITY: UNSET in this shell` describes the shell you ran `doctor` in, and
    `authorship: CANNOT_VERIFY` says a `from:` name is a claim anyone can write, not a
    verified identity.
