@@ -310,6 +310,39 @@ class CodexInstall(unittest.TestCase):
         self.assertTrue(cp.stderr.rstrip().endswith("Nothing was changed."))
         self.assertEqual(tree(self.project), before)
 
+    def test_installer_on_python_39_refuses_up_front_with_or_without_adapter(self) -> None:
+        """The instruction printed without --adapter runs the installer's own
+        interpreter; on 3.9 that refuses. Both forms must refuse before copying."""
+        old = next((p for p in ("/usr/bin/python3", "/usr/bin/python3.9")
+                    if Path(p).exists() and subprocess.run(
+                        [p, "-c", "import sys; raise SystemExit(sys.version_info >= (3, 10))"],
+                        check=False).returncode == 0), None)
+        for extra in ((), ("--adapter", "claude-code"), ("--adapter", "codex")):
+            if old is None:
+                self.skipTest("no Python older than 3.10 here")
+            before = tree(self.project)
+            cp = subprocess.run([old, "-I", str(INSTALL), str(self.project), *extra],
+                                capture_output=True, text=True, timeout=TIMEOUT, env=clean_env())
+            self.assertEqual(cp.returncode, 2, cp.stdout + cp.stderr)
+            self.assertIn("needs Python 3.10 or newer", cp.stderr)
+            self.assertRegex(cp.stderr, r"running 3\.\d+")
+            self.assertIn("python3.12 install.py", cp.stderr)
+            self.assertNotIn("Traceback", cp.stderr)
+            self.assertEqual(cp.stdout, "")
+            self.assertEqual(tree(self.project), before)
+
+    def test_installer_python_refusal_unit(self) -> None:
+        sys.path.insert(0, str(INSTALL.parent))
+        try:
+            import install as inst
+        finally:
+            sys.path.pop(0)
+        self.assertIsNone(inst.installer_python_refusal((3, 10, 0)))
+        self.assertIsNone(inst.installer_python_refusal((3, 14, 1)))
+        msg = inst.installer_python_refusal((3, 9, 6))
+        assert msg is not None
+        self.assertIn("3.9.6", msg)
+
     def test_registering_twice_changes_nothing(self) -> None:
         install(self.project, "--adapter", "codex")
         before = tree(self.project)
