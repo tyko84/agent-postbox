@@ -1894,7 +1894,13 @@ def _idem_parse(raw: bytes) -> tuple[str, str, bool]:
 
 
 def _idem_landed(box: Path, old_id: str) -> bool:
-    return any(box.glob(f"{old_id}-*.md"))
+    """Did the send that reserved this key publish its message? Raises OSError when the
+    mailbox cannot be listed: `Path.glob` would swallow that and answer "no", and a retry
+    would take the key over and file the message a second time. `send` reports the OSError
+    as a refusal (exit 1, nothing written), which is the truth: it cannot tell."""
+    prefix = f"{old_id}-"
+    with os.scandir(box) as it:
+        return any(e.name.startswith(prefix) and e.name.endswith(".md") for e in it)
 
 
 def _same_inode(path: Path, fd: int) -> bool:
