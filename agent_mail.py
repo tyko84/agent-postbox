@@ -289,15 +289,15 @@ def is_tool_checkout(root: Path) -> bool:
 
 def mailbox_in_tool_checkout(box: Path) -> bool:
     """True when `box` is the spec repo's own docs/agent-mail (the public artifact).
-    A `box` the OS will not look at (too long) is nowhere, so not there either."""
-    resolved = _expand(box).resolve()
+    A `box` the OS will not look at (too long, a symlink loop) is nowhere, so not there either."""
     try:
+        resolved = _expand(box).resolve()   # RuntimeError on a symlink loop (Python < 3.13)
         for parent in [resolved, *resolved.parents]:
             if is_tool_checkout(parent) and (parent / MAILBOX_REL).resolve() == resolved:
                 return True
             if (parent / ".git").exists() and parent != resolved:
                 break
-    except (OSError, ValueError):
+    except (OSError, ValueError, RuntimeError):
         return False
     return False
 
