@@ -16,19 +16,22 @@ def hook(box, who):
     r = subprocess.run([sys.executable, f"{repo}/hooks/agent_mail_check.py"], input="{}", capture_output=True, text=True, env=env, cwd=box)
     return r.stdout
 for who in ("collaborator", "codex-coordinator"):
-    box = tempfile.mkdtemp() + "/box"; os.mkdir(box)
+    box = tempfile.mkdtemp() + "/box"
+    os.mkdir(box)
     shutil.copy(f"{source}/PARTICIPANTS.md", box)
     total = acks = ackbytes = peak = 0
     for p in files:
         shutil.copy(p, box)
         out = hook(box, who)
-        total += len(out.encode()); peak = max(peak, len(out.encode()))
+        total += len(out.encode())
+        peak = max(peak, len(out.encode()))
         # ids listed as non-owed messages this prompt
         blocks = re.findall(r"^  (NOTICE|ANSWER|DISPUTE) from .*\n    .*\n    id: (\w+)", out, re.M)
-        for typ, mid in blocks:
+        for _typ, mid in blocks:
             cmd = f'python3 "{repo}/agent_mail.py" send --type NOTICE --from {who} --to {who} --reply-to {mid} --subject "ack {mid}" --body "processed"'
             env = dict(os.environ, AGENT_MAIL_DIR=box)
             r = subprocess.run(cmd, shell=True, capture_output=True, text=True, env=env, cwd=box)
             if r.returncode == 0:
-                acks += 1; ackbytes += len(cmd.encode()) + len(r.stdout.encode())
+                acks += 1
+                ackbytes += len(cmd.encode()) + len(r.stdout.encode())
     print(f"{who}: hook total {total} B over {len(files)} prompts (largest {peak}); acks filed {acks}; ack command+reply bytes {ackbytes}")
