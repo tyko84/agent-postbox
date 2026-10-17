@@ -525,6 +525,26 @@ def ident_rows(st: dict, reason: str) -> list[dict]:
     return [r for r in st.get("identity", {}).get("attention", []) if r["reason"] == reason]
 
 
+def windows_installer_probe(root: Path) -> None:
+    """On Windows a program is looked up in the current directory first."""
+    if os.name != "nt":
+        print("  SKIP  installer ignores a python3.exe in the current directory (Windows only)")
+        return
+    print("the installer does not run a program planted in the current directory")
+    hostile = root / "hostile_cwd"
+    hostile.mkdir()
+    sysdir = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32"
+    for name in ("python3.exe", "python.exe"):
+        (hostile / name).write_bytes((sysdir / "whoami.exe").read_bytes())   # runs, prints no version
+    env = {k: v for k, v in os.environ.items() if k.upper() != "NODEFAULTCURRENTDIRECTORYINEXEPATH"}
+    probe = f"import sys; sys.path.insert(0, {str(HERE)!r}); import install; print(install.hook_python_cmd())"
+    cp = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, timeout=120,
+                        env=env, cwd=hostile)
+    out = cp.stdout + cp.stderr
+    check("the planted python3.exe/python.exe is not started as the hook interpreter probe",
+          "cannot determine version" not in out, out[:300])
+
+
 def identity_binding(root: Path) -> None:
     print("Unix-user identity binding (PROTOCOL.md section 40): opt-in, observed owner vs "
           "self-declared sender")
@@ -1582,6 +1602,7 @@ def main() -> int:
                   "selftest.py covers the gone reader on Windows)")
         else:
             reader_goes_away(root)
+        windows_installer_probe(root)
 
     faulthandler.cancel_dump_traceback_later()
     if FAILS:
