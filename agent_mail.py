@@ -2934,6 +2934,25 @@ def cmd_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def _unlistable(box: Path) -> str:
+    """Why this user cannot list ``box`` ("" when it can, or when it is simply missing).
+    The one test for "unreadable" (PROTOCOL.md section 15): it tries the listing, so it
+    agrees with what a read will do, which a mode check (ACLs, network mounts) may not.
+
+    A send that must read the mailbox before it writes (a scoped CLAIM looking for a
+    rival, a --supersedes looking for its target) cannot tell "nobody holds it" from "I
+    cannot look" through load_messages, which reads an unlistable directory as empty.
+    """
+    try:
+        with os.scandir(box) as it:
+            next(it, None)
+    except (FileNotFoundError, NotADirectoryError):
+        return ""
+    except OSError as exc:
+        return f"{exc.strerror or exc} ({errno.errorcode.get(exc.errno or 0, 'OSError')})"
+    return ""
+
+
 def cmd_inbox(args: argparse.Namespace) -> int:
     """Actionable view: open / blocked / held / owed-to-me. Forensic list stays."""
     box = mail_dir()
@@ -2947,6 +2966,16 @@ def cmd_inbox(args: argparse.Namespace) -> int:
     if err:
         print(err, file=sys.stderr)
         return 2
+    if args.exit_code:
+        # load_messages reads a directory this user cannot list as empty, which here would
+        # answer "nothing owed" (0): the one answer a scheduler must never get by mistake.
+        why = _unlistable(box)
+        if why:
+            print(f"UNREADABLE MAILBOX at {box}", file=sys.stderr)
+            print(f"hint: this user cannot list that directory ({why}), so mail in it cannot be "
+                  "read or delivered; fix the permissions (e.g. chmod u+rwx), then retry",
+                  file=sys.stderr)
+            return 2
     aliases = load_aliases()   # before any output: an unreadable file refuses
     if not v.json:
         print(f"# inbox: {identity}  mailbox: {box}  ({mailbox_source()})")
@@ -2969,12 +2998,19 @@ def cmd_inbox(args: argparse.Namespace) -> int:
     else:
         _print_omitted(matched, len(rows), v.limit)
         _print_rows(rows, everything, now=v.now)
+    if args.exit_code and any(
+            m.type == "ASK" and match_identity(m.to, identity, aliases=aliases)
+            and owes_reply(m, everything, idx) for m in everything):
+        # The pickup hook's own question (open_asks, section 29), not the view's: a filter,
+        # --limit, or a superseded-but-unanswered ASK must never turn "owed" into 0.
+        return EXIT_OWED   # known work wins over a quarantined file: act, the REJECT is on stderr
     if rejects:
         return 2
     return 0
 
 
 
+EXIT_OWED = 10   # `inbox --exit-code`: an ASK still owes a reply (PROTOCOL.md section 37)
 CANARY_SUBJECT_PREFIX = "PICKUP-CANARY"
 CANARY_DEFAULT_HOURS = 24
 
@@ -4450,6 +4486,11 @@ def _run(argv: list[str] | None) -> int:
         epilog=_VIEW_EPILOG, formatter_class=raw)
     ib.add_argument("--to", default="", metavar="IDENTITY",
                     help="identity whose inbox to show (default: $AGENT_MAIL_IDENTITY)")
+    ib.add_argument("--exit-code", action="store_true",
+                    help="for schedulers and hooks: exit 10 when this identity owes a reply to any "
+                         "ASK in the mailbox (filters and --limit do not matter), 0 when none, "
+                         "2 when that cannot be known: no identity, mailbox missing or "
+                         "unreadable, or a file quarantined (output is unchanged)")
     _add_view_args(ib, to_inbox=True)
     ib.set_defaults(func=cmd_inbox)
 

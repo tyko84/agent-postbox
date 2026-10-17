@@ -1616,7 +1616,25 @@ the header line and precedes the rows:
 
 It is on stdout, because a caller that keeps only stdout must still learn
 that the listing is partial, and it starts with `#` like the header line.
-When nothing was left out the line is absent.
+When nothing was left out the line is absent. When some of the left-out rows are
+ASKs that still owe a reply, a second `#` line follows it (`# 3 of them owe a
+reply: inbox --to bob --type ASK lists them`; `rerun without --limit` for
+`list`), and `--json` carries the count as `truncated_owed`.
+
+**`inbox --exit-code`.** For a scheduler or hook that must decide, from a
+status alone and without a model, whether to act. Output is unchanged. The
+exit status is **10** when the identity owes a reply to any ASK addressed to it
+(aliases included; `owes_reply` true, so an ASK that was superseded but never
+answered still counts, as it does for the pickup hook), **0** when it owes none,
+and **2** when the answer cannot be known: no identity, a missing mailbox
+(`NO MAILBOX`), an unreadable one (`UNREADABLE MAILBOX`), or a quarantined file
+(`REJECT` on stderr) with nothing known to be owed. It is the identity's whole
+mailbox that is asked, not the rows the view selects: `--type`, `--status`,
+`--limit` and the other filters shape the printed listing and never the exit
+status. An owed ASK found beside a quarantined file is still 10: known work
+wins, and the `REJECT` line stays on stderr. It reads and writes nothing. Without the flag, `inbox`
+keeps its exit statuses (0, or 2 when a file was quarantined). Whether acting
+on 10 starts a model turn is the host's business (docs/adapter-contract.md).
 
 **`--now ISO`.** `list`, `inbox` and `show --json` derive statuses, `--live`
 and the inbox at this instant instead of the clock, as `status --now` does
