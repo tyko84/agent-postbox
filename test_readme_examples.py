@@ -169,6 +169,26 @@ class ReadmeExamples(unittest.TestCase):
             listed = run(str(tool), "list")
             self.assertIn("kept", listed.stdout)                                # message kept
 
+    def test_first_doctor_exit_status_matches_the_walkthrough(self) -> None:
+        """The first `doctor` on a fresh install exits 0 and says UNVERIFIED; no page may
+        describe that first run as an exit 2."""
+        with tempfile.TemporaryDirectory() as tmp:
+            proj = Path(tmp) / "proj"
+            proj.mkdir()
+            env = {k: v for k, v in os.environ.items() if not k.startswith("AGENT_MAIL")}
+            env["HOME"] = tmp
+            subprocess.run(["git", "init", "-q", str(proj)], check=True, env=env)
+            inst = subprocess.run([sys.executable, str(ROOT / "install.py"), "."], cwd=proj,
+                                  env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            self.assertEqual(inst.returncode, 0, inst.stdout)
+            doc = subprocess.run([sys.executable, "tools/agent-postbox/agent_mail.py", "doctor"],
+                                 cwd=proj, env=env, text=True, stdout=subprocess.PIPE,
+                                 stderr=subprocess.STDOUT)
+            self.assertEqual(doc.returncode, 0, doc.stdout)
+            self.assertIn("canary: UNVERIFIED", doc.stdout)
+        page = (ROOT / "docs" / "onboarding-first-exchange.md").read_text(encoding="utf-8")
+        self.assertNotIn("`doctor` (exit 2), `canary`", page)
+
     def test_positive_control_failing_example_is_caught(self) -> None:
         self.assertNotEqual(run_blocks(["false"]).returncode, 0)
         bad = run_blocks([
