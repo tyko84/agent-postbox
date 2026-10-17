@@ -1,4 +1,14 @@
-import glob, os, re, shutil, subprocess, sys, tempfile
+"""Replay a mailbox through a pickup hook that hides acknowledged messages (docs/ack-delivery-design.md).
+
+usage: replay_ack.py <checkout with the prototype patch applied> <mailbox dir>. Stdlib only. Bytes, not tokens."""
+
+import glob
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
 repo, source = sys.argv[1], sys.argv[2]
 files = sorted(glob.glob(f"{source}/0*.md"))
 def hook(box, who):
