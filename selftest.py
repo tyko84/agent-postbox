@@ -69,7 +69,7 @@ def iso(days: int) -> str:
 
 def main() -> int:
     # The checks print arrows and section signs; a Windows console pipe is not UTF-8.
-    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
     with tempfile.TemporaryDirectory() as tmp:
         box = Path(tmp) / "mail"
         box.mkdir()

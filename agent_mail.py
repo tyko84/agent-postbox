@@ -1949,7 +1949,7 @@ def _flock(fd: int, shared: bool = False) -> None:
     """Non-blocking lock on ``fd`` that its holder keeps until it closes the
     descriptor. BlockingIOError when another process holds it; any other OSError
     when the filesystem refuses locking altogether."""
-    if not _WIN:
+    if sys.platform != "win32":
         import fcntl
         fcntl.flock(fd, (fcntl.LOCK_SH if shared else fcntl.LOCK_EX) | fcntl.LOCK_NB)
         return
@@ -1971,7 +1971,7 @@ def _flock(fd: int, shared: bool = False) -> None:
 
 
 def _pread(fd: int, n: int, offset: int) -> bytes:
-    if not _WIN:
+    if sys.platform != "win32":
         return os.pread(fd, n, offset)
     here = os.lseek(fd, 0, os.SEEK_CUR)
     try:
@@ -1983,7 +1983,7 @@ def _pread(fd: int, n: int, offset: int) -> bytes:
 
 def _open(path: Any, flags: int, mode: int = 0o644) -> int:
     """``os.open``; on Windows with FILE_SHARE_DELETE added to the share mode."""
-    if not _WIN:
+    if sys.platform != "win32":
         return os.open(path, flags, mode)
     import ctypes
     import msvcrt
@@ -2027,7 +2027,7 @@ def _replace_held(fd: int, src: Path, dst: Path) -> None:
     over a name whatever has it open; Windows only does when asked for POSIX
     semantics, which needs the handle (opened by ``_open``, so it can be
     renamed) and Windows 10 1809 or later."""
-    if not _WIN:
+    if sys.platform != "win32":
         os.replace(src, dst)
         return
     import ctypes

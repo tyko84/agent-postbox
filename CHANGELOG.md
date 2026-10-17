@@ -131,6 +131,15 @@ behaviour).
   that lists them. Before, the cut said only how many rows were left out, so a bounded reader could
   not tell it had missed owed work (issue #96). Which rows `--limit` keeps is unchanged (the newest
   N); the hook's rule that an unanswered ASK is never dropped is unchanged.
+- A portability layer so `agent_mail.py` and `install.py` run on native Windows (Python 3.10+). The
+  kernel-held locks of PROTOCOL.md sections 30, 31 and 36 use `msvcrt.locking` on a byte past the end of
+  the file where POSIX uses `flock(2)`; lock and marker files are opened with `FILE_SHARE_DELETE` so a
+  held file can be renamed over or removed as on POSIX; a symlink or junction at a lock or marker name
+  is refused with `ELOOP` (`FILE_FLAG_OPEN_REPARSE_POINT`), a directory with `EISDIR`; a closed stdout
+  pipe is recognised as `EINVAL`/`EPIPE`. POSIX behaviour is unchanged. **Windows is still unsupported
+  in the README**: CI does not run there, identity binding (no uid), `doctor`'s writable probe on an
+  ACL-denied mailbox, FIFOs and signal delivery do not exist or differ, and a real Claude Code hook has
+  not been verified.
 - `doctor` prints `send_permission:` for projects with a `.claude/` directory (PROTOCOL.md
   section 41): which `permissions.allow` rules it can see, whether each spelling Postbox
   prints has an identical rule, the exact rules to add if none does, and that a `#` line
