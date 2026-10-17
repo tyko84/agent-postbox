@@ -48,6 +48,14 @@ INSTALL = HERE / "install.py"
 HOSTS_DOC = HERE / "docs" / "hosts.md"
 TIMEOUT = 120
 
+# The installer deliberately probes the portable command it will commit.  This
+# test process may itself be newer than the system `python3` (as on macOS), so
+# supply a test-only portable `python3` that invokes the current interpreter.
+TEST_PYTHON_BIN = Path(tempfile.mkdtemp(prefix="test-adapters-python-"))
+TEST_PYTHON = TEST_PYTHON_BIN / "python3"
+TEST_PYTHON.write_text(f"#!/bin/sh\nexec {sys.executable!r} \"$@\"\n", encoding="utf-8")
+TEST_PYTHON.chmod(0o755)
+
 # The UserPromptSubmit handler of the documented `hooks.json` example, copied from
 # https://learn.chatgpt.com/docs/hooks ("Config shape"), read 2026-10-12.
 CODEX_DOC_CONFIG: dict[str, Any] = {
@@ -93,6 +101,8 @@ CODEX_COMMAND_SHAPE = '"$1" "$2" || true'
 def clean_env(**extra: str) -> dict[str, str]:
     env = {k: v for k, v in os.environ.items() if not k.startswith("AGENT_MAIL")}
     env.update(extra)
+    if "PATH" not in extra:
+        env["PATH"] = f"{TEST_PYTHON_BIN}:{env['PATH']}"
     return env
 
 
@@ -226,9 +236,10 @@ class CodexPickup(unittest.TestCase):
         self.assertEqual(snapshot(), before)
 
 
-def install(project: Path, *args: str) -> subprocess.CompletedProcess[str]:
+def install(project: Path, *args: str, **env: str) -> subprocess.CompletedProcess[str]:
+    install_env = clean_env(**env)
     return subprocess.run([sys.executable, "-I", str(INSTALL), str(project), *args],
-                          capture_output=True, text=True, timeout=TIMEOUT, env=clean_env())
+                          capture_output=True, text=True, timeout=TIMEOUT, env=install_env)
 
 
 def tree(root: Path) -> dict[str, bytes]:
@@ -270,6 +281,34 @@ class CodexInstall(unittest.TestCase):
                                'agent_mail_check.py" || true')
         self.assertTrue((self.project / "tools/agent-postbox/hooks/agent_mail_check.py").is_file())
         self.assertFalse((self.project / ".claude").exists())
+
+    def test_an_old_python3_falls_back_to_a_supported_python_name(self) -> None:
+        bin_dir = self.project / "probe-bin"
+        bin_dir.mkdir()
+        for name, version in (("python3", "3.9"), ("python", "3.13")):
+            probe = bin_dir / name
+            probe.write_text(f"#!/bin/sh\necho {version}\n", encoding="utf-8")
+            probe.chmod(0o755)
+        cp = install(self.project, "--adapter", "codex",
+                     PATH=f"{bin_dir}:{os.environ['PATH']}")
+        self.assertEqual(cp.returncode, 0, cp.stderr)
+        (handler,) = self.handlers()
+        self.assertTrue(handler["command"].startswith("python \"$(git rev-parse"))
+
+    def test_no_supported_portable_interpreter_refuses_before_copying(self) -> None:
+        bin_dir = self.project / "probe-bin"
+        bin_dir.mkdir()
+        for name, version in (("python3", "3.9"), ("python", "2.7")):
+            probe = bin_dir / name
+            probe.write_text(f"#!/bin/sh\necho {version}\n", encoding="utf-8")
+            probe.chmod(0o755)
+        before = tree(self.project)
+        cp = install(self.project, "--adapter", "codex", PATH=str(bin_dir))
+        self.assertEqual(cp.returncode, 2, cp.stdout + cp.stderr)
+        self.assertIn("no Python 3.10+ interpreter on PATH", cp.stderr)
+        self.assertIn("python3: 3.9; python: 2.7", cp.stderr)
+        self.assertTrue(cp.stderr.rstrip().endswith("Nothing was changed."))
+        self.assertEqual(tree(self.project), before)
 
     def test_registering_twice_changes_nothing(self) -> None:
         install(self.project, "--adapter", "codex")
@@ -423,6 +462,17 @@ class CodexInstall(unittest.TestCase):
         self.assertEqual(cp.returncode, 0, cp.stderr)
         self.assertIn(f"  ASK from alice [awaiting your reply]\n    positive control 91c2\n"
                       f"    id: {mid}\n", cp.stdout.decode())
+        # A later PATH change can still make a portable command unavailable;
+        # `|| true` preserves the prompt.  The installer separately refuses an
+        # initially old `python3` and selects a supported `python` when present.
+        bad_bin = self.project / "bad-python-bin"
+        bad_bin.mkdir()
+        bad_python = bad_bin / "python3"
+        bad_python.write_text("#!/bin/sh\nexit 99\n", encoding="utf-8")
+        bad_python.chmod(0o755)
+        shadowed = prompt(AGENT_MAIL_IDENTITY="bob", PATH=f"{bad_bin}:{os.environ['PATH']}")
+        self.assertEqual(shadowed.returncode, 0, shadowed.stderr)
+        self.assertEqual(shadowed.stdout, b"")
         silent = prompt()
         self.assertEqual((silent.returncode, silent.stdout), (0, b""))
         # the tool directory moves: still exit 0, still no stdout, prompt not blocked
