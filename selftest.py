@@ -61,6 +61,8 @@ def iso(days: int) -> str:
 
 
 def main() -> int:
+    # The checks print arrows and section signs; a Windows console pipe is not UTF-8.
+    sys.stdout.reconfigure(encoding="utf-8")
     with tempfile.TemporaryDirectory() as tmp:
         box = Path(tmp) / "mail"
         box.mkdir()
@@ -1097,7 +1099,7 @@ def main() -> int:
 
 
         print("\nscope lock is kernel-held: reclaimed, never broken (PROTOCOL.md §30)")
-        import fcntl
+        import agent_mail
         import hashlib
         import json
         import time
@@ -1128,8 +1130,8 @@ def main() -> int:
         abox, alock = lock_box("live")
         alock.write_text("0\n", encoding="utf-8")
         os.utime(alock, (long_ago, long_ago))
-        holder = os.open(alock, os.O_RDWR)
-        fcntl.flock(holder, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        holder = agent_mail._open(alock, os.O_RDWR)
+        agent_mail._flock(holder)
         rivals = [claim(abox, f"rival-{i}") for i in range(3)]
         check("a lock held by a live process is not broken even when 120 s old: rivals exit 3",
               all(r.returncode == 3 and "being claimed right now" in r.stderr for r in rivals),
@@ -1203,8 +1205,8 @@ def main() -> int:
         # the holder: it keeps flock on the planted marker while retries run.
         kbox, kmark = key_box("live", "flock")
         planted = kmark.read_text(encoding="utf-8")
-        kfd = os.open(kmark, os.O_RDONLY)
-        fcntl.flock(kfd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        kfd = agent_mail._open(kmark, os.O_RDONLY)
+        agent_mail._flock(kfd)
         r, took = keyed(kbox, "--key-wait", "0")
         check("live holder, key wait 0: retry exits 3 'being sent ... retry' and does not take over",
               r.returncode == 3 and "is being sent by another process right now" in r.stderr
@@ -1317,9 +1319,10 @@ def main() -> int:
         print("\nownership, id case and failure reporting at read time (PROTOCOL.md §32)")
 
         def tool(b: Path, *argv: str) -> subprocess.CompletedProcess:
-            env = {**os.environ, "AGENT_MAIL_DIR": str(b)}
+            # A Windows pipe is not UTF-8 unless asked; these checks read non-ASCII text.
+            env = {**os.environ, "AGENT_MAIL_DIR": str(b), "PYTHONIOENCODING": "utf-8"}
             return subprocess.run([sys.executable, str(HERE / "agent_mail.py"), *argv],
-                                  capture_output=True, text=True, env=env)
+                                  capture_output=True, text=True, encoding="utf-8", env=env)
 
         def new_id(r: subprocess.CompletedProcess) -> str:
             return next((ln.split(": ", 1)[1] for ln in r.stdout.splitlines()
@@ -1406,7 +1409,9 @@ def main() -> int:
               repr((r.returncode, r.stderr)))
 
         # (d) a send that cannot write says so in one line and leaves nothing
-        if os.geteuid() == 0:
+        if not hasattr(os, "geteuid"):
+            skip("unwritable mailbox: one line, exit 1, nothing left", "no POSIX permission bits")
+        elif os.geteuid() == 0:
             skip("unwritable mailbox: one line, exit 1, nothing left", "running as root")
         else:
             wbox = Path(tmp) / "readonly"
@@ -1489,10 +1494,10 @@ def main() -> int:
               f"subject: void\nsupersedes: {lease}\n---\n\nb\n", old=False)
         send(gbox, "--type", "ANSWER", "--from", "bob", "--to", "alice", "--subject", "typo", "--body", "b",
              "--reply-to", "01ARZ3NDEKTSV4RRFFQ69GN0NE")
-        fd_lock = os.open(held_lock, os.O_RDWR)
-        fcntl.flock(fd_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        fd_mark = os.open(held_mark, os.O_RDWR)
-        fcntl.flock(fd_mark, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fd_lock = agent_mail._open(held_lock, os.O_RDWR)
+        agent_mail._flock(fd_lock)
+        fd_mark = agent_mail._open(held_mark, os.O_RDWR)
+        agent_mail._flock(fd_mark)
         before_snap = snapshot(gbox)
         st = status_json(gbox)
         check("status --json wrote nothing: every file, mtime and hash unchanged, nothing created",
@@ -1977,18 +1982,22 @@ def main() -> int:
         a_sym = box36("a-symlink")
         outside = root36 / "outside-the-mailbox.txt"
         outside.write_text("precious bytes\n", encoding="utf-8")
-        os.symlink(outside, a_sym / LOCK36)
-        r = claim36(a_sym, "alice")
-        check("a symbolic link at the scope lock name is not followed: its target keeps every byte",
-              outside.read_text(encoding="utf-8") == "precious bytes\n",
-              repr(outside.read_text(encoding="utf-8")))
-        check("...the claim fails with the one line of §32 naming ELOOP, exit 1",
-              r.returncode == 1 and r.stdout == "" and len(r.stderr.strip().splitlines()) == 1
-              and r.stderr.startswith("send failed: cannot write to the mailbox: ")
-              and "(ELOOP); nothing written" in r.stderr, f"rc={r.returncode} {r.stdout!r} {r.stderr!r}")
-        check("...no claim is written and the link itself is left for the operator",
-              mails36(a_sym) == [] and os.path.islink(a_sym / LOCK36) and hidden36(a_sym) == [LOCK36],
-              str(sorted(p.name for p in a_sym.iterdir())))
+        if os.name == "nt":
+            skip("a symbolic link at the scope lock name is not followed",
+                 "Windows opens without O_NOFOLLOW; creating a link needs a privilege")
+        else:
+            os.symlink(outside, a_sym / LOCK36)
+            r = claim36(a_sym, "alice")
+            check("a symbolic link at the scope lock name is not followed: its target keeps every byte",
+                  outside.read_text(encoding="utf-8") == "precious bytes\n",
+                  repr(outside.read_text(encoding="utf-8")))
+            check("...the claim fails with the one line of §32 naming ELOOP, exit 1",
+                  r.returncode == 1 and r.stdout == "" and len(r.stderr.strip().splitlines()) == 1
+                  and r.stderr.startswith("send failed: cannot write to the mailbox: ")
+                  and "(ELOOP); nothing written" in r.stderr, f"rc={r.returncode} {r.stdout!r} {r.stderr!r}")
+            check("...no claim is written and the link itself is left for the operator",
+                  mails36(a_sym) == [] and os.path.islink(a_sym / LOCK36) and hidden36(a_sym) == [LOCK36],
+                  str(sorted(p.name for p in a_sym.iterdir())))
         a_hard = box36("a-hardlink")
         other = root36 / "other-name-of-the-lock.txt"
         other.write_text("precious bytes\n", encoding="utf-8")
@@ -2081,23 +2090,27 @@ def main() -> int:
                        "        gate()\n"  # <tag>.go is never created: only the signal ends it
                        "    return real(final, text)\n"
                        "agent_mail._publish = pub")
-        proc, ready, _go = child36(c_term, "c-term", first_parks,
-                                   ["ask", "--from", "alice", "--to", "bob,carol", "--subject", "q",
-                                    "--body", "b"])
-        parked = ready.exists() and proc.poll() is None
-        proc.send_signal(signal36.SIGTERM)
-        try:
-            _out, err = proc.communicate(timeout=120)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            _out, err = proc.communicate(timeout=120)
-        check("SIGTERM while the first of two recipients is being published: exit 143, one line",
-              parked and proc.returncode == 143
-              and err.strip() == "interrupted (SIGTERM); nothing written",
-              f"parked={parked} rc={proc.returncode} {err!r}")
-        check("...and the fan-out stops: no message for either recipient, nothing hidden left",
-              mails36(c_term) == [] and hidden36(c_term) == [],
-              str(sorted(p.name for p in c_term.iterdir())))
+        if os.name == "nt":
+            skip("SIGTERM while the first of two recipients is being published",
+                 "Windows has no SIGTERM delivery: Popen.send_signal kills the process")
+        else:
+            proc, ready, _go = child36(c_term, "c-term", first_parks,
+                                       ["ask", "--from", "alice", "--to", "bob,carol", "--subject", "q",
+                                        "--body", "b"])
+            parked = ready.exists() and proc.poll() is None
+            proc.send_signal(signal36.SIGTERM)
+            try:
+                _out, err = proc.communicate(timeout=120)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                _out, err = proc.communicate(timeout=120)
+            check("SIGTERM while the first of two recipients is being published: exit 143, one line",
+                  parked and proc.returncode == 143
+                  and err.strip() == "interrupted (SIGTERM); nothing written",
+                  f"parked={parked} rc={proc.returncode} {err!r}")
+            check("...and the fan-out stops: no message for either recipient, nothing hidden left",
+                  mails36(c_term) == [] and hidden36(c_term) == [],
+                  str(sorted(p.name for p in c_term.iterdir())))
 
         # (d) a send that needs no other message reads none
         d_box = box36("d-reads")
