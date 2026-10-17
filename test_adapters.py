@@ -1123,7 +1123,7 @@ class PrintedCommandQuoting(unittest.TestCase):
                             capture_output=True, text=True, timeout=TIMEOUT, cwd=tmp.name,
                             env=clean_env(AGENT_MAIL_DIR=str(box), AGENT_MAIL_IDENTITY="bob"))
         self.assertEqual(cp.returncode, 0, cp.stderr)
-        lines = [ln for ln in cp.stdout.splitlines() if ln.startswith(("    read: ", "Reply: "))]
+        lines = [ln for ln in cp.stdout.splitlines() if ln.startswith(("Full text of one: ", "Reply: "))]
         self.assertEqual(len(lines), 2, cp.stdout)
         for ln in lines:
             cmd = ln.split(": ", 1)[1]
@@ -1138,6 +1138,61 @@ class PrintedCommandQuoting(unittest.TestCase):
 
     def test_quote_dollar_and_backtick_in_the_path(self) -> None:
         self.check("it's a \"q\" $HOME `x` dir")
+
+
+class PickupOutputShape(unittest.TestCase):
+    """What the pickup hook puts in front of a model before every prompt (docs/context-cost.md).
+    The text is repeated on every prompt, so it carries each fact once; nothing may go missing."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory(prefix="test-adapters-")
+        self.addCleanup(tmp.cleanup)
+        self.box = Path(tmp.name).resolve() / "mail"
+        self.box.mkdir()
+
+    def hook(self, who: str = "bob") -> str:
+        cp = subprocess.run([sys.executable, "-I", str(HOOK)], capture_output=True, text=True,
+                            timeout=TIMEOUT, cwd=str(self.box),
+                            env=clean_env(AGENT_MAIL_DIR=str(self.box), AGENT_MAIL_IDENTITY=who))
+        self.assertEqual(cp.returncode, 0, cp.stderr)
+        return cp.stdout
+
+    def test_one_show_command_for_any_number_of_messages(self) -> None:
+        ids = [send(self.box, type="NOTICE", **{"from": "alice"}, to="bob", subject=f"finding {i}")
+               for i in range(6)]
+        out = self.hook()
+        self.assertEqual(out.count("Full text of one: "), 1, out)
+        self.assertNotIn("    read: ", out)
+        for i, mid in enumerate(ids):                       # every message is still named, once
+            self.assertEqual(out.count(f"id: {mid}"), 1, out)
+            self.assertIn(f"finding {i}", out)
+
+    def test_reply_template_only_when_a_reply_is_owed(self) -> None:
+        send(self.box, type="NOTICE", **{"from": "alice"}, to="bob", subject="fyi")
+        self.assertNotIn("Reply: ", self.hook())            # nothing to answer, no template
+        ask = send(self.box, type="ASK", **{"from": "alice"}, to="bob", subject="q?")
+        out = self.hook()
+        self.assertEqual(out.count("Reply: "), 1, out)
+        self.assertIn("[awaiting your reply]", out)
+        self.assertIn(f"{ask} from alice", out)             # the owed-reply block still lists it
+
+    def test_the_full_original_is_one_command_away(self) -> None:
+        mid = send(self.box, type="NOTICE", **{"from": "alice"}, to="bob", subject="needs the body")
+        line = next(ln for ln in self.hook().splitlines() if ln.startswith("Full text of one: "))
+        cmd = line.split(": ", 1)[1].replace("<id>", mid)
+        shown = subprocess.run(["/bin/sh", "-c", cmd], capture_output=True, text=True, timeout=TIMEOUT,
+                               env=clean_env(AGENT_MAIL_DIR=str(self.box)))
+        self.assertEqual(shown.returncode, 0, shown.stderr)
+        self.assertIn("needs the body", shown.stdout)
+        self.assertIn("body", shown.stdout.split("---")[-1])   # the body, not only the headers
+
+    def test_an_owed_ask_survives_the_live_cap(self) -> None:
+        ask = send(self.box, type="ASK", **{"from": "alice"}, to="bob", subject="old but owed")
+        for i in range(25):
+            send(self.box, type="NOTICE", **{"from": "carol"}, to="bob", subject=f"noise {i}")
+        out = self.hook()
+        self.assertIn(f"id: {ask}", out)
+        self.assertIn("older live message(s) not listed", out)   # the cap is counted, not silent
 
 
 if __name__ == "__main__":
