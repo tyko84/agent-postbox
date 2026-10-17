@@ -9,6 +9,12 @@ behaviour).
 
 ### Changed
 
+- `doctor` separates installation health from pickup verification (PROTOCOL.md section 20). A mailbox
+  on which no canary was ever filed is healthy but unverified: `canary: UNVERIFIED`, exit 0, final line
+  `PASS (pickup unverified: no canary has been filed)`; it used to end in `FAIL`, exit 2. A canary that
+  was filed and has lapsed still fails (exit 2, `canary: MISSING_OR_STALE`) and now names the lapsed
+  canary and the 24-hour default. A script that treated exit 2 on a fresh mailbox as "not installed"
+  must now look for the `UNVERIFIED` line.
 - `install.py` commits a portable hook command: it probes `python3` then `python` and writes the first
   that is Python 3.10+, never the installer's own path. If none qualifies it refuses before changing
   anything (exit 2). Polling is unchanged and hooks stay optional.

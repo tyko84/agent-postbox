@@ -67,16 +67,15 @@ Everything from here runs in the project root.
 ## 4. File the first canary, then `doctor`
 
 ```sh
-python3 tools/agent-postbox/agent_mail.py doctor    # ends in FAIL, exit 2
+python3 tools/agent-postbox/agent_mail.py doctor    # healthy, "canary: UNVERIFIED", exit 0
 python3 tools/agent-postbox/agent_mail.py canary --from agent-a --to agent-a
 python3 tools/agent-postbox/agent_mail.py doctor    # ends in PASS
 ```
 
-The first `doctor` on a fresh install reports `FAIL: pickup canary missing or
-stale`. Read that as "pickup not yet verified", not "broken": nothing is wrong, no canary has
-been filed yet, and a canary is a real test (file it, then confirm the agent's hook shows it),
-not a box to tick. The canary lasts 24 hours, so a working install fails `doctor` again the next day
-until `canary` is re-run. `doctor` also reports whether the hook is registered
+The first `doctor` on a fresh install is healthy and reports `canary: UNVERIFIED` (exit 0):
+the install is fine, and pickup has not been verified yet. A canary is a real test (file it, then
+confirm the agent's hook shows it), not a box to tick. It lasts 24 hours; after that `doctor`
+reports `canary: MISSING_OR_STALE` and exits 2, naming the lapsed canary, until `canary` is re-run. `doctor` also reports whether the hook is registered
 (`pickup_hook: registered`) and whether `AGENT_MAIL_IDENTITY` is set in the
 shell you ran it from.
 

@@ -164,8 +164,8 @@ export AGENT_MAIL_IDENTITY=agent-a
 
 1. **The chronology** (`list`): five messages, the ASK `answered`, one claim `expired`, two `held`.
 2. **Health** (`doctor`): note `orphan_claims: 1` (the lapsed claim, named by id), the `send_permission`
-   block, and the first-run `FAIL: pickup canary missing or stale` with exit 2. It is not a broken
-   install; file a canary and run it again.
+   block, and `canary: UNVERIFIED` (healthy, exit 0, since no canary was ever filed). To verify
+   pickup, file a canary and run it again.
 3. **Audit reconstruction**: rebuild who held what and when using only `list --json`, `show --json` and
    `status --json`, never the files. Note the two honest gaps it prints.
 4. **Scope view**: `status --scope billing/retry.py`.
@@ -208,10 +208,10 @@ send_permission: claude-code
       Bash(python3 tools/agent-postbox/agent_mail.py *)
       Bash(python3 "<project>/tools/agent-postbox/agent_mail.py" *)
   - bodies: use `--body-file -` with a heredoc for anything longer than one line. Claude Code refuses a command holding a line that starts with `#` inside quotes (a markdown heading in `--body`) even when a rule allows it
-canary: MISSING_OR_STALE
-  - file one with `canary --from <you> --to <you>`, then run doctor again
-FAIL: pickup canary missing or stale
-[exit 2]
+canary: UNVERIFIED
+  - install is healthy; pickup has not been verified: file one with `canary --from <you> --to <you>`, then confirm your agent's hook shows it
+PASS (pickup unverified: no canary has been filed)
+[exit 0]
 $ python3 tools/agent-postbox/agent_mail.py canary --from agent-a --to agent-a
 wrote <project>/docs/agent-mail/01M535AJ091Z6KEVTR0FQFHJ86-pickup-canary-2026-10-16t20-09z.md
 id: 01M535AJ091Z6KEVTR0FQFHJ86
@@ -284,7 +284,7 @@ Next, from the project root (walkthrough: docs/onboarding-first-exchange.md in t
   1. Rename the example rows agent-a / agent-b in docs/agent-mail/PARTICIPANTS.md to your agents' names.
   2. Give each agent its own name in the shell its session starts from (there is no default):  export AGENT_MAIL_IDENTITY=<name>
   3. python3 tools/agent-postbox/agent_mail.py canary --from <name> --to <name>, then python3 tools/agent-postbox/agent_mail.py doctor
-     `doctor` ends in FAIL: pickup canary missing or stale until a canary is filed (and again after 24 h); that is not a broken install.
+     `doctor` on a fresh install is healthy but reports `canary: UNVERIFIED`; file the canary and confirm your agent's hook shows it to verify pickup. A canary lasts 24 h; after that `doctor` says `canary: MISSING_OR_STALE` (exit 2) until you file another.
   Start `claude` from the project root: started in a subdirectory it did not run the hook (Claude Code 2.1.300, headless).
   Commit tools/agent-postbox/ together with .claude/settings.json: a clone or linked worktree that has the setting but not the tool delivers no mail (stderr: can't open file; the prompt still goes through).
 Verify pickup before trusting it -- silence proves nothing (PROTOCOL.md §8). Takes about 20 seconds:
@@ -504,7 +504,7 @@ Removed <the temporary directory>. Run with --keep to look at the files.
 | `python3: command not found` or a license prompt on macOS | no Python, or Xcode license not accepted | `brew install python` or `sudo xcodebuild -license` |
 | `FAILED at step N: ...` | the script found a step that did not behave as described | stop; that is a bug report (CONTRIBUTING.md, field reports), not something to retake around |
 | Step 8 seems to hang | it waits about 4 seconds for a real 3-second lease | leave it; cutting it hides the point |
-| `doctor` ends `FAIL: pickup canary missing or stale` (exit 2) | no canary yet, or older than 24 hours | `agent_mail.py canary --from agent-a --to agent-a`, then `doctor` |
+| `doctor` says `canary: UNVERIFIED` (exit 0), or later ends `FAIL: pickup canary missing or stale` (exit 2) | no canary filed yet (healthy, unverified), or the last one lapsed after 24 hours | `agent_mail.py canary --from agent-a --to agent-a`, then `doctor` |
 | `doctor` says `AGENT_MAIL_IDENTITY: UNSET` | the shell has no identity | `export AGENT_MAIL_IDENTITY=agent-a` |
 | `NO MAILBOX at ...` | you are outside the kept project | `cd` into it, or set `AGENT_MAIL_DIR` |
 | Header shows your home or clone path | the header prints the clone and the temp dir | check it before sharing a screen; clone to a path you are happy to show |
