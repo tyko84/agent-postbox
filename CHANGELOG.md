@@ -114,6 +114,12 @@ behaviour).
 - A plain ANSWER (no `result:`) from someone the ASK was not addressed to is now reported as
   `ANSWER_FROM_THIRD_PARTY` in `status` (PROTOCOL.md section 45). It still closes the ASK, as
   before; it used to do so with no sign anything was unusual.
+- `send --body-file -` (and a body piped with no flag): stdin is now read as bytes and decoded as strict
+  UTF-8 on every platform, as section 38 already said. It was decoded with the stream's own encoding, which
+  on Windows is the ANSI code page: it accepts every byte, so bytes that are not UTF-8 were stored as
+  mojibake instead of being refused (exit 2, one line), and valid UTF-8 text was stored as mojibake too.
+  A C locale on POSIX decodes with surrogateescape and had the same hole. Valid UTF-8, newline
+  translation and the size limit are unchanged, and the caller's `sys.stdin` is left open.
 - `doctor` with a deleted working directory and `AGENT_MAIL_DIR` set now refuses up front (one
   line on stderr, exit 2, nothing on stdout) instead of printing the whole report and then
   aborting at the hook lines with the same refusal.

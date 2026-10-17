@@ -18,6 +18,7 @@ the defect is fixed. None is open at the moment.
 """
 from __future__ import annotations
 
+import argparse
 import contextlib
 import datetime as dt
 import faulthandler
@@ -1684,16 +1685,46 @@ def test_fuzz(root: Path) -> None:
     p = subprocess.run([sys.executable, "-I", TOOL, *send[:-2], "--body-file", "-"], input=b"x\xff",
                        capture_output=True, env={**BASE_ENV, "AGENT_MAIL_DIR": str(box)},
                        timeout=STEP_TIMEOUT)
-    if os.name == "nt":
-        # stdin is decoded with the ANSI code page there, which accepts every byte (and turns
-        # UTF-8 text into mojibake): reported upstream, see the Windows notes. Still no traceback.
-        print("  SKIP  send --body-file - given bytes that are not UTF-8 is refused "
-              "(Windows decodes stdin with the code page)")
-        check("send --body-file - given bytes that are not UTF-8: no traceback",
-              b"Traceback" not in p.stderr, repr(p.stderr[-160:]))
-    else:
-        check("send --body-file - given bytes that are not UTF-8: a refusal, not a traceback",
-              p.returncode == 2 and b"Traceback" not in p.stderr, repr(p.stderr[-160:]))
+    check("send --body-file - given bytes that are not UTF-8: one line, exit 2, no traceback",
+          p.returncode == 2 and b"Traceback" not in p.stderr and p.stdout == b""
+          and p.stderr.startswith(b"cannot read the body from stdin: ")
+          and p.stderr.count(b"\n") == 1, repr(p.stderr[-160:]))
+    base = [sys.executable, "-I", TOOL, *send[:-2]]
+    env = {**BASE_ENV, "AGENT_MAIL_DIR": str(box)}
+    for label, data in (("a truncated sequence", "café".encode()[:-1]),
+                        ("Latin-1 text", "café".encode("latin-1")),
+                        ("an overlong form", b"\xc0\x80")):
+        for how, extra in (("--body-file -", ["--body-file", "-"]), ("piped, no flag", [])):
+            q = subprocess.run(base + extra, input=b"ok " + data, capture_output=True, env=env,
+                               timeout=STEP_TIMEOUT)
+            check(f"stdin holding {label} ({how}) is refused, exit 2, nothing stored",
+                  q.returncode == 2 and q.stderr.startswith(b"cannot read the body from stdin: ")
+                  and b"Traceback" not in q.stderr and q.stdout == b"", repr(q.stderr[-120:]))
+    before = {f for f in box.rglob("*") if f.is_file()}
+    text = "café ☃ \U0001F600\r\nline2\rline3\n"
+    q = subprocess.run(base + ["--body-file", "-"], input=text.encode(), capture_output=True,
+                       env=env, timeout=STEP_TIMEOUT)
+    stored = b"".join(f.read_bytes() for f in box.rglob("*") if f.is_file() and f not in before)
+    check("valid UTF-8 on stdin is stored as the same characters, newlines translated",
+          q.returncode == 0 and "café ☃ \U0001F600\nline2\nline3".encode() in stored,
+          repr((q.returncode, q.stderr[-120:])))
+    # in process: the caller's own stdin is neither closed nor detached afterwards
+    saved = sys.stdin
+    try:
+        for fed in (io.TextIOWrapper(io.BytesIO(b"x\xff"), encoding="latin-1"),
+                    io.TextIOWrapper(io.BytesIO(b"ok"), encoding="latin-1"),
+                    io.StringIO("ok")):
+            sys.stdin = fed
+            ns = argparse.Namespace(body_file="-", body=None)
+            with contextlib.redirect_stderr(io.StringIO()):
+                got = agent_mail.resolve_body(ns)
+            usable = not fed.closed
+            if hasattr(fed, "buffer"):
+                usable = usable and not fed.buffer.closed   # .buffer raises if detached
+            check(f"in-process stdin ({type(fed).__name__}) stays open and attached; got {got!r}",
+                  usable and got in (None, "ok"))
+    finally:
+        sys.stdin = saved
 
 
 def test_participants_not_utf8(root: Path) -> None:
