@@ -12,7 +12,8 @@ python3 tools/agent-postbox/agent_mail.py doctor
 
 | What you see | Why | What to do |
 |---|---|---|
-| `doctor` ends `FAIL: pickup canary missing or stale` (exit 2) | No canary has been filed yet, or the last one is over 24 h old. Not a broken install | `canary --from <you> --to <you>`, then `doctor` again |
+| `doctor` says `canary: UNVERIFIED` (exit 0) | The install is healthy; no canary has been filed, so pickup is unverified | `canary --from <you> --to <you>`, then confirm your agent's hook shows it |
+| `doctor` ends `FAIL: pickup canary missing or stale` (exit 2) | A canary was filed and has lapsed (24 h by default); the line names it. Not a broken install | `canary --from <you> --to <you>`, then `doctor` again |
 | `doctor`: `AGENT_MAIL_IDENTITY: UNSET in this shell` | The adapter prints nothing without an identity, which looks exactly like an empty inbox | `export AGENT_MAIL_IDENTITY=<name>` in the shell the session starts from |
 | `doctor`: `pickup_hook: none registered` | `install.py` ran without `--adapter` | `python3 <clone>/install.py <project> --adapter claude-code` (or `codex`); safe to re-run |
 | `send` prints a usage block ending `the following arguments are required: --from` | `send` always needs `--from`; `AGENT_MAIL_IDENTITY` is read by `inbox` and the adapter only | add `--from <you>` |
