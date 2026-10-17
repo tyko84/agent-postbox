@@ -70,6 +70,7 @@ import difflib  # noqa: E402
 import errno  # noqa: E402
 import re  # noqa: E402
 import hashlib  # noqa: E402
+import io  # noqa: E402
 import json  # noqa: E402
 import stat  # noqa: E402
 import subprocess  # noqa: E402
@@ -1015,6 +1016,28 @@ def actionable(
     return status in ("open", "blocked", "held", "fresh")
 
 
+def _read_stdin_body() -> str:
+    """Read at most MAX_BODY_BYTES + 1 characters of stdin, decoded as strict UTF-8.
+
+    The stream's own encoding is not used: on Windows it is the ANSI code page, which
+    accepts every byte, and on POSIX the C locale decodes with surrogateescape. Newlines
+    are translated as for any text stream. The caller's sys.stdin is left open and
+    attached; a stream with no byte layer (an in-process StringIO) is read as it is.
+    """
+    stream = sys.stdin
+    raw = getattr(stream, "buffer", None)
+    if raw is None:
+        return stream.read(MAX_BODY_BYTES + 1)
+    text = io.TextIOWrapper(raw, encoding="utf-8", errors="strict", newline=None)
+    try:
+        return text.read(MAX_BODY_BYTES + 1)
+    finally:
+        try:
+            text.detach()
+        except ValueError:
+            pass
+
+
 def resolve_body(args: argparse.Namespace) -> str | None:
     """Load the message body without going through a shell.
 
@@ -1031,7 +1054,7 @@ def resolve_body(args: argparse.Namespace) -> str | None:
     if args.body_file:
         if args.body_file == "-":
             try:
-                body = sys.stdin.read(MAX_BODY_BYTES + 1) if sys.stdin is not None else ""
+                body = _read_stdin_body() if sys.stdin is not None else ""
             except (OSError, UnicodeDecodeError) as e:
                 print(f"cannot read the body from stdin: {e}", file=sys.stderr)
                 return None
@@ -1058,7 +1081,7 @@ def resolve_body(args: argparse.Namespace) -> str | None:
         # ``… | agent_mail.py send …`` without inventing a temp file.
         if sys.stdin is not None and not sys.stdin.isatty():
             try:
-                body = sys.stdin.read(MAX_BODY_BYTES + 1)
+                body = _read_stdin_body()
             except (OSError, UnicodeDecodeError) as e:
                 print(f"cannot read the body from stdin: {e}", file=sys.stderr)
                 return None
