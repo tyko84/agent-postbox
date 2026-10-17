@@ -9,6 +9,10 @@ behaviour).
 
 ### Changed
 
+- `install.py` refuses up front on Python older than 3.10 with or without `--adapter` (exit 2,
+  nothing copied), naming the interpreter it ran under and a command to retry with. Before, only
+  `--adapter` refused; a plain install on 3.9 copied files the tool then refused to start from. The
+  README and onboarding quickstart now begin with a `python3 --version` check.
 - `doctor` separates installation health from pickup verification (PROTOCOL.md section 20). A mailbox
   on which no canary was ever filed is healthy but unverified: `canary: UNVERIFIED`, exit 0, final line
   `PASS (pickup unverified: no canary has been filed)`; it used to end in `FAIL`, exit 2. A canary that
