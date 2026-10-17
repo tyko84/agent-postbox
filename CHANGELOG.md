@@ -33,6 +33,10 @@ behaviour).
 
 ### Fixed
 
+- A message file removed between the listing and the read (an operator moving it out while a reader
+  runs) is skipped. It used to be reported as `REJECT ...: unreadable (No such file or directory)`,
+  which made `list`, `inbox` and `doctor` exit 2 for a healthy mailbox. A file that exists but cannot
+  be read is still a REJECT.
 - `send --key` takes over a key marker longer than 4096 bytes instead of refusing it.
 - `send --to <alias>` now warns on stderr when the alias was read from a different PARTICIPANTS.md than
   the mailbox's own registry (a working directory's or a public checkout's example table could fan mail
