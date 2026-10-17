@@ -1,0 +1,32 @@
+--- hooks/agent_mail_check.py	2026-10-17 03:25:45
++++ hooks/agent_mail_check.py	2026-10-17 03:28:06
+@@ -47,6 +47,7 @@
+ from typing import Any
+ 
+ SHOWN = 5          # rows per list; the rest is "+N more"
++MAX_OWED_LISTED = 20  # PROTOTYPE: owed ASKs spelled out per prompt (oldest first)
+ MAX_LIVE = 20      # live messages spelled out per prompt (the newest); the rest is counted
+ MAX_SUBJECT = 500  # what `send` accepts (agent_mail.MAX_SUBJECT_CHARS)
+ MAX_IDENT = 128    # agent_mail.MAX_IDENT_CHARS
+@@ -170,7 +171,10 @@
+         # awaiting your reply: an unanswered ASK is never dropped by the cap. Nothing is hidden
+         # because it was shown before: the hook keeps no state, and a skipped pickup must never
+         # make a message vanish (docs/context-cost.md, "A rejected idea").
+-        listed = [m for i, m in enumerate(mine) if i >= len(mine) - MAX_LIVE or m.id in owed_ids]
++        owed_shown = {m.id for m in owed[:MAX_OWED_LISTED]}
++        listed = [m for i, m in enumerate(mine)
++                  if m.id in owed_shown or (m.id not in owed_ids and i >= len(mine) - MAX_LIVE)]
++        owed_hidden = len(owed) - len(owed_shown)
+         if len(listed) < len(mine):
+             out += [f"  ({len(mine) - len(listed)} older live message(s) not listed; "
+                     f'`{py} {tool} list --to {me} --live` shows them all)', ""]
+@@ -183,6 +187,9 @@
+             ]
+             if m.type == "CLAIM" and m.meta.get("expires"):
+                 out.append(f"    holds until: {_clip(m.meta['expires'], MAX_STAMP)}")
++        if owed_hidden:
++            out += ["", f"+{owed_hidden} more open ASK(s) owed by you are NOT listed above (oldest first shown); "
++                        f"`{py} {tool} inbox --to {me} --type ASK` lists every one"]
+         if listed:
+             out += ["", f"Full text of one: {py} {tool} show <id>"]
+         if owed_ids:
