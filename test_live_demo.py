@@ -128,7 +128,7 @@ class Fixture(unittest.TestCase):
 class Setup(Fixture):
     def test_setup_prints_commands_prompts_and_builds_a_real_project(self) -> None:
         out = self.setup_out
-        for text in (f"cd {self.project}", "export AGENT_MAIL_IDENTITY=alpha",
+        for text in (f"cd {shlex.quote(str(self.project))}", "export AGENT_MAIL_IDENTITY=alpha",
                      "export AGENT_MAIL_IDENTITY=beta", "export PAYMENTS_REGISTRY=",
                      "claude --model haiku", self.mod.PROMPT_A, self.mod.PROMPT_B1,
                      self.mod.PROMPT_B2, "EXPECTED ON SCREEN", "NARRATION", self.live):
@@ -414,6 +414,10 @@ class Check(Fixture):
         self.assertEqual(cp.returncode, 2, cp.stdout)
 
 
+# The stand-in `claude` is a script with a shebang, which Windows cannot launch: a PATH lookup
+# there would find the REAL claude (and spend money). Never run these without a working stub.
+@unittest.skipUnless(os.name == "posix", "the stand-in claude is a shebang script; on Windows a "
+                                         "PATH lookup would reach the real claude")
 class Rehearse(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()

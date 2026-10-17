@@ -60,6 +60,7 @@ def load() -> ModuleType:
 
 
 @unittest.skipUnless(SCRIPT.is_file(), "scripts/e2e_claude.py is not here (an unpacked sdist?)")
+@unittest.skipUnless(os.name == "posix", "scripts/e2e_claude.py is POSIX only (process groups, SIGKILL)")
 class E2EScript(unittest.TestCase):
     mod: ModuleType
 
