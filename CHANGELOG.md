@@ -52,6 +52,10 @@ behaviour).
   network filesystem `os.access` does not see) no longer loads as empty: `Path.glob` swallowed the listing
   error. The load now reports one `REJECT <mailbox>: mailbox cannot be listed (...)` and `list` / `inbox`
   exit 2 on it as for any quarantined file. Follow-up to #94.
+- A message file removed between the listing and the read (an operator moving it out while a reader
+  runs) is skipped. It used to be reported as `REJECT ...: unreadable (No such file or directory)`,
+  which made `list`, `inbox` and `doctor` exit 2 for a healthy mailbox. A file that exists but cannot
+  be read is still a REJECT.
 - `send --key` takes over a key marker longer than 4096 bytes instead of refusing it.
 - `send --to <alias>` now warns on stderr when the alias was read from a different PARTICIPANTS.md than
   the mailbox's own registry (a working directory's or a public checkout's example table could fan mail

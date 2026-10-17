@@ -508,6 +508,9 @@ def _shown(name: str) -> str:
         for ch in name)
 
 
+_VANISHED = "vanished (removed while being read)"
+
+
 def _read_mail_file(path: Path) -> tuple[str | None, str]:
     """Read one mailbox file without trusting it. Returns (text, "") or (None, reason).
 
@@ -518,6 +521,8 @@ def _read_mail_file(path: Path) -> tuple[str | None, str]:
     """
     try:
         st = os.lstat(path)
+    except FileNotFoundError:
+        return None, _VANISHED
     except OSError as e:
         return None, f"unreadable ({e})"
     if stat.S_ISLNK(st.st_mode):
@@ -529,6 +534,8 @@ def _read_mail_file(path: Path) -> tuple[str | None, str]:
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
     try:
         fd = os.open(path, flags)
+    except FileNotFoundError:
+        return None, _VANISHED
     except OSError as e:
         return None, f"unreadable ({e})"
     try:
@@ -599,6 +606,8 @@ def load_messages() -> tuple[list[Message], list[str]]:
         if path.name.lower() in ("readme.md", "participants.md", "protocol.md"):
             continue
         text, why = _read_mail_file(path)
+        if why == _VANISHED:
+            continue  # listed, then removed: it is no longer mail, not an unreadable file
         if text is None:
             rejects.append(f"REJECT {_shown(path.name)}: {why}")
             continue
