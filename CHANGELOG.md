@@ -9,6 +9,11 @@ behaviour).
 
 ### Changed
 
+- `install.py` commits a portable hook command: it probes `python3` then `python` and writes the first
+  that is Python 3.10+, never the installer's own path. If none qualifies it refuses before changing
+  anything (exit 2). Polling is unchanged and hooks stay optional.
+- `install.py` refuses up front when the target directory is not writable, and when its own copy lacks
+  files it installs, instead of failing midway.
 - The pickup hook prints one `Full text of one: ... show <id>` line for the whole list instead of one
   `read:` line per message, and the Reply template only when a reply is owed. Every id, subject and
   owed ASK is still listed; the full message is one `show` away. Measured on a real 31-message task:
@@ -19,6 +24,7 @@ behaviour).
 
 ### Fixed
 
+- `send --key` takes over a key marker longer than 4096 bytes instead of refusing it.
 - `send --to <alias>` now warns on stderr when the alias was read from a different PARTICIPANTS.md than
   the mailbox's own registry (a working directory's or a public checkout's example table could fan mail
   out to names the mailbox never declared). Which table wins, the exit status and the copies filed are

@@ -37,7 +37,10 @@ benefit: see [Evidence](#evidence) for what was and was not shown.
 * [performance.md](performance.md): latency and memory against mailbox size.
 * [context-cost.md](context-cost.md): how much text the pickup hook puts in front of a model (bytes, real input tokens, a replay of a real task), what shipped, what was rejected and why. Scripts and raw token data: [data/context-cost/](data/context-cost/context_cost.py).
 * [coordination-audit.md](coordination-audit.md), [install-audit.md](install-audit.md), [first-use-audit.md](first-use-audit.md): defect hunts and what they found. The second pass, [coordination-audit-2.md](coordination-audit-2.md), checks claims, takeover after a killed holder and audit reconstruction with real processes; its stdlib reconstruction script is in `docs/data/audit-reconstruction/`.
-* [coordination-audit.md](coordination-audit.md), [install-audit.md](install-audit.md), [first-use-audit.md](first-use-audit.md): defect hunts and what they found.
+* [cross-host-scenarios.md](cross-host-scenarios.md): Claude Code and Codex on one mailbox, run with two identities and no model or host; says which steps were not run in a real host.
+* [host-findings-3.md](host-findings-3.md): round 3 on Claude Code 2.1.300, headless only: cases the earlier host pages did not cover.
+* [fault-injection-results.md](fault-injection-results.md): a real `send` killed at every write step, and what was left on disk.
+* [developer-needs.md](developer-needs.md): what public sources show developers running several AI tools want, separated from guesses, and what Postbox may and may not claim.
 * [continuity-audit.md](continuity-audit.md): restarts, participants edits, discovery after renames and moves, kill -9 at random instants and concurrent startup, with real processes: two defects fixed, clean areas and reported gaps.
 * [test-inventory.md](test-inventory.md): every test and CI job with its time and flake findings.
 
@@ -51,11 +54,14 @@ benefit: see [Evidence](#evidence) for what was and was not shown.
 
 * [packaging.md](packaging.md): building and checking the wheel and sdist.
 * [release-process.md](release-process.md): how a release is cut and verified, immutable releases, rollback.
+* [publication-readiness.md](publication-readiness.md): a read-only check of what a first PyPI release would ship and the owner-only steps; nothing uploaded.
 * [pypi-publishing.md](pypi-publishing.md): the project is **not on PyPI**; the checks done, the blockers and the owner's numbered checklist. Nothing in it has been carried out.
 
 ## Adoption and contributing
 
 * [adoption/](adoption/why-postbox.md): [why-postbox.md](adoption/why-postbox.md) (what it is and is not), [invite-five.md](adoption/invite-five.md) (the private five-tester beta), [trial-log.md](adoption/trial-log.md), [feedback-process.md](adoption/feedback-process.md), [launch-drafts.md](adoption/launch-drafts.md) (not posted), [communities.md](adoption/communities.md).
+* [demo-script.md](demo-script.md): a scripted claim, expiry, takeover and audit walkthrough with output from real runs (no model, no recording).
+* [adoption/beta-measurements.md](adoption/beta-measurements.md) and [adoption/feedback-questionnaire.md](adoption/feedback-questionnaire.md): what a beta would measure and the questions testers answer; no beta has run.
 * [liveness-design-note.md](liveness-design-note.md): why there is no "holder is dead" signal and what would change that (decision: not built).
 * [issues-to-open.md](issues-to-open.md): starter issues drafted for the tracker.
 * [../CONTRIBUTING.md](../CONTRIBUTING.md): field-report walkthrough and the checks a change must pass.
