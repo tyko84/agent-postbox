@@ -950,7 +950,10 @@ of the old format ignore the third line.
    anything, and the only one that can still double-publish (see Assumed). An
    unreadable marker is one being written in place by a sender without the
    atomic reserve of step 1, so it is polled for at least one second whatever
-   the key wait.
+   the key wait. "The marker that was observed" is its first 4096 bytes, the
+   most a retry reads; a hand-written marker longer than that used to compare
+   unequal to its own head, was never removed, and refused the key (exit 3) for
+   good. It is now taken over like a shorter one.
 5. Release. Published: close the descriptor; the marker stays and now guards a
    real message. Gave up (refused, failed, interrupted): unlink the marker
    only if the name still names the inode this send locked, then close. A send

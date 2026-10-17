@@ -192,6 +192,17 @@ def main() -> int:
         check("the takeover left a locked-format marker and no takeover mutex",
               (box / f".idem.{h}").read_text().split("\n")[2] == "flock"
               and not (box / f".idem.{h}.takeover").exists(), (box / f".idem.{h}").read_text())
+        for junk_size in (100, 4096, 4097, 200_000):   # only a hand-written marker is ever this long
+            hj = hashlib.sha256(f"a\0b\0junk{junk_size}".encode()).hexdigest()[:24]
+            (box / f".idem.{hj}").write_bytes(b"J" * junk_size)
+            tj = time.monotonic()
+            rj = run(box, "send", "--type", "NOTICE", "--from", "a", "--to", "b", "--subject", "j",
+                     "--body", "jb", "--key", f"junk{junk_size}", "--key-wait", "1")
+            tj = time.monotonic() - tj
+            check(f"an unreadable marker of {junk_size} bytes is taken over after the wait "
+                  f"(a marker longer than the 4096 bytes read could never be)",
+                  rj.returncode == 0 and "wrote" in rj.stdout and tj < 20
+                  and not (box / f".idem.{hj}.takeover").exists(), f"{rj.returncode} {tj:.1f}s {rj.stderr}")
         s1 = send(box, "carol", "--expires", soon(1), "--scope", "file:s.py", kind="CLAIM")
         s2 = send(box, "dave", "--expires", soon(1), "--scope", "file:s.py", "--key", "kk",
                   kind="CLAIM")
