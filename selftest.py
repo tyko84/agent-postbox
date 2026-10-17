@@ -2221,7 +2221,8 @@ def main() -> int:
             "filters": {"from": None, "live": False, "scope": None, "since": None,
                         "status": None, "to": "bob", "type": None},
             "limit": 2, "mailbox": str(box37), "matched": 3, "now": NOW37, "quarantined": 0,
-            "returned": 2, "schema": 1, "total": 5, "truncated": 1, "view": "list",
+            "returned": 2, "schema": 1, "total": 5, "truncated": 1, "owed_truncated": 0,
+            "view": "list",
             "messages": [
                 {"date": "2030-01-01T09:00:00Z", "expires": None, "from": "alice",
                  "id": P37 + "A1", "oversize": [], "owes_reply": False, "reply_to": None,
