@@ -156,7 +156,8 @@ overwrite you. It is not a permission grant (see §0).
 
 * `send --key K` makes a send idempotent per (sender, recipient, key). A retry
   with identical content writes nothing and prints the original id (exit 0).
-  The same key with different content is refused (exit 2). Simultaneous
+  The same key with different content, or to a different recipient, is refused
+  (exit 2, nothing written; section 31). Simultaneous
   retries yield one message. A key reserved by a sender that crashed before
   publishing is taken over after a short wait.
 * A file is **quarantined** — reported by `doctor` and by a `REJECT` line,
@@ -904,6 +905,15 @@ published anyway**, giving two messages for one key. Shortening the wait only
 widens that window; at zero, every pair of simultaneous senders would both
 publish. So the wait is not made the mechanism. Liveness is.
 
+**A key names one recipient.** A keyed send whose key this sender already used for a message to a
+different recipient is refused, exit 2, `already published <id> to '<recipient>', not '<recipient>'`,
+and writes nothing (no message, no marker). The reservation above is per `(sender, recipient, key)`,
+so before this a second recipient was written as a second message and a retry whose `--to` had
+changed was not noticed. The writers of one alias fan-out (§27) are one send: the key is still
+reserved once per writer and a retry of the fan-out is unaffected. Another sender's use of the same
+key text is independent. To keep the cost flat the check reads only the newest 64 messages: an
+original older than that is not found, and the retry is then written as before.
+
 **Rule.** A send that reserves a key holds an exclusive kernel lock
 (`flock(2)`) on its marker from before the marker becomes visible until it has
 published or given up. The kernel drops the lock the instant the holder exits,
@@ -1525,7 +1535,9 @@ rest. `ask` has no `--key`; a repeated `ask` files its ASKs again.
 every message in the mailbox before writing, to look up a `--supersedes`
 target, whether or not one was named. Its cost grew with the mailbox: 0.34 s
 at 10,000 messages and 4.1 s (310 MB) at 100,000, against 0.04 s empty. Rule:
-a send that names neither `--supersedes` nor `--scope` opens no message file.
+a send that names neither `--supersedes`, `--scope` nor `--key` opens no message file. A keyed
+send reads at most the newest 64 messages (§31, "A key names one recipient"), a cost that does not
+grow with the mailbox.
 A `--supersedes` send reads the mailbox once, to find its target; a `--scope`
 claim reads it once while holding the scope lock, to look for a held rival
 (§30 step 3), and that read is what a claim on a large mailbox waits for.

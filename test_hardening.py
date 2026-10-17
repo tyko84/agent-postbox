@@ -1664,6 +1664,56 @@ def main() -> int:
               cp_none.returncode == 1 and "no message with id" in cp_none.stderr
               and "quarantine" not in cp_none.stderr.lower(), cp_none.stderr)
 
+    print("A2b: a keyed send reused for a different recipient is refused and writes nothing")
+    with tempfile.TemporaryDirectory() as tdr:
+        rbox = Path(tdr) / "r"
+        rbox.mkdir()
+
+        def rnames() -> list[str]:
+            return sorted(p.name for p in rbox.iterdir())
+
+        def rsend(to: str, key: str = "KR", sender: str = "bob", subject: str = "rcpt") -> subprocess.CompletedProcess[str]:
+            return run(rbox, "send", "--type", "NOTICE", "--from", sender, "--to", to,
+                       "--subject", subject, "--body", "b", "--key", key)
+
+        rk1 = rsend("alice")
+        kbefore = rnames()
+        rk_same = rsend("alice")
+        rk_diff = rsend("carol")
+        check("control: the identical keyed retry is a duplicate (exit 0) and writes nothing",
+              rk1.returncode == 0 and rk_same.returncode == 0 and "duplicate of" in rk_same.stdout
+              and rnames() == kbefore, rk_same.stdout + rk_same.stderr)
+        check("the same key to a different recipient: exit 2, names both recipients, nothing on stdout",
+              rk_diff.returncode == 2 and rk_diff.stdout == "" and "'alice'" in rk_diff.stderr
+              and "'carol'" in rk_diff.stderr and "Traceback" not in rk_diff.stderr, repr(rk_diff))
+        check("the refused send changed nothing in the mailbox (no message, no marker, no temp file)",
+              rnames() == kbefore, f"{kbefore} -> {rnames()}")
+        rk_case = rsend("ALICE")
+        check("the recipient compares case-insensitively: the same recipient is still a duplicate",
+              rk_case.returncode == 0 and "duplicate of" in rk_case.stdout and rnames() == kbefore,
+              rk_case.stdout + rk_case.stderr)
+        rk_other = rsend("carol", sender="dave")
+        check("another sender may use the same key text for its own message",
+              rk_other.returncode == 0, rk_other.stdout + rk_other.stderr)
+        (rbox / "PARTICIPANTS.md").write_text(
+            "| Identity | can | cannot |\n|---|---|---|\n| `bob` | | |\n| `c1` | | |\n| `c2` | | |\n"
+            "\n## Aliases\n\n| Alias | Writers |\n|---|---|\n| `team` | `c1`, `c2` |\n", encoding="utf-8")
+        kf1 = rsend("team", key="KF", subject="fan")
+        kf2 = rsend("team", key="KF", subject="fan")
+        kcopies = [p for p in rbox.glob("*-fan.md") if "to: c" in p.read_text(encoding="utf-8")]
+        check("control: one keyed alias fan-out files one copy per writer and its retry is a duplicate",
+              kf1.returncode == 0 and kf1.stdout.count("wrote ") == 2 and kf2.returncode == 0
+              and kf2.stdout.count("duplicate of") == 2 and len(kcopies) == 2,
+              kf1.stdout + kf1.stderr + kf2.stdout + kf2.stderr)
+        # documented limit: an original older than the newest 64 messages is not found
+        rsend("alice", key="KOLD", subject="old")
+        for i in range(66):
+            run(rbox, "send", "--type", "NOTICE", "--from", "zed", "--to", "all",
+                "--subject", f"pad{i}", "--body", "b")
+        rk_old = rsend("carol", key="KOLD", subject="old")
+        check("documented limit: an original older than the newest 64 messages is not found (written as kbefore)",
+              rk_old.returncode == 0 and "duplicate of" not in rk_old.stdout, rk_old.stdout + rk_old.stderr)
+
     faulthandler.cancel_dump_traceback_later()
     if FAILS:
         print("\nFAILED:")

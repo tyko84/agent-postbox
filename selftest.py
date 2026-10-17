@@ -2121,8 +2121,10 @@ def main() -> int:
             return proc.returncode, (len(count.read_text()) if count.exists() else 0)
 
         plain36, keyed36 = reads36("d-plain"), reads36("d-keyed", "--key", "k36")
-        check("a plain send and a keyed send open no message file",
-              plain36 == (0, 0) and keyed36 == (0, 0), f"plain={plain36} keyed={keyed36}")
+        check("a plain send opens no message file; a keyed send opens at most the newest "
+              "64 (its reused-for-another-recipient check)",
+              plain36 == (0, 0) and keyed36[0] == 0 and keyed36[1] <= 64,
+              f"plain={plain36} keyed={keyed36}")
         sup = reads36("d-supersedes", "--supersedes", old_id)
         check("control: a --supersedes send does read the mailbox (the counter works), once",
               sup[0] == 0 and sup[1] == 5, repr(sup))
