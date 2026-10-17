@@ -196,8 +196,10 @@ identity that holds a claim sees that block even with no mail addressed to it.
 
 Every `bash runnable` block in this README is executed, in order, in a
 scratch mailbox by `test_readme_examples.py`, so these commands are known to
-work against the code in this checkout. (Shown with the pip-installed command;
-`python3 agent_mail.py` is identical.)
+work against the code in this checkout. (Shown with the pip-installed command. If you
+installed with `install.py` as in the Quickstart, there is no `agent-postbox` command
+(`command not found`): use `python3 tools/agent-postbox/agent_mail.py` from the project
+root in its place; the arguments are identical.)
 
 ```bash runnable
 export AGENT_MAIL_DIR="$PWD/mailbox"      # the shared inbox

@@ -229,6 +229,25 @@ class FirstReaderPath(unittest.TestCase):
             self.assertIn(needle, m.group(0))
 
 
+    def test_installed_copy_is_where_the_readme_says_and_runs(self) -> None:
+        """The CLI section tells an install.py user to run tools/agent-postbox/agent_mail.py
+        in place of the pip-only `agent-postbox` command."""
+        self.assertIn("python3 tools/agent-postbox/agent_mail.py", self.README)
+        self.assertIn("`command not found`", self.README)
+        with tempfile.TemporaryDirectory() as tmp:
+            proj = Path(tmp) / "proj"
+            (proj / ".git").mkdir(parents=True)
+            env = {k: v for k, v in os.environ.items() if not k.startswith("AGENT_MAIL")}
+            env["HOME"] = tmp
+            ins = subprocess.run([sys.executable, "-I", str(ROOT / "install.py"), str(proj)],
+                                 env=env, text=True, capture_output=True, timeout=120)
+            self.assertEqual(ins.returncode, 0, ins.stdout + ins.stderr)
+            cp = subprocess.run([sys.executable, "tools/agent-postbox/agent_mail.py", "--version"],
+                                cwd=proj, env=env, text=True, capture_output=True, timeout=60)
+            self.assertEqual(cp.returncode, 0, cp.stderr)
+            self.assertIn("agent-postbox", cp.stdout)
+
+
 
 if __name__ == "__main__":
     unittest.main()
