@@ -1500,6 +1500,18 @@ def _parse_aliases_text(text: str) -> dict[str, list[str]]:
     return out
 
 
+def _alias_table_source(path: Path | None = None) -> tuple[dict[str, list[str]], Path | None]:
+    """The alias table `load_aliases` uses and the file it came from (None when none declares one)."""
+    paths = [path] if path else participants_paths()
+    for cand in paths:
+        if cand is None or not _is_file(cand):
+            continue
+        parsed = _parse_aliases_text(_read_participants(cand))
+        if parsed:
+            return parsed, cand
+    return {}, None
+
+
 def load_aliases(path: Path | None = None) -> dict[str, list[str]]:
     """Parse Alias → Writers from PARTICIPANTS.md Aliases table (§27).
 
@@ -1510,14 +1522,34 @@ def load_aliases(path: Path | None = None) -> dict[str, list[str]]:
     candidate that exists but is not readable UTF-8 text: guessing "no
     aliases" there would deliver mail for an alias to nobody.
     """
-    paths = [path] if path else participants_paths()
-    for cand in paths:
-        if cand is None or not _is_file(cand):
-            continue
-        parsed = _parse_aliases_text(_read_participants(cand))
-        if parsed:
-            return parsed
-    return {}
+    return _alias_table_source(path)[0]
+
+
+def registry_file() -> Path | None:
+    """The PARTICIPANTS.md that supplies identities and capabilities: the first candidate that
+    exists, which is the file `load_participants` reads (PROTOCOL.md section 49)."""
+    for cand in participants_paths():
+        if _is_file(cand):
+            return cand
+    return None
+
+
+def alias_registry_note(alias: str) -> str | None:
+    """PROTOCOL.md section 49: one stderr line when `alias` was read from a different file than
+    the registry that supplies this mailbox's identities (the fall-through of `load_aliases`
+    can reach the working directory's or the tool's own PARTICIPANTS.md). None otherwise."""
+    table, source = _alias_table_source()
+    registry = registry_file()
+    if alias not in table or source is None or registry is None:
+        return None
+    # Canonical spelling for both (the working directory arrives resolved, AGENT_MAIL_DIR as typed:
+    # on macOS /var/... against /private/var/... would print one file under two names).
+    source, registry = source.resolve(), registry.resolve()
+    if source == registry:
+        return None
+    return (f"warning: alias {alias!r} was read from {source}, but this mailbox's registry is "
+            f"{registry}; the copies go to that table's writers. Declare the alias in the "
+            "mailbox's own PARTICIPANTS.md, or this is the wrong table.")
 
 
 def writers_for(
@@ -2383,6 +2415,8 @@ def cmd_send(args: argparse.Namespace) -> int:
                 return one
             if one != 0:
                 rc = one
+        if (reg_note := alias_registry_note(dest)) is not None:   # section 49
+            print(reg_note, file=sys.stderr)
         return rc
 
 
