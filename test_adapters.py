@@ -1044,8 +1044,16 @@ class InstallNextSteps(unittest.TestCase):
             (project / ".git").mkdir(parents=True)
             cp = install(project)
             self.assertEqual(cp.returncode, 0, cp.stderr)
-            line = next(x for x in cp.stdout.splitlines() if "selftest.py" in x and "&&" in x)
-            self.assertTrue(line.strip().startswith(f"cd '{project}' && "), line)
+            lines = cp.stdout.splitlines()
+            if os.name == "nt":
+                # `&&` and single quotes are not portable across PowerShell 5.1 and cmd.exe: the
+                # installer prints the cd and the command on separate lines there
+                cd = next(i for i, x in enumerate(lines) if x.strip() == f'cd "{project}"')
+                self.assertIn("selftest.py", lines[cd + 1])
+                self.assertIn("$env:AGENT_MAIL_IDENTITY", cp.stdout)   # PowerShell advice, not `export`
+            else:
+                line = next(x for x in lines if "selftest.py" in x and "&&" in x)
+                self.assertTrue(line.strip().startswith(f"cd '{project}' && "), line)
             self.assertIn("AGENT_MAIL_IDENTITY=<name>", cp.stdout)
             self.assertIn("(run from the project root)", cp.stdout)   # the poll hint is relative too
 
