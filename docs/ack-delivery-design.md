@@ -37,7 +37,7 @@ anything. Only a file the recipient wrote does, and the file is permanent.
 
 Prototype: a small change to `hooks/agent_mail_check.py`
 ([patch](data/context-cost/ack-pickup-prototype.patch), applied nowhere). Tests:
-[test_ack_pickup.py](data/context-cost/test_ack_pickup.py) (15 checks, all pass against the patched hook):
+[test_ack_pickup.py](data/context-cost/test_ack_pickup.py) (16 checks, all pass against the patched hook):
 unacknowledged mail listed; replay gives identical output; a bare note, a different identity's ack and an
 ack citing nothing hide nothing; a self-ack with `result:` hides it and the "not listed" line appears,
 including when nothing else is live; a retried keyed ack writes nothing new; `list --live` and `show`
