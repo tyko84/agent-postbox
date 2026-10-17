@@ -1,4 +1,7 @@
-# First exchange in five minutes
+# First exchange
+
+About a minute of machine time (measured below). A person should allow longer: trusting the
+project in your host and getting the identity variable into each session's shell are not measured here.
 
 From nothing to two agents exchanging a message in a project of yours. Every
 command below was run on 2026-10-13 from a fresh copy of the repository in a
@@ -50,9 +53,8 @@ want them.
 
 Everything from here runs in the project root.
 
-1. Open `docs/agent-mail/PARTICIPANTS.md` and rename the example rows
-   `agent-a` and `agent-b` to your agents' names (or keep those names for the
-   trial).
+1. Optional for a trial: the shipped `agent-a` and `agent-b` rows work as they are. To use
+   your own names, open `docs/agent-mail/PARTICIPANTS.md` and rename those two rows.
 2. In the shell each session starts from, one name per agent:
 
    ```sh
@@ -71,8 +73,9 @@ python3 tools/agent-postbox/agent_mail.py doctor    # ends in PASS
 ```
 
 The first `doctor` on a fresh install reports `FAIL: pickup canary missing or
-stale`. That is expected: nothing is wrong, no canary has been filed yet. The
-canary lasts 24 hours, so a working install fails `doctor` again the next day
+stale`. Read that as "pickup not yet verified", not "broken": nothing is wrong, no canary has
+been filed yet, and a canary is a real test (file it, then confirm the agent's hook shows it),
+not a box to tick. The canary lasts 24 hours, so a working install fails `doctor` again the next day
 until `canary` is re-run. `doctor` also reports whether the hook is registered
 (`pickup_hook: registered`) and whether `AGENT_MAIL_IDENTITY` is set in the
 shell you ran it from.
