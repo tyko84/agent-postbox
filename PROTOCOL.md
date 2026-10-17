@@ -1662,6 +1662,7 @@ text. Top-level keys, schema 1:
 | `matched` | messages that passed the filters |
 | `returned` | rows in `messages` |
 | `truncated` | `matched - returned`: older rows left out by `--limit` |
+| `owed_truncated` | how many of those left-out rows are ASKs that still owe a reply (`owes_reply` true); 0 without `--limit`. A bounded reader sees from this that it missed owed work. The text view says the same on a second `#` line, with the command that lists them (`inbox --to ME --type ASK` for `inbox`). Added to schema 1, like the `identity` object of `status --json`; a reader that ignores unknown keys is unaffected |
 | `quarantined` | files refused at read (§29); their `REJECT` lines are still on stderr |
 | `messages` | the rows, oldest first |
 
@@ -1742,6 +1743,7 @@ newest two:
   "mailbox": "/srv/mail",
   "matched": 3,
   "now": "2030-01-01T12:00:00Z",
+  "owed_truncated": 0,
   "quarantined": 0,
   "returned": 2,
   "schema": 1,

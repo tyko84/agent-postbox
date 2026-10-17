@@ -48,8 +48,8 @@ NOW = "2030-01-01T12:00:00Z"
 P = "01ARZ3NDEKTSV4RRFFQ69G5F"   # 24 characters; a two-character tail makes an id
 ROW_KEYS = ["date", "expires", "from", "id", "oversize", "owes_reply", "reply_to", "result",
             "scope", "status", "subject", "supersedes", "to", "type"]   # "result": section 39
-TOP_KEYS = ["filters", "limit", "mailbox", "matched", "messages", "now", "quarantined",
-            "returned", "schema", "total", "truncated", "view"]
+TOP_KEYS = ["filters", "limit", "mailbox", "matched", "messages", "now", "owed_truncated",
+            "quarantined", "returned", "schema", "total", "truncated", "view"]
 FILTER_KEYS = ["from", "live", "scope", "since", "status", "to", "type"]
 SHOW_KEYS = ["body_untrusted", "headers", "mailbox", "message", "notice", "now", "quarantined",
              "reason", "result", "schema", "view"]   # "reason", "result": section 39
@@ -642,7 +642,8 @@ def test_views(root: Path) -> None:
         "filters": {"from": None, "live": False, "scope": None, "since": None, "status": None,
                     "to": "bob", "type": None},
         "limit": 2, "mailbox": str(box), "matched": 3, "now": NOW, "quarantined": 0,
-        "returned": 2, "schema": 1, "total": 5, "truncated": 1, "view": "list",
+        "returned": 2, "schema": 1, "total": 5, "truncated": 1, "owed_truncated": 0,
+        "view": "list",
         "messages": [
             {"date": "2030-01-01T09:00:00Z", "expires": None, "from": "alice", "id": ids[1],
              "oversize": [], "owes_reply": False, "reply_to": None, "result": None, "scope": None,
@@ -734,7 +735,8 @@ def test_views(root: Path) -> None:
     d = listing("--limit", "0")
     check("(d) --limit 0: no rows, only the counts",
           r.stdout.splitlines() == [flines[0], "# 5 older message(s) not shown "
-                                               "(--limit 0: the newest 0 of 5)"]
+                                               "(--limit 0: the newest 0 of 5)",
+                                    "# 1 of them owe a reply: rerun without --limit"]
           and d["messages"] == [] and (d["matched"], d["returned"], d["truncated"]) == (5, 0, 5),
           r.stdout)
     d = listing("--to", "bob", "--limit", "1")
@@ -743,7 +745,8 @@ def test_views(root: Path) -> None:
     r = run(box, "inbox", "--to", "bob", "--limit", "0", "--now", NOW)
     check("inbox --limit: the same line, after the inbox header",
           r.returncode == 0 and r.stdout.splitlines()[1:]
-          == ["# 1 older message(s) not shown (--limit 0: the newest 0 of 1)"], r.stdout)
+          == ["# 1 older message(s) not shown (--limit 0: the newest 0 of 1)",
+              "# 1 of them owe a reply: inbox --to bob --type ASK lists them"], r.stdout)
 
     print("\nfilters")
     check("control: with no filter all five are listed and filters says so",
@@ -1187,7 +1190,7 @@ def test_results(root: Path) -> None:
                     k for m in od.get("messages", []) for k in m}
                 nulls = [m.get("result") for m in nd.get("messages", [])]
             check(f"(c) {label}: identical but for the added key(s) {sorted(added)}, which are null",
-                  bool(od) and bool(nd) and strip(nd, tuple(added)) == od and extra == added
+                  bool(od) and bool(nd) and strip(nd, (*added, "owed_truncated")) == od and extra == added
                   and all(v is None for v in nulls) and bool(nulls),
                   repr((sorted(extra), nulls))[:300])
 
@@ -1344,7 +1347,8 @@ def test_reader_gone(root: Path) -> None:
     r = run(box, "list", "--limit", "20")
     whole = run(box, "list")
     check("what --limit is for: 20 rows of a 400-message mailbox are 42 lines, not 801",
-          r.returncode == 0 and len(r.stdout.splitlines()) == 42
+          r.returncode == 0 and len(r.stdout.splitlines()) == 42 + (
+              "owe a reply" in r.stdout)   # the one added line (#96), only when owed rows were cut
           and len(whole.stdout.splitlines()) == 801 and len(r.stdout) * 15 < len(whole.stdout))
 
 
@@ -2262,6 +2266,55 @@ def test_linked_worktree(root: Path) -> None:
           "across" in shared.stdout, shared.stdout)
 
 
+def test_limit_owed(root: Path) -> None:
+    print("\n--limit and owed ASKs (#96): the cut says how many omitted rows owe a reply")
+    box = root / "limit-owed"
+    box.mkdir()
+
+    def send(mtype: str, subject: str, *extra: str) -> None:
+        r = run(box, "send", "--type", mtype, "--from", "alice", "--to", "bob",
+                "--subject", subject, "--body", "x", *extra)
+        assert r.returncode == 0, r.stderr
+
+    for i in range(3):
+        send("ASK", f"owed {i}")
+    for i in range(25):
+        send("NOTICE", f"newer {i}")
+    r = run(box, "inbox", "--to", "bob", "--limit", "5", "--json")
+    d = doc(r)
+    check("inbox --limit 5 hides the 3 oldest owed ASKs and says so in JSON",
+          r.returncode == 0 and d["returned"] == 5 and d["truncated"] == 23
+          and d["owed_truncated"] == 3, repr({k: d.get(k) for k in ("returned", "truncated",
+                                                                    "owed_truncated")}))
+    r = run(box, "inbox", "--to", "bob", "--limit", "5")
+    check("inbox --limit 5 text footer: the omitted rows that owe a reply, and the command to "
+          "list them",
+          "3 of them owe a reply" in r.stdout and "inbox --to bob --type ASK" in r.stdout,
+          r.stdout[:400])
+    r = run(box, "inbox", "--to", "bob", "--type", "ASK", "--json")
+    check("the retrieval command named lists all three owed ASKs",
+          doc(r)["returned"] == 3 and all(m["owes_reply"] for m in doc(r)["messages"]), r.stdout[:300])
+    r = run(box, "inbox", "--to", "bob", "--limit", "26", "--json")
+    d = doc(r)
+    t = run(box, "inbox", "--to", "bob", "--limit", "26").stdout
+    check("a limit that cuts 2 of the 3 owed ASKs says 2 owe a reply",
+          d["truncated"] == 2 and d["owed_truncated"] == 2 and "2 of them owe a reply" in t,
+          r.stdout[:200] + t[:200])
+    r = run(box, "inbox", "--to", "bob", "--json")
+    check("no --limit: truncated 0, owed_truncated 0",
+          doc(r)["truncated"] == 0 and doc(r)["owed_truncated"] == 0, r.stdout[:200])
+    r = run(box, "list", "--to", "bob", "--limit", "5", "--json")
+    check("list --limit carries the same owed count",
+          doc(r)["owed_truncated"] >= 3, r.stdout[:200])
+    # an answered ASK in the omitted rows does not count as owed
+    asks = [m for m in doc(run(box, "inbox", "--to", "bob", "--type", "ASK", "--json"))["messages"]]
+    run(box, "send", "--type", "ANSWER", "--from", "bob", "--to", "alice", "--subject", "re",
+        "--body", "x", "--reply-to", asks[0]["id"])
+    d = doc(run(box, "inbox", "--to", "bob", "--limit", "5", "--json"))
+    check("an ASK that has been answered stops counting as owed in the omitted rows",
+          d["owed_truncated"] == 2, repr(d["owed_truncated"]))
+
+
 def _py310_fromisoformat(text: str) -> dt.datetime:
     """What Python 3.10's `datetime.fromisoformat` accepts, in outline: a fraction of
     exactly 3 or 6 digits, a zone only as +HH:MM[:SS], no comma. Used to emulate 3.10 on
@@ -2405,6 +2458,7 @@ def main() -> int:
         test_empty(root)
         test_unreadable_mailbox(root)
         test_listing_race(root)
+        test_limit_owed(root)
         test_views(root)
         test_results(root)
         test_reader_gone(root)

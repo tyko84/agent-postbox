@@ -82,6 +82,11 @@ behaviour).
 
 ### Added
 
+- `list --json` and `inbox --json` gain `owed_truncated`: how many of the rows `--limit` cut are
+  ASKs that still owe a reply. The text view adds `# N of them owe a reply: ...` naming the command
+  that lists them. Before, the cut said only how many rows were left out, so a bounded reader could
+  not tell it had missed owed work (issue #96). Which rows `--limit` keeps is unchanged (the newest
+  N); the hook's rule that an unanswered ASK is never dropped is unchanged.
 - `doctor` prints `send_permission:` for projects with a `.claude/` directory (PROTOCOL.md
   section 41): which `permissions.allow` rules it can see, whether each spelling Postbox
   prints has an identical rule, the exact rules to add if none does, and that a `#` line
