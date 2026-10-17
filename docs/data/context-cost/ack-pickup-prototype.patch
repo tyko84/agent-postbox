@@ -1,0 +1,42 @@
+diff --git a/hooks/agent_mail_check.py b/hooks/agent_mail_check.py
+index 27ab798..174b8a6 100644
+--- a/hooks/agent_mail_check.py
++++ b/hooks/agent_mail_check.py
+@@ -145,17 +145,26 @@ def main() -> int:
+         owed_ids = {m.id for m in owed}
+         # live() says an ASK is live exactly while it owes a reply; the open set
+         # already answers that, so only the other types ask live() per message.
++        # PROTOTYPE: a non-ASK, non-CLAIM message the identity itself cited in a reply_to is acknowledged
++        # A citing message is an acknowledgment only if it is a real reply (addressed to someone else) or
++        # a self-ack that states an outcome (`result:`). A bare self-addressed note does not hide anything.
++        acked = {(x.reply_to or "").upper() for x in everything
++                 if x.sender == me and x.reply_to and (x.to != me or x.meta.get("result"))}
+         mine = [
+             m for m in everything
+             if m.to == me and m.sender != me
+             and (m.id in owed_ids if m.type == "ASK" else agent_mail.live(m, everything, now=now))
++            and not (m.type in ("NOTICE", "ANSWER", "DISPUTE") and m.id.upper() in acked)
+         ]
++        hidden_acked = sum(1 for m in everything if m.to == me and m.sender != me
++                           and m.type in ("NOTICE", "ANSWER", "DISPUTE") and m.id.upper() in acked
++                           and agent_mail.live(m, everything, now=now))
+         held: list[str] = []
+         try:  # a failure here must not cost the live mail above it
+             held = holdings(agent_mail, me, everything, owed, agent_mail.mail_dir(), now)
+         except Exception:
+             held = []
+-        if not mine and not held:
++        if not mine and not held and not hidden_acked:
+             return 0
+ 
+         tool = _quoted(str(Path(sys.path[0]) / "agent_mail.py"))
+@@ -183,6 +192,9 @@ def main() -> int:
+             ]
+             if m.type == "CLAIM" and m.meta.get("expires"):
+                 out.append(f"    holds until: {_clip(m.meta['expires'], MAX_STAMP)}")
++        if hidden_acked:
++            out += ["", f"({hidden_acked} message(s) you acknowledged are not listed; "
++                        f"`{py} {tool} list --to {me} --live` shows them)"]
+         if listed:
+             out += ["", f"Full text of one: {py} {tool} show <id>"]
+         if owed_ids:
