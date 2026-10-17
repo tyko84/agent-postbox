@@ -118,7 +118,7 @@ def hand(box: Path, mid_: str, extra: str = "", body: str = "hand body\n",
 #     from agent_mail import main; sys.exit(main())
 # (test_packaging.py pins that text against a real installed wrapper), so the
 # "-c" entry below is that path, available in every CI cell without a build.
-GONE = 128 + signal.SIGPIPE
+GONE = 128 + getattr(signal, "SIGPIPE", 13)
 PIPE_NOW = "2099-01-01T12:00:00Z"      # hand() dates its messages 2099-01-01T00:00:00Z
 BIG_HOOK = 70_000                      # the hook lists at most 20 messages
 BIG = 150_000                          # bytes; more than any pipe buffer holds
