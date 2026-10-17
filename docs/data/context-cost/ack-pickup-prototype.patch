@@ -1,0 +1,32 @@
+diff --git a/hooks/agent_mail_check.py b/hooks/agent_mail_check.py
+index 27ab798..96437e4 100644
+--- a/hooks/agent_mail_check.py
++++ b/hooks/agent_mail_check.py
+@@ -145,11 +145,17 @@ def main() -> int:
+         owed_ids = {m.id for m in owed}
+         # live() says an ASK is live exactly while it owes a reply; the open set
+         # already answers that, so only the other types ask live() per message.
++        # PROTOTYPE: a non-ASK, non-CLAIM message the identity itself cited in a reply_to is acknowledged
++        acked = {(x.reply_to or "").upper() for x in everything if x.sender == me and x.reply_to}
+         mine = [
+             m for m in everything
+             if m.to == me and m.sender != me
+             and (m.id in owed_ids if m.type == "ASK" else agent_mail.live(m, everything, now=now))
++            and not (m.type in ("NOTICE", "ANSWER", "DISPUTE") and m.id.upper() in acked)
+         ]
++        hidden_acked = sum(1 for m in everything if m.to == me and m.sender != me
++                           and m.type in ("NOTICE", "ANSWER", "DISPUTE") and m.id.upper() in acked
++                           and agent_mail.live(m, everything, now=now))
+         held: list[str] = []
+         try:  # a failure here must not cost the live mail above it
+             held = holdings(agent_mail, me, everything, owed, agent_mail.mail_dir(), now)
+@@ -183,6 +189,9 @@ def main() -> int:
+             ]
+             if m.type == "CLAIM" and m.meta.get("expires"):
+                 out.append(f"    holds until: {_clip(m.meta['expires'], MAX_STAMP)}")
++        if hidden_acked:
++            out += ["", f"({hidden_acked} message(s) you acknowledged are not listed; "
++                        f"`{py} {tool} list --to {me} --live` shows them)"]
+         if listed:
+             out += ["", f"Full text of one: {py} {tool} show <id>"]
+         if owed_ids:
