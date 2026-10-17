@@ -60,7 +60,7 @@ Code changes:
   must pass
   (`test_packaging.py` skips, loudly, if the `build` package is unavailable), and so must
   `ruff check .` and
-  `mypy agent_mail.py install.py hooks/agent_mail_check.py check_handoff.py check_publication.py test_publication.py`
+   `mypy agent_mail.py install.py hooks/agent_mail_check.py check_handoff.py check_publication.py test_publication.py scripts/repro_build.py scripts/verify_release.py scripts/scenario.py scripts/team_sim.py stress_test.py test_field.py test_handoff.py test_packaging.py test_readme_examples.py selftest.py test_cli.py test_hardening.py test_adversarial.py test_scenario.py test_team_sim.py test_examples.py examples/two-agents/run.py test_adapters.py scripts/e2e_claude.py test_e2e_script.py`
   (`ci.yml` is the source of truth for what CI runs). The pinned tool versions
   CI uses are in `requirements-dev.txt`:
   `python -m pip install -r requirements-dev.txt`. The tools that build a
