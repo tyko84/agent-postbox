@@ -1714,6 +1714,51 @@ def main() -> int:
         check("documented limit: an original older than the newest 64 messages is not found (written as kbefore)",
               rk_old.returncode == 0 and "duplicate of" not in rk_old.stdout, rk_old.stdout + rk_old.stderr)
 
+    print("A2: a keyed retry whose headers differ is not reported as a duplicate")
+    with tempfile.TemporaryDirectory() as tdk:
+        kbox = Path(tdk) / "k"
+        kbox.mkdir()
+        ask_k = mid(run(kbox, "ask", "--from", "alice", "--to", "bob", "--subject", "q", "--body", "q"))
+        def ans(*extra: str) -> subprocess.CompletedProcess[str]:
+            return run(kbox, "send", "--type", "ANSWER", "--from", "bob", "--to", "alice",
+                       "--subject", "r", "--body", "done", "--key", "K1", *extra)
+        first_k = ans()
+        retry_same = ans()
+        retry_diff = ans("--reply-to", ask_k)
+        n_k = len([m for m in kbox.glob("*.md") if "-r.md" in m.name])
+        owed = run(kbox, "inbox", "--to", "bob").stdout
+        check("control: an identical keyed retry is a duplicate, exit 0",
+              first_k.returncode == 0 and retry_same.returncode == 0
+              and "duplicate of" in retry_same.stdout, retry_same.stdout + retry_same.stderr)
+        check("keyed retry that adds the --reply-to the first try lacked is refused (exit 2), not 'duplicate'",
+              retry_diff.returncode == 2 and "duplicate of" not in retry_diff.stdout
+              and "different" in retry_diff.stderr and "Traceback" not in retry_diff.stderr,
+              f"rc={retry_diff.returncode} {retry_diff.stdout!r} {retry_diff.stderr!r}")
+        check("the refused retry wrote nothing, and the ASK is still open (the caller is told)",
+              n_k == 1 and ask_k in owed, f"n={n_k}")
+        # same reply-to with different case of the id is the same header
+        ans_r = run(kbox, "send", "--type", "ANSWER", "--from", "bob", "--to", "alice", "--subject", "r2",
+                    "--body", "d", "--key", "K2", "--reply-to", ask_k)
+        ans_r2 = run(kbox, "send", "--type", "ANSWER", "--from", "bob", "--to", "alice", "--subject", "r2",
+                     "--body", "d", "--key", "K2", "--reply-to", ask_k.lower())
+        check("control: the same reply-to (id case differs) is still a duplicate",
+              ans_r.returncode == 0 and ans_r2.returncode == 0 and "duplicate of" in ans_r2.stdout,
+              ans_r2.stdout + ans_r2.stderr)
+        for label, hdr in [("--result", ("--result", "pass")), ("--supersedes", ("--supersedes", ask_k))]:
+            cp = run(kbox, "send", "--type", "NOTICE", "--from", "bob", "--to", "all", "--subject", "n" + label,
+                     "--body", "b", "--key", "K" + label)
+            cp2 = run(kbox, "send", "--type", "NOTICE", "--from", "bob", "--to", "all", "--subject", "n" + label,
+                      "--body", "b", "--key", "K" + label, *hdr)
+            check(f"keyed retry that adds {label} is refused, not 'duplicate'",
+                  cp.returncode == 0 and cp2.returncode != 0 and "duplicate of" not in cp2.stdout,
+                  f"{cp2.returncode} {cp2.stdout!r} {cp2.stderr!r}")
+        c1 = run(kbox, "send", "--type", "CLAIM", "--from", "bob", "--to", "all", "--subject", "c",
+                 "--body", "b", "--key", "KS", "--expires", soon(1), "--scope", "file:a.py")
+        c2 = run(kbox, "send", "--type", "CLAIM", "--from", "bob", "--to", "all", "--subject", "c",
+                 "--body", "b", "--key", "KS", "--expires", soon(2), "--scope", "file:a.py")
+        check("control: a claim retried with the same scope (different computed expiry) is a duplicate",
+              c1.returncode == 0 and c2.returncode == 0 and "duplicate of" in c2.stdout, c2.stdout + c2.stderr)
+
     faulthandler.cancel_dump_traceback_later()
     if FAILS:
         print("\nFAILED:")
