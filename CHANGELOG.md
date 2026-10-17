@@ -9,6 +9,10 @@ behaviour).
 
 ### Changed
 
+- The pickup hook prints one fixed line when the mailbox directory exists but this user cannot list
+  it (before, that state was silent and read as an empty inbox, so mail addressed to the identity
+  was lost without a sign). It still exits 0, names no path, message or system error, and a missing,
+  empty or non-directory mailbox stays silent. SECURITY.md is updated.
 - `doctor` separates installation health from pickup verification (PROTOCOL.md section 20). A mailbox
   on which no canary was ever filed is healthy but unverified: `canary: UNVERIFIED`, exit 0, final line
   `PASS (pickup unverified: no canary has been filed)`; it used to end in `FAIL`, exit 2. A canary that
