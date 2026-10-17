@@ -491,6 +491,12 @@ python3 -m pip install ./agent-postbox
 agent-postbox --version
 ```
 
+On Debian and Ubuntu (24.04 observed) and other systems whose `python3` is distribution-managed,
+that `pip install` stops with `error: externally-managed-environment` (PEP 668) and installs
+nothing. Install into a virtual environment instead:
+`python3 -m venv .venv && .venv/bin/python -m pip install ./agent-postbox`, then run
+`.venv/bin/agent-postbox`. Options 2 and 3 below need no pip and are not affected.
+
 The `./` matters: `pip install ./agent-postbox` installs the directory you just
 cloned, while `pip install agent-postbox` would ask PyPI for the unrelated
 distribution of that name. To check what an environment has,

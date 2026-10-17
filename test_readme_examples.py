@@ -218,6 +218,17 @@ class FirstReaderPath(unittest.TestCase):
         self.assertEqual(self.glossary_terms("no glossary here"), set())
 
 
+    def test_pip_option_warns_about_externally_managed_pythons(self) -> None:
+        """`pip install ./clone` on a distribution-managed python3 (PEP 668) installs nothing;
+        the README must say so beside the command and give the venv form."""
+        m = re.search(r"\*\*Option 1: pip.*?\*\*Option 2", self.README, re.S)
+        self.assertIsNotNone(m, "README lost its pip option")
+        assert m is not None
+        for needle in ("externally-managed-environment", "PEP 668", "python3 -m venv",
+                       ".venv/bin/agent-postbox"):
+            self.assertIn(needle, m.group(0))
+
+
 
 if __name__ == "__main__":
     unittest.main()
