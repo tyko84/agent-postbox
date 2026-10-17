@@ -2827,6 +2827,13 @@ def _newest(rows: list[Message], limit: int | None) -> list[Message]:
     return rows[len(rows) - limit:]
 
 
+def _owed_cut(rows: list[Message], shown: int, everything: list[Message], idx: _Index) -> int:
+    """How many of the rows `--limit` cut (the oldest `len(rows) - shown`) are ASKs that
+    still owe a reply: the rows a bounded reader would otherwise not know it missed."""
+    return sum(1 for m in rows[:len(rows) - shown]
+               if m.type == "ASK" and owes_reply(m, everything, idx))
+
+
 def _row_json(m: Message, everything: list[Message], idx: _Index,
               now: dt.datetime) -> dict[str, Any]:
     """One message as the fixed key set of section 37. Never the body."""
@@ -2856,13 +2863,14 @@ def _row_json(m: Message, everything: list[Message], idx: _Index,
 
 def _print_view_json(view: str, box: Path, v: _View, filters: dict[str, Any], total: int,
                      matched: int, rows: list[Message], everything: list[Message],
-                     idx: _Index, quarantined: int) -> None:
+                     idx: _Index, quarantined: int, owed_truncated: int = 0) -> None:
     """One JSON document, counts first and one message per line, so a reader that
     stops early (section 35) has the counts and whole rows."""
     head = {
         "schema": LIST_SCHEMA, "view": view, "mailbox": str(box), "now": _utc_text(v.now),
         "filters": filters, "limit": v.limit, "total": total, "matched": matched,
-        "returned": len(rows), "truncated": matched - len(rows), "quarantined": quarantined,
+        "returned": len(rows), "truncated": matched - len(rows), "owed_truncated": owed_truncated,
+        "quarantined": quarantined,
     }
     print(json.dumps(head, indent=2, sort_keys=True)[:-2] + ",")
     if not rows:
@@ -2877,10 +2885,13 @@ def _print_view_json(view: str, box: Path, v: _View, filters: dict[str, Any], to
     print("}")
 
 
-def _print_omitted(matched: int, shown: int, limit: int | None) -> None:
+def _print_omitted(matched: int, shown: int, limit: int | None, owed: int = 0,
+                   fetch: str = "") -> None:
     if matched > shown:
         print(f"# {matched - shown} older message(s) not shown "
               f"(--limit {limit}: the newest {shown} of {matched})")
+        if owed:
+            print(f"# {owed} of them owe a reply" + (f": {fetch}" if fetch else ""))
 
 
 def _print_rows(rows: list[Message], everything: list[Message],
@@ -2918,16 +2929,18 @@ def cmd_list(args: argparse.Namespace) -> int:
         rows = [m for m in rows if live(m, everything, now=v.now, _idx=idx)]
     rows = _view_filter(rows, everything, idx, v)
     matched = len(rows)
+    full = rows
     rows = _newest(rows, v.limit)
+    cut = _owed_cut(full, len(rows), everything, idx)
     if v.json:
         filters = {"to": args.to.strip().lower() or None,
                    "from": args.sender.strip().lower() or None, "live": bool(args.live),
                    "type": v.types, "status": v.statuses, "scope": v.scope,
                    "since": v.since_text}
         _print_view_json("list", box, v, filters, len(everything), matched, rows, everything,
-                         idx, len(rejects))
+                         idx, len(rejects), cut)
     else:
-        _print_omitted(matched, len(rows), v.limit)
+        _print_omitted(matched, len(rows), v.limit, cut, "rerun without --limit")
         _print_rows(rows, everything, now=v.now)
     if rejects:
         return 2
@@ -2959,15 +2972,18 @@ def cmd_inbox(args: argparse.Namespace) -> int:
             if actionable(m, everything, identity, now=v.now, aliases=aliases, _idx=idx)]
     rows = _view_filter(rows, everything, idx, v)
     matched = len(rows)
+    full = rows
     rows = _newest(rows, v.limit)
+    cut = _owed_cut(full, len(rows), everything, idx)
     if v.json:
         filters = {"to": identity, "from": None, "live": False, "type": v.types,
                    "status": v.statuses or list(ACTIONABLE_STATUSES), "scope": v.scope,
                    "since": v.since_text}
         _print_view_json("inbox", box, v, filters, len(everything), matched, rows, everything,
-                         idx, len(rejects))
+                         idx, len(rejects), cut)
     else:
-        _print_omitted(matched, len(rows), v.limit)
+        _print_omitted(matched, len(rows), v.limit, cut,
+                       f"inbox --to {identity} --type ASK lists them")
         _print_rows(rows, everything, now=v.now)
     if rejects:
         return 2
