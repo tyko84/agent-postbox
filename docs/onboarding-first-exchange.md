@@ -113,7 +113,10 @@ in the hook's output.)
 Without a hook, B polls: `python3 tools/agent-postbox/agent_mail.py list --to agent-b --live`.
 
 A recipient name must match the other agent's identity exactly (`agent-b` is
-not `agent_b`): a mistyped `--to` still prints `wrote ...` and exits 0.
+not `agent_b`): a mistyped `--to` still prints `wrote ...` and exits 0. When the mailbox's
+`PARTICIPANTS.md` has rows, `send` also prints a `warning: --to 'agent_b' is not a row in
+PARTICIPANTS.md ... Did you mean 'agent-b'?` line on stderr (PROTOCOL.md section 41); without
+that table there is no warning.
 
 ## 6. Check that the host really runs the hook
 
