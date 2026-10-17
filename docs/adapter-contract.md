@@ -84,8 +84,14 @@ result, per the host's own findings.
 Verified from the mailbox files and the host's local run records (metadata only): a controlled ASK was
 filed, a heartbeat run began 78 s later, found the ASK itself, and filed a linked ANSWER carrying the
 pre-registered token and count, 10 s after the run began. A six-ASK follow-up passed 6 of 6, but all six
-landed in the last 10 to 16 percent of the host's 330-second tick cycle, so it does **not** show other
-positions; a second run with positions spread across the cycle is recorded separately. `from:` is
+landed in the last 10 to 16 percent of the host's 330-second tick cycle, so it showed nothing about other
+positions. A second six-ASK run, spread across the cycle by logged tick times, passed 5 of 6 under a
+count rule fixed before the results (two replies counted a message another writer filed in between), and
+**one failed**: an ASK filed at 04:52 was never answered, because from 04:54:59 on every tick was one model
+call with no tool call, so the mailbox was never read. The scheduler fired five times and nothing was
+picked up. The ASK stayed open and intact, so it survived, but "a scheduled run happened" and "the mailbox
+was read" are different facts. The period was 330 s in most windows, not all (gaps of 360 and 480 s
+occurred). `from:` is
 self-declared, so the mailbox alone cannot tell the scheduled run from a person; the host's run record is
 what attributes it.
 
