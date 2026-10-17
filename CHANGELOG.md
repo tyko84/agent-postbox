@@ -102,6 +102,10 @@ behaviour).
   the mailbox's own registry (a working directory's or a public checkout's example table could fan mail
   out to names the mailbox never declared). Which table wins, the exit status and the copies filed are
   unchanged (PROTOCOL.md section 49). Found and test-covered by the Codex session.
+- The prompt hook no longer loses every message when one subject is in another alphabet. On Windows a
+  piped stdout is the ANSI code page, so printing a CJK or emoji subject raised, the hook's catch-all
+  swallowed it and the identity saw an empty inbox; such characters are now written as escapes
+  (a no-op on a UTF-8 stdout).
 - A recipient who never writes is no longer invisible: `status` counts a name that has an
   unanswered ASK as old as `--stalled-hours` and never sent a message as `SILENT_RECIPIENT`, and
   `doctor` names it (PROTOCOL.md section 48). `agents` itself is unchanged.
