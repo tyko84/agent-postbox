@@ -50,6 +50,9 @@ Safety rules for a settings merge, in priority order:
      either, `<dest>/hooks`) is refused the same way, with any adapter or none.
   9. A copy of install.py that lacks a file it copies (the script run without its checkout)
      is refused first, naming the files: exit 2, nothing copied.
+  10. A directory the install writes into, or a payload file it would overwrite, that
+      is not writable is refused the same way (exit 2, before anything is copied), so a
+      failure cannot leave the tool installed and the hook not.
 """
 from __future__ import annotations
 
@@ -238,6 +241,30 @@ def path_refusal(project: Path, dest_rel: str, mailbox_rel: str) -> str | None:
             return f"{target} is a symlink leading outside the project; remove it, then re-run"
         if target.is_dir():
             return f"{target} is a directory, and a file belongs there; move it, then re-run"
+    return None
+
+
+def unwritable_refusal(project: Path, dest_rel: str, mailbox_rel: str,
+                       adapter: str | None) -> str | None:
+    """Why the install would stop partway for want of write access, or None. Reads
+    only. Every directory the installer writes into (the nearest existing one, when the
+    path does not exist yet) and every payload file it would overwrite must be writable;
+    otherwise the tool is copied, and the mailbox made, before the config step fails,
+    which leaves the tool installed and the hook not. `os.access` is a hint (it cannot
+    see a read-only mount or an ACL), so `_run` still reports a write that fails anyway."""
+    dest = project / dest_rel
+    wanted = [dest_rel, dest_rel + "/hooks", mailbox_rel]
+    if adapter:
+        wanted.append(HOST_CONFIG[adapter][0])
+    for rel in wanted:
+        here = project / rel
+        while not (here.exists() or here.is_symlink()):
+            here = here.parent
+        if here.is_dir() and not os.access(here, os.W_OK | os.X_OK):
+            return f"{here} is not writable; make it writable, then re-run"
+    for target in [dest / n for n in PAYLOAD] + [dest / "hooks" / HOOK_MARKER]:
+        if target.is_file() and not os.access(target, os.W_OK):
+            return f"{target} is not writable; make it writable, then re-run"
     return None
 
 
@@ -490,7 +517,8 @@ def main() -> int:
     refusal = escaped or path_refusal(
         project, dest_rel, args.mailbox) or (
         codex_refusal(project, dest_rel) if args.adapter == "codex"
-        else claude_refusal(project, dest_rel) if args.adapter == "claude-code" else None)
+        else claude_refusal(project, dest_rel) if args.adapter == "claude-code" else None
+    ) or unwritable_refusal(project, dest_rel, args.mailbox, args.adapter)
     if refusal and not args.check:   # before anything is copied: nothing was changed
         print(f"ABORT: {refusal}. Nothing was changed.", file=sys.stderr)
         return 2

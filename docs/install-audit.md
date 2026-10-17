@@ -69,11 +69,14 @@ python3 -m venv <S>/bvenv
    is kept and a `.bak` is made, so nothing is lost, but a file the user deliberately locked
    gets rewritten. Not changed: refusing would be a behaviour decision (some teams lock the
    file because a tool manages it), and the output names the `.bak`.
-2. **A partial install is possible when a later step cannot write.** The payload is copied and
-   the mailbox created before the config is touched, so with an unwritable `.claude/` the tool
-   is installed and the hook is not. Exit 1 and the message say so and say to re-run; the
-   re-run was verified to finish the job. `claude_refusal` could check writability up front;
-   not done.
+2. **A partial install was possible when a later step could not write (fixed 2026-10-16).**
+   The payload was copied and the mailbox created before the config was touched, so with an
+   unwritable `.claude/` the tool was installed and the hook was not (exit 1, re-run finished
+   the job). The installer now checks write access to every directory it writes into, and to
+   every payload file it would overwrite, before copying anything: exit 2, the directory
+   named, `Nothing was changed.` Regression check: `test_adversarial.py` (install section).
+   `os.access` cannot see a read-only mount or an ACL, so the exit-1 message for a write that
+   fails anyway is kept.
 3. **SIGKILL leaves a temp file.** `write_atomic` unlinks its temp on any exception, but a kill
    cannot run that, so `.claude/.settings.json.<pid>.tmp` (or the `.codex` equivalent) stays,
    with the old file intact. A later install does not sweep it, so `git add .claude` would pick
