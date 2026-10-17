@@ -87,10 +87,7 @@ pre-registered token and count, 10 s after the run began. A six-ASK follow-up pa
 landed in the last 10 to 16 percent of the host's 330-second tick cycle, so it showed nothing about other
 positions. A second six-ASK run, spread across the cycle by logged tick times, passed 5 of 6 under a
 count rule fixed before the results (two replies counted a message another writer filed in between), and
-**one failed**: an ASK filed at 04:52 was never answered, because from 04:54:59 on every tick was one model
-call with no tool call, so the mailbox was never read. The scheduler fired five times and nothing was
-picked up. The ASK stayed open and intact, so it survived, but "a scheduled run happened" and "the mailbox
-was read" are different facts. The period was 330 s in most windows, not all (gaps of 360 and 480 s
+**one missed the deadline**: an ASK filed at 04:52 was answered only at 06:01 (69 minutes). From 04:54:59 on, every tick began and was refused by the host before any model work; the host logged a usage-limit error at each one (13 ticks) and the limit cleared at 05:56. The mailbox was never read in that window, and the first tick after the limit cleared answered the ASK with no change on the Postbox side (no sign of manual intervention was found, which is not proof of none). The ASK stayed open and intact throughout. An earlier version of this page described these ticks as model calls that read nothing; the host's error log shows they were refusals, so that description was wrong. "A scheduled run happened", "the model was available" and "the mailbox was read" are three different facts. The period was 330 s in most windows, not all (gaps of 360 and 480 s
 occurred). `from:` is
 self-declared, so the mailbox alone cannot tell the scheduled run from a person; the host's run record is
 what attributes it.
