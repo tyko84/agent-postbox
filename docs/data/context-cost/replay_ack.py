@@ -28,7 +28,7 @@ for who in ("collaborator", "codex-coordinator"):
         # ids listed as non-owed messages this prompt
         blocks = re.findall(r"^  (NOTICE|ANSWER|DISPUTE) from .*\n    .*\n    id: (\w+)", out, re.M)
         for _typ, mid in blocks:
-            cmd = f'python3 "{repo}/agent_mail.py" send --type NOTICE --from {who} --to {who} --reply-to {mid} --subject "ack {mid}" --body "processed"'
+            cmd = f'python3 "{repo}/agent_mail.py" send --type NOTICE --from {who} --to {who} --reply-to {mid} --result DONE --subject "ack {mid}" --body "processed"'
             env = dict(os.environ, AGENT_MAIL_DIR=box)
             r = subprocess.run(cmd, shell=True, capture_output=True, text=True, env=env, cwd=box)
             if r.returncode == 0:
