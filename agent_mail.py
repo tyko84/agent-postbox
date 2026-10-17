@@ -2000,11 +2000,26 @@ def _open(path: Any, flags: int, mode: int = 0o644) -> int:
     k32.CreateFileW.restype = wintypes.HANDLE
     k32.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
                                 wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
-    handle = k32.CreateFileW(os.fspath(path), access, 0x1 | 0x2 | 0x4, None, disposition, 0x80, None)
+    # FILE_FLAG_OPEN_REPARSE_POINT: a link at the name is opened as the link, never its target
+    handle = k32.CreateFileW(os.fspath(path), access, 0x1 | 0x2 | 0x4, None, disposition,
+                             0x80 | 0x00200000, None)
     if handle in (None, wintypes.HANDLE(-1).value):
         err = ctypes.get_last_error()
         raise ctypes.WinError(err)
-    return msvcrt.open_osfhandle(handle, flags & (os.O_RDONLY | os.O_WRONLY | os.O_RDWR) | os.O_BINARY)
+    fd = msvcrt.open_osfhandle(handle, flags & (os.O_RDONLY | os.O_WRONLY | os.O_RDWR) | os.O_BINARY)
+    # A handle's fstat never says S_IFLNK, but it does carry the reparse-point attribute
+    # (symlinks and junctions): what O_NOFOLLOW answers with ELOOP on POSIX.
+    if getattr(os.fstat(fd), "st_file_attributes", 0) & 0x400:
+        os.close(fd)
+        raise OSError(errno.ELOOP, "Too many levels of symbolic links", os.fspath(path))
+    return fd
+
+
+def _errname(exc: OSError) -> str:
+    """The symbolic name of ``exc``'s errno, as POSIX spells it (Windows names a few
+    of them WSAELOOP, WSAENOTEMPTY and so on)."""
+    name = errno.errorcode.get(exc.errno or 0, "OSError")
+    return name[3:] if name.startswith("WSAE") else name
 
 
 def _replace_held(fd: int, src: Path, dst: Path) -> None:
@@ -2376,11 +2391,17 @@ def _scope_lock(lock: Path) -> int | None:
         # send the lock, and the pid below, to its target (section 36).
         try:
             fd = _open(lock, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o644)
-        except PermissionError:
+        except PermissionError as exc:
             if not _WIN:
                 raise
-            # Windows refuses to open a name whose delete is pending: the holder
-            # is unlinking it right now. That is the orphan case; look again.
+            # Windows also says "access denied" for a link to a directory and for a
+            # directory: those are refusals (what POSIX answers with ELOOP and EISDIR).
+            if os.path.islink(lock):
+                raise OSError(errno.ELOOP, "Too many levels of symbolic links", str(lock)) from exc
+            if os.path.isdir(lock):
+                raise IsADirectoryError(errno.EISDIR, "Is a directory", str(lock)) from exc
+            # Otherwise a name whose delete is pending: the holder is unlinking it
+            # right now. That is the orphan case; look again.
             time.sleep(0.01)
             continue
         try:
@@ -2766,7 +2787,7 @@ def cmd_send(args: argparse.Namespace) -> int:
             box.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
             print(f"send failed: cannot create the mailbox at {box}: {exc.strerror or exc} "
-                  f"({errno.errorcode.get(exc.errno or 0, 'OSError')}); nothing written",
+                  f"({_errname(exc)}); nothing written",
                   file=sys.stderr)
             return 1
     lock = box / f".scope.{hashlib.sha256(scope.encode()).hexdigest()[:24]}.lock"
@@ -2904,7 +2925,7 @@ def cmd_send(args: argparse.Namespace) -> int:
         return trap.exit_code
     except OSError as exc:
         trap.quiet = True
-        why = f"{exc.strerror or exc} ({errno.errorcode.get(exc.errno or 0, 'OSError')})"
+        why = f"{exc.strerror or exc} ({_errname(exc)})"
         if landed():
             print(f"send failed after publishing: {why}; id: {msg_id}", file=sys.stderr)
         else:
