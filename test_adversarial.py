@@ -1316,8 +1316,8 @@ def main() -> int:
         if os.name == "nt":
             # Windows Defender scans a new file on its first open, ~3-5 ms each while it has a
             # backlog: read them once so the timing below is the tool's, not the scanner's.
-            for f in bbox.iterdir():
-                f.read_bytes()
+            for warm in bbox.iterdir():
+                warm.read_bytes()
         t0 = time.time()
         res = run(bbox, "list", "--live")
         dt_list = time.time() - t0

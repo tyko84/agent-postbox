@@ -48,7 +48,6 @@ import random
 import re
 import shutil
 import signal
-SIGKILL = getattr(signal, "SIGKILL", signal.SIGTERM)   # Windows: Popen.send_signal(SIGTERM) is TerminateProcess
 import statistics
 import subprocess
 import sys
@@ -59,6 +58,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
+SIGKILL = getattr(signal, "SIGKILL", signal.SIGTERM)   # Windows: Popen.send_signal(SIGTERM) is TerminateProcess
 HERE = Path(__file__).resolve().parent
 KILLED_RC = -9 if os.name != "nt" else 1   # what Popen.kill() leaves: SIGKILL / TerminateProcess
 SENTINEL = "END-OF-BODY-SENTINEL"
