@@ -585,7 +585,17 @@ def load_messages() -> tuple[list[Message], list[str]]:
     seen_ids: dict[str, str] = {}
     if not box.is_dir():
         return out, rejects
-    for path in sorted(box.glob("*.md")):
+    # `Path.glob` swallows a listing error and yields nothing, so a mailbox that turned
+    # unreadable after the gate (a mode change, an ACL or a network filesystem that
+    # `os.access` does not see) would load as empty. `scandir` raises; say so loudly.
+    try:
+        with os.scandir(box) as it:
+            names = sorted(e.name for e in it if e.name.endswith(".md"))
+    except OSError as e:
+        rejects.append(f"REJECT {_shown(box.name or str(box))}: mailbox cannot be listed ({e.strerror or e})"
+                       " (CANNOT_VERIFY; an unlistable mailbox is not an empty one)")
+        return out, rejects
+    for path in (box / n for n in names):
         if path.name.lower() in ("readme.md", "participants.md", "protocol.md"):
             continue
         text, why = _read_mail_file(path)
@@ -1658,7 +1668,7 @@ def latency_seconds(ask: Message, answer: Message) -> str | float:
 def cmd_latency(args: argparse.Namespace) -> int:
     """RO: ASK→ANSWER latency from durable date stamps only."""
     box = mail_dir()
-    if not _has_mailbox(box):
+    if not _readable_mailbox(box):
         return _no_mailbox(box)
     everything, rejects = load_messages()
     for r in rejects:
@@ -2699,8 +2709,21 @@ def _has_mailbox(box: Path) -> bool:
     return _is_dir(box)
 
 
+def _readable_mailbox(box: Path) -> bool:
+    """A mailbox the read-only commands can list. A directory this account cannot list
+    reads as empty through `glob()`, and an empty answer is not what happened (section 15)."""
+    return _has_mailbox(box) and os.access(box, os.R_OK | os.X_OK)
+
+
 def _no_mailbox(box: Path) -> int:
-    """The missing-store refusal of the read-only commands, with the next step."""
+    """The refusal of the read-only commands, with the next step: a missing store
+    (`NO MAILBOX`) or one that exists but cannot be listed (`UNREADABLE MAILBOX`)."""
+    if _has_mailbox(box):
+        print(f"UNREADABLE MAILBOX at {box}", file=sys.stderr)
+        print("hint: this user cannot list that directory (mode/ownership), so its mail cannot "
+              "be read: fix the permissions (e.g. chmod u+rwx), then run the command again",
+              file=sys.stderr)
+        return 2
     print(f"NO MAILBOX at {box}", file=sys.stderr)
     print(f"hint: {_no_mailbox_hint()}", file=sys.stderr)
     return 2
@@ -2895,7 +2918,7 @@ def _print_rows(rows: list[Message], everything: list[Message],
 
 def cmd_list(args: argparse.Namespace) -> int:
     box = mail_dir()
-    if not _has_mailbox(box):
+    if not _readable_mailbox(box):
         return _no_mailbox(box)
     v, err = _view_args(args)
     if err:
@@ -2937,7 +2960,7 @@ def cmd_list(args: argparse.Namespace) -> int:
 def cmd_inbox(args: argparse.Namespace) -> int:
     """Actionable view: open / blocked / held / owed-to-me. Forensic list stays."""
     box = mail_dir()
-    if not _has_mailbox(box):
+    if not _readable_mailbox(box):
         return _no_mailbox(box)
     identity = (args.to or os.environ.get("AGENT_MAIL_IDENTITY") or "").strip().lower()
     if not identity:
@@ -3551,7 +3574,7 @@ def _fmt_age(seconds: object) -> str:
 def cmd_status(args: argparse.Namespace) -> int:
     """Read-only observability. Never writes, never mutates, exit 0 unless the box is missing."""
     box = mail_dir()
-    if not _has_mailbox(box):
+    if not _readable_mailbox(box):
         return _no_mailbox(box)
     if args.now:
         given, err = _arg_instant("--now", args.now)
@@ -3932,7 +3955,7 @@ def _no_such_message(msg_id: str) -> int:
 
 def cmd_show(args: argparse.Namespace) -> int:
     box = mail_dir()
-    if not _has_mailbox(box):
+    if not _readable_mailbox(box):
         return _no_mailbox(box)
     if getattr(args, "json", False):
         return _show_json(args, box)
@@ -4056,7 +4079,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
     and recipe+expected-N (printed, not run).
     """
     box = mail_dir()
-    if not _has_mailbox(box):
+    if not _readable_mailbox(box):
         return _no_mailbox(box)
     m = _find_message(args.id)
     if m is None:
