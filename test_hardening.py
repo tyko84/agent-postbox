@@ -35,6 +35,7 @@ for _v in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_
     os.environ.pop(_v, None)
 
 HERE = Path(__file__).resolve().parent
+KILLED_RC = -9 if os.name != "nt" else 1   # what Popen.kill() leaves: SIGKILL / TerminateProcess
 TOOL = str(HERE / "agent_mail.py")
 STEP_TIMEOUT = 120   # seconds; any single child
 WATCHDOG = 900       # seconds; the whole run
@@ -376,7 +377,7 @@ def main() -> int:
         finally:
             os.fsync = real_fsync
         check("publish fsyncs the file, then the directory",
-              kinds == ["file", "dir"] and (dbox / "m.md").read_text() == "x", str(kinds))
+              kinds == (["file"] if os.name == "nt" else ["file", "dir"]) and (dbox / "m.md").read_text() == "x", str(kinds))
 
         print("reading a message file: the size cap, and files larger than one chunk")
         spec_rd = ilu.spec_from_file_location("am_read", TOOL)
@@ -465,7 +466,11 @@ def main() -> int:
             go.unlink(missing_ok=True)
             code = (
                 "import os, signal, sys, time\n"
-                f"signal.alarm({WATCHDOG})\n"  # a parked child never outlives a dead harness
+                # no SIGALRM on Windows: a daemon timer ends the child instead
+                f"if hasattr(signal, 'alarm'):\n    signal.alarm({WATCHDOG})\n"
+                f"else:\n    import threading\n"
+                f"    _wd = threading.Timer({WATCHDOG}, os._exit, [1])\n"
+                f"    _wd.daemon = True\n    _wd.start()\n"  # a parked child never outlives a dead harness
                 # A shell starts a background job (`cmd &`, non-interactive) with SIGINT ignored
                 # and Python then installs no handler, so the SIGINT cases below would hang until
                 # their timeout. Restore the interpreter default; the tool's own handling is
@@ -524,7 +529,7 @@ def main() -> int:
         r1 = Path(td) / "rec1"
         r1.mkdir()
         reached, rc, err = killed_send(r1, "os.link = block", *NOTE)
-        check("writer reached os.link and was SIGKILLed there", reached and rc == -9,
+        check("writer reached os.link and was SIGKILLed there", reached and rc == KILLED_RC,
               f"rc={rc} {err[-300:]}")
         tmps = list(r1.glob(".*.tmp"))
         check("one hidden .tmp left, no *.md published",
@@ -574,7 +579,7 @@ def main() -> int:
         r2.mkdir()
         reached, rc, err = killed_send(
             r2, "_link = os.link\ndef late(*a):\n    _link(*a)\n    block()\nos.link = late", *NOTE)
-        check("writer linked the final name and was SIGKILLed before cleanup", reached and rc == -9,
+        check("writer linked the final name and was SIGKILLed before cleanup", reached and rc == KILLED_RC,
               f"rc={rc} {err[-300:]}")
         mds, tmps = list(r2.glob("*.md")), list(r2.glob(".*.tmp"))
         check("one *.md and one stray .tmp with identical bytes",
@@ -603,7 +608,7 @@ def main() -> int:
         r3.mkdir()
         KEYED = [*NOTE, "--key", "K"]
         reached, rc, err = killed_send(r3, "agent_mail._publish = block", *KEYED)
-        check("writer reserved the key and was SIGKILLed before publish", reached and rc == -9,
+        check("writer reserved the key and was SIGKILLed before publish", reached and rc == KILLED_RC,
               f"rc={rc} {err[-300:]}")
         marks = list(r3.glob(".idem.*"))
         check("orphan marker on disk, nothing published, nothing listed",
@@ -665,7 +670,7 @@ def main() -> int:
               and locks[0].exists(), rival.stdout + rival.stderr + str(hidden(r4)))
         holder.kill()
         _, err4 = holder.communicate(timeout=STEP_TIMEOUT)
-        check("holder SIGKILLed; its lock file is left behind", holder.returncode == -9
+        check("holder SIGKILLed; its lock file is left behind", holder.returncode == KILLED_RC
               and locks[0].exists() and not list(r4.glob("*.md")), err4[-300:] + str(hidden(r4)))
         rival2 = run(r4, "send", "--from", "bob", *CLM)
         check("dead holder: rival reclaims the lock at once and wins (exit 0, no 60 s wait)",
@@ -752,71 +757,75 @@ def main() -> int:
               len(list(r6.glob("*.md"))) == 1 and rows(r6, "alice -> bob  cut") == 1
               and hidden(r6) == [marks[0].name], str(sorted(p.name for p in r6.iterdir())))
 
-        print("7. keyed send: cancellation (SIGTERM / SIGINT) releases only what the sender owns")
         import signal as signal_  # noqa: PLC0415
-        r7 = Path(td) / "rec7"
-        r7.mkdir()
-        orig, _ = blocked_send(r7, "agent_mail._publish = block", *KEYED)
-        marks = list(r7.glob(".idem.*"))
-        live_text = marks[0].read_text() if marks else ""
-        NAP7 = NAP.replace("rec6w.ready", "rec7w.ready")
-        waiter, wready = blocked_send(r7, NAP7, *KEYED, "--key-wait", "60", tag="w")
-        check("setup: a live original holds the key and a retry is parked in the key wait",
-              len(marks) == 1 and orig.poll() is None and wready.exists() and waiter.poll() is None,
-              str(hidden(r7)))
-        waiter.send_signal(signal_.SIGTERM)
-        _, err_w = waiter.communicate(timeout=60)
-        check("SIGTERM to the waiting retry: exit 143, one line, no traceback",
-              waiter.returncode == 143 and err_w.strip() == "interrupted (SIGTERM); nothing written",
-              f"rc={waiter.returncode} {err_w!r}")
-        check("it owned no marker: the original's marker is untouched, no temp, no message",
-              hidden(r7) == [marks[0].name] and marks[0].read_text() == live_text
-              and not list(r7.glob("*.md")), str(sorted(p.name for p in r7.iterdir())))
-        orig.send_signal(signal_.SIGTERM)
-        _, err_o = orig.communicate(timeout=60)
-        check("SIGTERM to the original (parked before publish): exit 143, 'nothing written'",
-              orig.returncode == 143 and err_o.strip() == "interrupted (SIGTERM); nothing written",
-              f"rc={orig.returncode} {err_o!r}")
-        check("it gave up, so it released its own marker: mailbox is empty again",
-              sorted(p.name for p in r7.iterdir()) == [], str(sorted(p.name for p in r7.iterdir())))
-        orig, _ = blocked_send(r7, "agent_mail._publish = block", *KEYED)
-        orig.send_signal(signal_.SIGINT)
-        _, err_o = orig.communicate(timeout=60)
-        check("SIGINT behaves the same: exit 130, one line, marker released",
-              orig.returncode == 130 and err_o.strip() == "interrupted (SIGINT); nothing written"
-              and sorted(p.name for p in r7.iterdir()) == [], f"rc={orig.returncode} {err_o!r}")
-        # interrupted AFTER the message was linked: the marker must be kept
-        orig, _ = blocked_send(
-            r7, "_link = os.link\ndef late(*a):\n    _link(*a)\n    if str(a[1]).endswith('.md'):\n"
-                "        block()\nos.link = late", *KEYED)
-        orig.send_signal(signal_.SIGTERM)
-        _, err_o = orig.communicate(timeout=60)
-        mds = list(r7.glob("*.md"))
-        check("SIGTERM after the link: exit 143, says 'after publishing' with the id",
-              orig.returncode == 143 and len(mds) == 1
-              and err_o.strip() == f"interrupted (SIGTERM) after publishing; id: {mds[0].name[:26]}",
-              f"rc={orig.returncode} {err_o!r}")
-        marks = list(r7.glob(".idem.*"))
-        check("the marker is kept (it guards a real message) and the temp file is gone",
-              len(marks) == 1 and hidden(r7) == [marks[0].name]
-              and marks[0].read_text().split("\n")[0] == mds[0].name[:26], str(hidden(r7)))
-        dup = run(r7, *KEYED)
-        check("control: a retry after that is a duplicate, not a second message",
-              dup.returncode == 0 and "duplicate of" in dup.stdout and len(list(r7.glob("*.md"))) == 1,
-              dup.stdout + dup.stderr)
-        # a sender that gives up never removes a marker that is no longer its own
-        r7b = Path(td) / "rec7b"
-        r7b.mkdir()
-        orig, _ = blocked_send(r7b, "agent_mail._publish = block", *KEYED)
-        mk7 = next(r7b.glob(".idem.*"))
-        foreign = "01ARZ3NDEKTSV4RRFFQ69GFRGN\n" + mk7.read_text().split("\n")[1] + "\n"
-        swap = r7b / ".swap"
-        swap.write_text(foreign)
-        os.replace(swap, mk7)  # what a pre-section-31 sender's takeover amounts to: a new inode
-        orig.send_signal(signal_.SIGTERM)
-        orig.communicate(timeout=60)
-        check("giving up leaves a marker that another sender put in its place",
-              orig.returncode == 143 and mk7.exists() and mk7.read_text() == foreign, str(hidden(r7b)))
+        if os.name == "nt":
+            print("  SKIP  section 7: cancellation by signal (Windows cannot deliver SIGTERM/SIGINT to a child)")
+        else:
+            print("7. keyed send: cancellation (SIGTERM / SIGINT) releases only what the sender owns")
+            import signal as signal_  # noqa: PLC0415
+            r7 = Path(td) / "rec7"
+            r7.mkdir()
+            orig, _ = blocked_send(r7, "agent_mail._publish = block", *KEYED)
+            marks = list(r7.glob(".idem.*"))
+            live_text = marks[0].read_text() if marks else ""
+            NAP7 = NAP.replace("rec6w.ready", "rec7w.ready")
+            waiter, wready = blocked_send(r7, NAP7, *KEYED, "--key-wait", "60", tag="w")
+            check("setup: a live original holds the key and a retry is parked in the key wait",
+                  len(marks) == 1 and orig.poll() is None and wready.exists() and waiter.poll() is None,
+                  str(hidden(r7)))
+            waiter.send_signal(signal_.SIGTERM)
+            _, err_w = waiter.communicate(timeout=60)
+            check("SIGTERM to the waiting retry: exit 143, one line, no traceback",
+                  waiter.returncode == 143 and err_w.strip() == "interrupted (SIGTERM); nothing written",
+                  f"rc={waiter.returncode} {err_w!r}")
+            check("it owned no marker: the original's marker is untouched, no temp, no message",
+                  hidden(r7) == [marks[0].name] and marks[0].read_text() == live_text
+                  and not list(r7.glob("*.md")), str(sorted(p.name for p in r7.iterdir())))
+            orig.send_signal(signal_.SIGTERM)
+            _, err_o = orig.communicate(timeout=60)
+            check("SIGTERM to the original (parked before publish): exit 143, 'nothing written'",
+                  orig.returncode == 143 and err_o.strip() == "interrupted (SIGTERM); nothing written",
+                  f"rc={orig.returncode} {err_o!r}")
+            check("it gave up, so it released its own marker: mailbox is empty again",
+                  sorted(p.name for p in r7.iterdir()) == [], str(sorted(p.name for p in r7.iterdir())))
+            orig, _ = blocked_send(r7, "agent_mail._publish = block", *KEYED)
+            orig.send_signal(signal_.SIGINT)
+            _, err_o = orig.communicate(timeout=60)
+            check("SIGINT behaves the same: exit 130, one line, marker released",
+                  orig.returncode == 130 and err_o.strip() == "interrupted (SIGINT); nothing written"
+                  and sorted(p.name for p in r7.iterdir()) == [], f"rc={orig.returncode} {err_o!r}")
+            # interrupted AFTER the message was linked: the marker must be kept
+            orig, _ = blocked_send(
+                r7, "_link = os.link\ndef late(*a):\n    _link(*a)\n    if str(a[1]).endswith('.md'):\n"
+                    "        block()\nos.link = late", *KEYED)
+            orig.send_signal(signal_.SIGTERM)
+            _, err_o = orig.communicate(timeout=60)
+            mds = list(r7.glob("*.md"))
+            check("SIGTERM after the link: exit 143, says 'after publishing' with the id",
+                  orig.returncode == 143 and len(mds) == 1
+                  and err_o.strip() == f"interrupted (SIGTERM) after publishing; id: {mds[0].name[:26]}",
+                  f"rc={orig.returncode} {err_o!r}")
+            marks = list(r7.glob(".idem.*"))
+            check("the marker is kept (it guards a real message) and the temp file is gone",
+                  len(marks) == 1 and hidden(r7) == [marks[0].name]
+                  and marks[0].read_text().split("\n")[0] == mds[0].name[:26], str(hidden(r7)))
+            dup = run(r7, *KEYED)
+            check("control: a retry after that is a duplicate, not a second message",
+                  dup.returncode == 0 and "duplicate of" in dup.stdout and len(list(r7.glob("*.md"))) == 1,
+                  dup.stdout + dup.stderr)
+            # a sender that gives up never removes a marker that is no longer its own
+            r7b = Path(td) / "rec7b"
+            r7b.mkdir()
+            orig, _ = blocked_send(r7b, "agent_mail._publish = block", *KEYED)
+            mk7 = next(r7b.glob(".idem.*"))
+            foreign = "01ARZ3NDEKTSV4RRFFQ69GFRGN\n" + mk7.read_text().split("\n")[1] + "\n"
+            swap = r7b / ".swap"
+            swap.write_text(foreign)
+            os.replace(swap, mk7)  # what a pre-section-31 sender's takeover amounts to: a new inode
+            orig.send_signal(signal_.SIGTERM)
+            orig.communicate(timeout=60)
+            check("giving up leaves a marker that another sender put in its place",
+                  orig.returncode == 143 and mk7.exists() and mk7.read_text() == foreign, str(hidden(r7b)))
 
         print("8. keyed send: the retry of a retry, bounds, and a filesystem without flock")
         r8 = Path(td) / "rec8"
@@ -824,7 +833,7 @@ def main() -> int:
         killed_send(r8, "agent_mail._publish = block", *KEYED)
         reached, rc, _ = killed_send(r8, "agent_mail._publish = block", *KEYED)
         check("a retry that took the orphan over and was itself SIGKILLed before publish",
-              reached and rc == -9 and len(list(r8.glob(".idem.*"))) == 1 and not list(r8.glob("*.md")),
+              reached and rc == KILLED_RC and len(list(r8.glob(".idem.*"))) == 1 and not list(r8.glob("*.md")),
               str(hidden(r8)))
         t0 = time.monotonic()
         third = run(r8, *KEYED)
@@ -843,8 +852,8 @@ def main() -> int:
         cp = run(r8, *NOTE, "--key", "ok-env", env_extra={"AGENT_MAIL_IDEM_WAIT": "60"})
         check("control: AGENT_MAIL_IDEM_WAIT=60 (the upper bound) is accepted",
               cp.returncode == 0 and "wrote " in cp.stdout, cp.stderr)
-        NOFLOCK = ("import fcntl, errno\ndef refuse(*_a):\n    raise OSError(errno.ENOLCK, 'No locks available')\n"
-                   "fcntl.flock = refuse")
+        NOFLOCK = ("import errno\ndef refuse(*_a, **_k):\n    raise OSError(errno.ENOLCK, 'No locks available')\n"
+                   "agent_mail._flock = refuse")
         r8f = Path(td) / "rec8f"
         r8f.mkdir()
         nf, _ = blocked_send(r8f, NOFLOCK, *KEYED)
@@ -915,16 +924,21 @@ def main() -> int:
         check("key conflict while holding the scope lock: exit 2, lock released",
               conflict.returncode == 2 and "different content" in conflict.stderr
               and not list(r9.glob(".scope.*")), conflict.stderr + str(hidden(r9)))
-        parked, _ = blocked_send(r9, "agent_mail._publish = block", "send", "--type", "CLAIM",
-                                 "--from", "alice", "--to", "all", "--subject", "c", "--body", "b",
-                                 "--expires", soon(1), "--scope", "file:9c.py")
-        had_lock = len(list(r9.glob(".scope.*.lock"))) == 1
-        parked.send_signal(signal_.SIGTERM)
-        _, err = parked.communicate(timeout=60)
-        check("SIGTERM while holding a scope lock: exit 143, one line, lock file removed",
-              had_lock and parked.returncode == 143 and err.strip() == "interrupted (SIGTERM); nothing written"
-              and not list(r9.glob(".scope.*")), f"had_lock={had_lock} rc={parked.returncode} {err!r}")
-        if os.geteuid() == 0:
+        if os.name == "nt":
+            print("  SKIP  SIGTERM while holding a scope lock (Windows cannot deliver SIGTERM/SIGINT to a child)")
+        else:
+            parked, _ = blocked_send(r9, "agent_mail._publish = block", "send", "--type", "CLAIM",
+                                     "--from", "alice", "--to", "all", "--subject", "c", "--body", "b",
+                                     "--expires", soon(1), "--scope", "file:9c.py")
+            had_lock = len(list(r9.glob(".scope.*.lock"))) == 1
+            parked.send_signal(signal_.SIGTERM)
+            _, err = parked.communicate(timeout=60)
+            check("SIGTERM while holding a scope lock: exit 143, one line, lock file removed",
+                  had_lock and parked.returncode == 143 and err.strip() == "interrupted (SIGTERM); nothing written"
+                  and not list(r9.glob(".scope.*")), f"had_lock={had_lock} rc={parked.returncode} {err!r}")
+        if not hasattr(os, "geteuid"):
+            print("  SKIP  permission-denied checks (no POSIX permission bits)")
+        elif os.geteuid() == 0:
             print("  SKIP  permission-denied checks (running as root)")
         else:
             import hashlib as hl  # noqa: PLC0415
@@ -1218,37 +1232,40 @@ def main() -> int:
               stj(r12)["scope_locks"] == {"total": 1, "in_flight": 0, "held": 0, "orphaned": 1}
               and stj(r12)["idem_markers"] == {"total": 3, "resolved": 2, "in_flight": 0, "held": 0, "orphaned": 1},
               str(stj(r12)))
-        # hostile or odd hidden files: counted, never followed, never fatal
-        r12b = Path(td) / "rec12b"
-        r12b.mkdir()
-        secret = Path(td) / "outside-secret"
-        secret.write_text("01ARZ3NDEKTSV4RRFFQ69GSECR\n" + "0" * 64 + "\nflock\n")
-        os.symlink(secret, r12b / (".idem." + "a" * 24))
-        os.symlink(secret, r12b / (".scope." + "b" * 24 + ".lock"))
-        os.symlink(Path(td) / "nowhere", r12b / ".gone.md.1.tmp")
-        os.mkfifo(r12b / (".idem." + "c" * 24))
-        (r12b / (".idem." + "d" * 24)).write_text("")
-        (r12b / (".idem." + "e" * 24 + ".takeover")).write_text("")
-        (r12b / ".unrelated").write_text("x")
-        for f in r12b.iterdir():
-            if not f.is_symlink():
-                age(f, 120)
-        st12b = stj(r12b, "--now", future)
-        check("symlinks and a FIFO planted as marker or lock are counted in total only, never followed",
-              st12b.get("idem_markers") == {"total": 3, "resolved": 0, "in_flight": 0, "held": 0, "orphaned": 1}
-              and st12b.get("scope_locks") == {"total": 1, "in_flight": 0, "held": 0, "orphaned": 0}
-              and st12b.get("takeover_mutexes") == {"total": 1, "stale": 1}, str(st12b))
-        d12b = run(r12b, "doctor")
-        check("doctor survives a dangling-symlink temp file and the planted files (no traceback)",
-              "Traceback" not in d12b.stderr and "stale_tmp: 0" in d12b.stdout
-              and "takeover_mutexes: 1 (stale 1)" in d12b.stdout, d12b.stdout + d12b.stderr)
-        check("no output of status or doctor contains the linked file's content",
-              "GSECR" not in json.dumps(st12b) + d12b.stdout + d12b.stderr)
-        txt12 = run(r12b, "status", "--now", future)
-        check("text status: PROBLEMS line with the fixed codes; a clean box prints none",
-              "PROBLEMS: STALE_TMP=1 ORPHAN_IDEM_MARKER=1 STALE_TAKEOVER_MUTEX=1" in txt12.stdout
-              and "PROBLEMS" not in run(r5.with_name("rec11"), "status").stdout.replace("STALLED", ""),
-              txt12.stdout + run(r5.with_name("rec11"), "status").stdout)
+        if os.name == "nt":
+            print("  SKIP  planted symlinks and FIFOs in the status census (creating them needs a privilege or POSIX)")
+        else:
+            # hostile or odd hidden files: counted, never followed, never fatal
+            r12b = Path(td) / "rec12b"
+            r12b.mkdir()
+            secret = Path(td) / "outside-secret"
+            secret.write_text("01ARZ3NDEKTSV4RRFFQ69GSECR\n" + "0" * 64 + "\nflock\n")
+            os.symlink(secret, r12b / (".idem." + "a" * 24))
+            os.symlink(secret, r12b / (".scope." + "b" * 24 + ".lock"))
+            os.symlink(Path(td) / "nowhere", r12b / ".gone.md.1.tmp")
+            os.mkfifo(r12b / (".idem." + "c" * 24))
+            (r12b / (".idem." + "d" * 24)).write_text("")
+            (r12b / (".idem." + "e" * 24 + ".takeover")).write_text("")
+            (r12b / ".unrelated").write_text("x")
+            for f in r12b.iterdir():
+                if not f.is_symlink():
+                    age(f, 120)
+            st12b = stj(r12b, "--now", future)
+            check("symlinks and a FIFO planted as marker or lock are counted in total only, never followed",
+                  st12b.get("idem_markers") == {"total": 3, "resolved": 0, "in_flight": 0, "held": 0, "orphaned": 1}
+                  and st12b.get("scope_locks") == {"total": 1, "in_flight": 0, "held": 0, "orphaned": 0}
+                  and st12b.get("takeover_mutexes") == {"total": 1, "stale": 1}, str(st12b))
+            d12b = run(r12b, "doctor")
+            check("doctor survives a dangling-symlink temp file and the planted files (no traceback)",
+                  "Traceback" not in d12b.stderr and "stale_tmp: 0" in d12b.stdout
+                  and "takeover_mutexes: 1 (stale 1)" in d12b.stdout, d12b.stdout + d12b.stderr)
+            check("no output of status or doctor contains the linked file's content",
+                  "GSECR" not in json.dumps(st12b) + d12b.stdout + d12b.stderr)
+            txt12 = run(r12b, "status", "--now", future)
+            check("text status: PROBLEMS line with the fixed codes; a clean box prints none",
+                  "PROBLEMS: STALE_TMP=1 ORPHAN_IDEM_MARKER=1 STALE_TAKEOVER_MUTEX=1" in txt12.stdout
+                  and "PROBLEMS" not in run(r5.with_name("rec11"), "status").stdout.replace("STALLED", ""),
+                  txt12.stdout + run(r5.with_name("rec11"), "status").stdout)
 
         print("13. the status probe window: a reader's shared lock against a claimant and a keyed retry")
         # `status` and `doctor` ask the kernel about a lock or marker older than
@@ -1258,7 +1275,6 @@ def main() -> int:
         # nobody holds the scope or the key. First the mechanism, deterministic,
         # with the reader's lock held by this test; then how often a real
         # `status` loop hits it.
-        import fcntl  # noqa: PLC0415
         import hashlib as hl13  # noqa: PLC0415
 
         def plant_lock(box: Path, scope: str) -> Path:
@@ -1279,7 +1295,8 @@ def main() -> int:
         def shared(path: Path) -> int:
             """Exactly the lock _probe_holder takes; the caller closes it."""
             fd = os.open(path, os.O_RDONLY)
-            fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            # Windows has no shared lock: hold the exclusive one the probe takes for an instant
+            am2._flock(fd, shared=os.name != "nt")
             return fd
 
         def claim13(box: Path, scope: str) -> subprocess.CompletedProcess[str]:
@@ -1394,7 +1411,7 @@ def main() -> int:
         reached, rc, err = killed_send(r14, at_publish(2, "block"), *TEAM)
         check("keyed send to an alias of three, SIGKILLed while publishing the second: the first "
               "recipient has the message, the other two do not",
-              reached and rc == -9 and got(r14, "fan") == ["bob"], f"rc={rc} {got(r14, 'fan')} {err[-200:]}")
+              reached and rc == KILLED_RC and got(r14, "fan") == ["bob"], f"rc={rc} {got(r14, 'fan')} {err[-200:]}")
         retry = run(r14, *TEAM)
         check("the retry with the same key writes exactly the two missing recipients and answers "
               "`duplicate of` for the first: one message each, exit 0",
@@ -1411,40 +1428,43 @@ def main() -> int:
         ASK3 = ["ask", "--from", "alice", "--to", "bob,carol,dave", "--subject", "askfan", "--body", "b"]
         reached, rc, err = killed_send(r14, at_publish(2, "block"), *ASK3)
         check("ask to three, SIGKILLed while publishing the second: only the first recipient has it",
-              reached and rc == -9 and got(r14, "askfan") == ["bob"], f"rc={rc} {got(r14, 'askfan')}")
+              reached and rc == KILLED_RC and got(r14, "askfan") == ["bob"], f"rc={rc} {got(r14, 'askfan')}")
         reask = run(r14, *ASK3)
         check("documented limit: `ask` has no --key, so repeating it files the first recipient's "
               "ASK a second time (the keyed alias send above is the exactly-once retry)",
               reask.returncode == 0 and got(r14, "askfan") == ["bob", "bob", "carol", "dave"],
               reask.stdout + reask.stderr)
-        ASKI = ["ask", "--from", "alice", "--to", "bob,carol,dave", "--subject", "askint", "--body", "b"]
-        parked, _ = blocked_send(r14, at_publish(2, "block"), *ASKI, tag="int")
-        parked.send_signal(signal_.SIGINT)
-        _, err = parked.communicate(timeout=STEP_TIMEOUT)
-        check("ask to three, SIGINT while publishing the second: exit 130, one line, the first "
-              "recipient keeps its message and the third is never written",
-              parked.returncode == 130 and err.strip() == "interrupted (SIGINT); nothing written"
-              and got(r14, "askint") == ["bob"], f"rc={parked.returncode} {err!r} {got(r14, 'askint')}")
-        TEAMT = [*TEAM[:8], "fanterm", *TEAM[9:11], "--key", "kterm"]
-        parked, _ = blocked_send(r14, at_publish(2, "block"), *TEAMT, tag="term")
-        parked.send_signal(signal_.SIGTERM)
-        _, err = parked.communicate(timeout=STEP_TIMEOUT)
-        check("keyed alias send, SIGTERM while publishing the second: exit 143, the second "
-              "recipient's key is released, the third is never written",
-              parked.returncode == 143 and err.strip() == "interrupted (SIGTERM); nothing written"
-              and got(r14, "fanterm") == ["bob"] and len(hidden(r14)) == 4,
-              f"rc={parked.returncode} {err!r} {got(r14, 'fanterm')} {hidden(r14)}")
-        fin = run(r14, *TEAMT)
-        check("and its keyed retry completes the fan-out: each recipient exactly once",
-              fin.returncode == 0 and got(r14, "fanterm") == ["bob", "carol", "dave"]
-              and fin.stdout.count("duplicate of ") == 1, fin.stdout + fin.stderr)
+        if os.name == "nt":
+            print("  SKIP  fan-out cancelled by SIGINT/SIGTERM (Windows cannot deliver them to a child)")
+        else:
+            ASKI = ["ask", "--from", "alice", "--to", "bob,carol,dave", "--subject", "askint", "--body", "b"]
+            parked, _ = blocked_send(r14, at_publish(2, "block"), *ASKI, tag="int")
+            parked.send_signal(signal_.SIGINT)
+            _, err = parked.communicate(timeout=STEP_TIMEOUT)
+            check("ask to three, SIGINT while publishing the second: exit 130, one line, the first "
+                  "recipient keeps its message and the third is never written",
+                  parked.returncode == 130 and err.strip() == "interrupted (SIGINT); nothing written"
+                  and got(r14, "askint") == ["bob"], f"rc={parked.returncode} {err!r} {got(r14, 'askint')}")
+            TEAMT = [*TEAM[:8], "fanterm", *TEAM[9:11], "--key", "kterm"]
+            parked, _ = blocked_send(r14, at_publish(2, "block"), *TEAMT, tag="term")
+            parked.send_signal(signal_.SIGTERM)
+            _, err = parked.communicate(timeout=STEP_TIMEOUT)
+            check("keyed alias send, SIGTERM while publishing the second: exit 143, the second "
+                  "recipient's key is released, the third is never written",
+                  parked.returncode == 143 and err.strip() == "interrupted (SIGTERM); nothing written"
+                  and got(r14, "fanterm") == ["bob"] and len(hidden(r14)) == 4,
+                  f"rc={parked.returncode} {err!r} {got(r14, 'fanterm')} {hidden(r14)}")
+            fin = run(r14, *TEAMT)
+            check("and its keyed retry completes the fan-out: each recipient exactly once",
+                  fin.returncode == 0 and got(r14, "fanterm") == ["bob", "carol", "dave"]
+                  and fin.stdout.count("duplicate of ") == 1, fin.stdout + fin.stderr)
         r14c = Path(td) / "rec14c"
         r14c.mkdir()
         reached, rc, err = killed_send(r14c, "os.link = block", "canary", "--from", "alice", "--to", "all")
         doc14 = run(r14c, "doctor")
         check("canary SIGKILLed before its link: no canary message, one hidden temp, doctor still "
               "says no canary exists (UNVERIFIED, not a failure: none was ever filed)",
-              reached and rc == -9 and not list(r14c.glob("*.md")) and len(hidden(r14c)) == 1
+              reached and rc == KILLED_RC and not list(r14c.glob("*.md")) and len(hidden(r14c)) == 1
               and doc14.returncode == 0 and "canary: UNVERIFIED" in doc14.stdout
               and "PICKUP-CANARY" not in run(r14c, "list").stdout,
               f"rc={rc} {hidden(r14c)} {doc14.stdout[-200:]}")
@@ -1535,58 +1555,64 @@ def main() -> int:
         check("the name test ignores case, as ids do: a file named <id in lower case>-... keeps its id",
               "LOWER-KEEPER" in l16b.stdout and "LOWER-LOSER" not in l16b.stdout
               and "REJECT 0-sorts-first.md: duplicate id" in l16b.stderr, l16b.stdout + l16b.stderr)
-        import hashlib as hl16  # noqa: PLC0415
-        r16f = Path(td) / "rec16f"
-        r16f.mkdir()
-        fifo16 = r16f / (".scope." + hl16.sha256(b"file:16f.py").hexdigest()[:24] + ".lock")
-        os.mkfifo(fifo16)
-        F16 = ["send", "--type", "CLAIM", "--from", "alice", "--to", "all", "--subject", "f",
-               "--body", "b", "--expires", soon(1), "--scope", "file:16f.py"]
-        # Linux grants flock on a FIFO; macOS refuses it. Both must end the same
-        # way, so the first case also runs with flock made to accept anything.
-        for label, patch16 in (("as this platform treats it", "pass"),
-                               ("where flock accepts a FIFO (simulated)",
-                                "import fcntl\nfcntl.flock = lambda *_a: None")):
-            rc, out, err = patched(r16f, patch16, *F16)
-            check(f"a FIFO at the scope lock name, {label}: exit 2 `cannot lock scope`, nothing "
-                  "written, the FIFO neither written to nor removed",
-                  rc == 2 and out == "" and err.startswith("cannot lock scope 'file:16f.py': ")
-                  and len(err.strip().splitlines()) == 1 and not list(r16f.glob("*.md"))
-                  and stat_.S_ISFIFO(os.lstat(fifo16).st_mode), f"rc={rc} {out!r} {err!r}")
-        fifo16.unlink()
-        rc, out, err = patched(r16f, "pass", *F16)
-        check("control: with the FIFO gone the same claim is written", rc == 0 and "wrote " in out, err)
+        if os.name == "nt":
+            print("  SKIP  FIFO at the scope lock name (no FIFOs on Windows)")
+        else:
+            import hashlib as hl16  # noqa: PLC0415
+            r16f = Path(td) / "rec16f"
+            r16f.mkdir()
+            fifo16 = r16f / (".scope." + hl16.sha256(b"file:16f.py").hexdigest()[:24] + ".lock")
+            os.mkfifo(fifo16)
+            F16 = ["send", "--type", "CLAIM", "--from", "alice", "--to", "all", "--subject", "f",
+                   "--body", "b", "--expires", soon(1), "--scope", "file:16f.py"]
+            # Linux grants flock on a FIFO; macOS refuses it. Both must end the same
+            # way, so the first case also runs with flock made to accept anything.
+            for label, patch16 in (("as this platform treats it", "pass"),
+                                   ("where flock accepts a FIFO (simulated)",
+                                    "import fcntl\nfcntl.flock = lambda *_a: None")):
+                rc, out, err = patched(r16f, patch16, *F16)
+                check(f"a FIFO at the scope lock name, {label}: exit 2 `cannot lock scope`, nothing "
+                      "written, the FIFO neither written to nor removed",
+                      rc == 2 and out == "" and err.startswith("cannot lock scope 'file:16f.py': ")
+                      and len(err.strip().splitlines()) == 1 and not list(r16f.glob("*.md"))
+                      and stat_.S_ISFIFO(os.lstat(fifo16).st_mode), f"rc={rc} {out!r} {err!r}")
+            fifo16.unlink()
+            rc, out, err = patched(r16f, "pass", *F16)
+            check("control: with the FIFO gone the same claim is written", rc == 0 and "wrote " in out, err)
 
-        print("a working directory that was deleted under the process")
-        gone_shim = ("import os, runpy, sys, tempfile\n"
-                     "d = tempfile.mkdtemp(dir=sys.argv.pop(1))\n"
-                     "os.chdir(d)\nos.rmdir(d)\n"
-                     "sys.argv[0] = sys.argv.pop(1)\n"
-                     "runpy.run_path(sys.argv[0], run_name='__main__')\n")
-        gone_env = {k: v for k, v in os.environ.items()
-                    if k not in ("AGENT_MAIL_DIR", "AGENT_MAIL_PROJECT", "CLAUDE_PROJECT_DIR")}
-        gone_box = Path(td) / "gone-box"
-        gone_box.mkdir()
-        for label, extra in (("no AGENT_MAIL_DIR", {}), ("AGENT_MAIL_DIR set", {"AGENT_MAIL_DIR": str(gone_box)})):
-            cp = subprocess.run([sys.executable, "-I", "-c", gone_shim, td, TOOL, "inbox", "--to", "bob"],
-                                capture_output=True, text=True, env=dict(gone_env, **extra),
-                                timeout=STEP_TIMEOUT)
-            if extra:
-                check(f"deleted cwd, {label}: the mailbox is still read, no traceback",
-                      cp.returncode == 0 and "Traceback" not in cp.stderr, cp.stdout + cp.stderr)
-            else:
-                check(f"deleted cwd, {label}: one line, exit 2, no traceback",
-                      cp.returncode == 2 and "Traceback" not in cp.stderr
-                      and cp.stderr.startswith("refusing: the working directory cannot be read")
-                      and len(cp.stderr.strip().splitlines()) == 1, cp.stdout + cp.stderr)
+        if os.name == "nt":
+            print("  SKIP  a working directory that was deleted under the process (Windows refuses to remove it)")
+        else:
+            print("a working directory that was deleted under the process")
+            gone_shim = ("import os, runpy, sys, tempfile\n"
+                         "d = tempfile.mkdtemp(dir=sys.argv.pop(1))\n"
+                         "os.chdir(d)\nos.rmdir(d)\n"
+                         "sys.argv[0] = sys.argv.pop(1)\n"
+                         "runpy.run_path(sys.argv[0], run_name='__main__')\n")
+            gone_env = {k: v for k, v in os.environ.items()
+                        if k not in ("AGENT_MAIL_DIR", "AGENT_MAIL_PROJECT", "CLAUDE_PROJECT_DIR")}
+            gone_box = Path(td) / "gone-box"
+            gone_box.mkdir()
+            for label, extra in (("no AGENT_MAIL_DIR", {}), ("AGENT_MAIL_DIR set", {"AGENT_MAIL_DIR": str(gone_box)})):
+                cp = subprocess.run([sys.executable, "-I", "-c", gone_shim, td, TOOL, "inbox", "--to", "bob"],
+                                    capture_output=True, text=True, env=dict(gone_env, **extra),
+                                    timeout=STEP_TIMEOUT)
+                if extra:
+                    check(f"deleted cwd, {label}: the mailbox is still read, no traceback",
+                          cp.returncode == 0 and "Traceback" not in cp.stderr, cp.stdout + cp.stderr)
+                else:
+                    check(f"deleted cwd, {label}: one line, exit 2, no traceback",
+                          cp.returncode == 2 and "Traceback" not in cp.stderr
+                          and cp.stderr.startswith("refusing: the working directory cannot be read")
+                          and len(cp.stderr.strip().splitlines()) == 1, cp.stdout + cp.stderr)
 
-        cp = subprocess.run([sys.executable, "-I", "-c", gone_shim, td, TOOL, "doctor"],
-                            capture_output=True, text=True,
-                            env=dict(gone_env, AGENT_MAIL_DIR=str(gone_box)), timeout=STEP_TIMEOUT)
-        check("deleted cwd, doctor: refuses up front (one line, exit 2, nothing printed first)",
-              cp.returncode == 2 and cp.stdout == "" and "Traceback" not in cp.stderr
-              and cp.stderr.startswith("refusing: the working directory cannot be read")
-              and len(cp.stderr.strip().splitlines()) == 1, cp.stdout + cp.stderr)
+            cp = subprocess.run([sys.executable, "-I", "-c", gone_shim, td, TOOL, "doctor"],
+                                capture_output=True, text=True,
+                                env=dict(gone_env, AGENT_MAIL_DIR=str(gone_box)), timeout=STEP_TIMEOUT)
+            check("deleted cwd, doctor: refuses up front (one line, exit 2, nothing printed first)",
+                  cp.returncode == 2 and cp.stdout == "" and "Traceback" not in cp.stderr
+                  and cp.stderr.startswith("refusing: the working directory cannot be read")
+                  and len(cp.stderr.strip().splitlines()) == 1, cp.stdout + cp.stderr)
 
         print("17. a renewed claim is not an orphan, and a claim sent to an alias is renewed whole "
               "(PROTOCOL.md sections 5, 27, 32, 34)")

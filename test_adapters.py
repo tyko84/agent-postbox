@@ -368,6 +368,7 @@ class CodexInstall(unittest.TestCase):
         self.assertTrue((self.project / "tools/agent-postbox/hooks/agent_mail_check.py").is_file())
         self.assertFalse((self.project / ".claude").exists())
 
+    @unittest.skipUnless(os.name == "posix", "builds #!/bin/sh stub interpreters")
     def test_an_old_python3_falls_back_to_a_supported_python_name(self) -> None:
         bin_dir = self.project / "probe-bin"
         bin_dir.mkdir()
@@ -381,6 +382,7 @@ class CodexInstall(unittest.TestCase):
         (handler,) = self.handlers()
         self.assertTrue(handler["command"].startswith("python \"$(git rev-parse"))
 
+    @unittest.skipUnless(os.name == "posix", "builds #!/bin/sh stub interpreters")
     def test_no_supported_portable_interpreter_refuses_before_copying(self) -> None:
         bin_dir = self.project / "probe-bin"
         bin_dir.mkdir()
@@ -808,7 +810,7 @@ class PathRefusals(unittest.TestCase):
                         self.assertNotIn("Traceback", cp.stderr)
                         lines = [ln for ln in cp.stderr.splitlines() if ln.startswith("ABORT")]
                         self.assertEqual(len(lines), 1, cp.stderr)
-                        self.assertIn(why, lines[0])
+                        self.assertIn(why.replace("/", os.sep), lines[0])   # the path is printed natively
                         self.assertTrue(lines[0].endswith("Nothing was changed."))
                         self.assertEqual(tree(project), before)
                         self.assertEqual(sorted(str(p.relative_to(project))
@@ -816,7 +818,7 @@ class PathRefusals(unittest.TestCase):
                         check = install(project, "--check", *extra)
                         self.assertEqual(check.returncode, 0, check.stderr)
                         self.assertIn("WOULD REFUSE", check.stdout)
-                        self.assertIn(why, check.stdout)
+                        self.assertIn(why.replace("/", os.sep), check.stdout)
 
 
 class ContainedPaths(unittest.TestCase):
@@ -1345,6 +1347,7 @@ class PickupOutputShape(unittest.TestCase):
         self.assertIn("[awaiting your reply]", out)
         self.assertIn(f"{ask} from alice", out)             # the owed-reply block still lists it
 
+    @unittest.skipUnless(os.name == "posix", "runs the shown command with /bin/sh")
     def test_the_full_original_is_one_command_away(self) -> None:
         mid = send(self.box, type="NOTICE", **{"from": "alice"}, to="bob", subject="needs the body")
         line = next(ln for ln in self.hook().splitlines() if ln.startswith("Full text of one: "))
