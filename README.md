@@ -526,6 +526,24 @@ What to do after the install (rename the example identities, canary, the first
 [docs/onboarding-first-exchange.md](docs/onboarding-first-exchange.md). Removing
 it again: [docs/troubleshooting.md#removing-it](docs/troubleshooting.md#removing-it).
 
+### Upgrading
+
+Update the clone and run the installer again with the options you used the first time
+(`install.py <project> --check` previews it and changes nothing):
+
+```bash
+git -C agent-postbox pull
+python3 agent-postbox/install.py /path/to/your/project --adapter claude-code
+python3 /path/to/your/project/tools/agent-postbox/selftest.py
+```
+
+It replaces the copy in `tools/agent-postbox/` (the tool, the spec, the adapter script) and keeps
+`docs/agent-mail/` with every message and your edited `PARTICIPANTS.md`; a hook entry that is
+already registered is left as it is, and an older form of the hook command is upgraded in place
+with a `.bak` of the file (`test_readme_examples.py` and `test_adapters.py` run this). Commit
+the changed `tools/agent-postbox/` so other clones and worktrees run the same version. A pip
+install is upgraded with `python3 -m pip install --upgrade ./agent-postbox`.
+
 ### Where the mailbox is
 
 **`AGENT_MAIL_DIR` is the team inbox if set; otherwise this clone's
