@@ -2927,7 +2927,7 @@ def _raises(fn: Callable[[str], object], *args: str) -> bool:
 
 def main() -> int:
     if os.name == "nt":   # the harness prints labels with non-cp1252 characters
-        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
     faulthandler.dump_traceback_later(WATCHDOG, exit=True)
     with tempfile.TemporaryDirectory() as td:
         root = Path(td).resolve()
