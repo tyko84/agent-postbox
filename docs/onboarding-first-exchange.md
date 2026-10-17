@@ -11,7 +11,8 @@ machine time on one laptop, not the time a person takes.
 
 Requirements: Linux or macOS, Python 3.10-3.14, git. **Windows is unsupported
 and untested**; so is WSL (not tried). Use `python3`, not `python`: stock macOS
-has no `python`.
+has no `python`. Run `python3 --version` first: it must say 3.10 or newer, and stock
+macOS `python3` can be 3.9 (3.9.6 observed), which the tool refuses.
 
 ## 1. Get it and watch it work (under 5 seconds)
 

@@ -58,7 +58,9 @@ under a restrictive permission mode), and a third stopped at its ceiling and was
 Nothing here needs a model, an account or a network connection after the
 clone. POSIX only (Linux, macOS), Python 3.10-3.14, git. Windows is unsupported
 and untested (WSL has not been tried). Use `python3`: stock macOS has no
-`python`.
+`python`. First run `python3 --version`: it must say 3.10 or newer. Stock macOS
+`python3` can be 3.9 (3.9.6 observed), which the tool refuses; install a newer
+Python and use it (for example `python3.12`) in place of `python3` below.
 
 What step 3 changes: it copies the tool into your project, creates a mailbox directory, and
 adds one hook entry to that project's `.claude/settings.json` (backed up first). The hook
@@ -69,6 +71,9 @@ Supported hosts and what was verified: Claude Code in headless sessions (one sma
 Codex never run in the real host; Cursor documented only (see [Which hosts](#which-hosts-are-supported)).
 
 ```sh
+# 0. Check the interpreter: 3.10 or newer is required (3.9 refuses; see above).
+python3 --version
+
 # 1. Clone. (Not on PyPI: `pip install agent-postbox` is a different project; see Install.)
 #    Already have the repo? Skip this.
 git clone https://github.com/tyko84/agent-postbox
