@@ -2976,11 +2976,20 @@ def cmd_inbox(args: argparse.Namespace) -> int:
 
 
 CANARY_SUBJECT_PREFIX = "PICKUP-CANARY"
+CANARY_DEFAULT_HOURS = 24
 
 
 def authorship_status(msg: Message) -> str:
     """Free-text from:/filename are stamp-echo only — never durable authorship."""
     return "CANNOT_VERIFY"
+
+
+def last_canary(everything: list[Message]) -> Message | None:
+    """The most recently filed pickup canary, live or lapsed; None if one was never filed."""
+    found = [m for m in everything
+             if m.type == "NOTICE" and (m.subject or "").startswith(CANARY_SUBJECT_PREFIX)]
+    return max(found, key=lambda m: (m.sent_at is not None, m.sent_at or dt.datetime.min.replace(
+        tzinfo=dt.timezone.utc)), default=None)
 
 
 def find_live_canary(
@@ -3876,18 +3885,29 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         print(line)
 
     canary = find_live_canary(everything, now=now)
-    if canary is None:
+    unverified = False
+    if canary is not None:
+        print(f"canary: OK  id={canary.id}  expires={canary.meta.get('expires')}")
+    elif (lapsed := last_canary(everything)) is None:
+        # PROTOCOL.md section 20: nothing was ever claimed, so nothing failed. A fresh install is
+        # healthy and its pickup is unverified; that is reported, never a failure.
+        unverified = True
+        print("canary: UNVERIFIED")
+        print("  - install is healthy; pickup has not been verified: file one with "
+              "`canary --from <you> --to <you>`, then confirm your agent's hook shows it")
+    else:
+        # A canary existed and lapsed: pickup was verified once and is not now. Still a FAIL.
         print("canary: MISSING_OR_STALE")
+        print(f"  - last canary {lapsed.id} expired {lapsed.meta.get('expires')} "
+              f"(a canary lasts {CANARY_DEFAULT_HOURS} h unless `canary --hours` says otherwise)")
         print("  - file one with `canary --from <you> --to <you>`, then run doctor again")
         failures.append("pickup canary missing or stale")
-    else:
-        print(f"canary: OK  id={canary.id}  expires={canary.meta.get('expires')}")
 
     if failures:
         for f in failures:
             print(f"FAIL: {f}")
         return 2
-    print("PASS")
+    print("PASS (pickup unverified: no canary has been filed)" if unverified else "PASS")
     return 0
 
 
@@ -4487,8 +4507,8 @@ def _run(argv: list[str] | None) -> int:
                    help="who files the canary")
     c.add_argument("--to", required=True, metavar="IDENTITY",
                    help="who should see it (your own identity is fine)")
-    c.add_argument("--hours", default="24", type=_hours_arg,
-                   help=f"canary TTL in hours (default 24, at most {MAX_CLAIM_HOURS})")
+    c.add_argument("--hours", default=str(CANARY_DEFAULT_HOURS), type=_hours_arg,
+                   help=f"canary TTL in hours (default {CANARY_DEFAULT_HOURS}, at most {MAX_CLAIM_HOURS})")
     c.set_defaults(func=cmd_canary)
 
     lat = sub.add_parser(

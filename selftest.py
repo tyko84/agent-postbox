@@ -728,8 +728,8 @@ def main() -> int:
         dr = subprocess.run(
             [sys.executable, str(HERE / "agent_mail.py"), "doctor"],
             capture_output=True, text=True, env=env)
-        check("doctor fails without live canary",
-              dr.returncode == 2 and "canary: MISSING_OR_STALE" in dr.stdout
+        check("doctor on a mailbox that never had a canary is healthy but UNVERIFIED",
+              dr.returncode == 0 and "canary: UNVERIFIED" in dr.stdout
               and "authorship: CANNOT_VERIFY" in dr.stdout,
               repr(dr.stdout[:500]))
         check("doctor never claims a named author",
@@ -2413,9 +2413,9 @@ def main() -> int:
         fresh.mkdir()
         r = run37(fresh, "doctor")
         check("(e) doctor on a mailbox without a canary names the next step under the canary "
-              "line, still ends with FAIL, and stderr is empty",
-              r.returncode == 2 and r.stdout.rstrip().endswith("FAIL: pickup canary missing or stale")
-              and "canary: MISSING_OR_STALE\n  - file one with `canary --from" in r.stdout
+              "line, is healthy but UNVERIFIED (exit 0), and stderr is empty",
+              r.returncode == 0 and r.stdout.rstrip().endswith("PASS (pickup unverified: no canary has been filed)")
+              and "canary: UNVERIFIED\n  - install is healthy; pickup has not been verified: file one with `canary --from" in r.stdout
               and r.stderr == "", r.stdout[-300:] + r.stderr)
         r = run37(box38, "doctor")
         check("control: with a live canary doctor PASSes and prints no next step",

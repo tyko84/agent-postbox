@@ -612,8 +612,9 @@ def main() -> int:
           "(there is no default):  export AGENT_MAIL_IDENTITY=<name>")
     print(f"  3. {python_cmd()} {dest_rel}/agent_mail.py canary --from <name> --to <name>, "
           f"then {python_cmd()} {dest_rel}/agent_mail.py doctor")
-    print("     `doctor` ends in FAIL: pickup canary missing or stale until a canary is filed "
-          "(and again after 24 h); that is not a broken install.")
+    print("     `doctor` on a fresh install is healthy but reports `canary: UNVERIFIED`; file the canary and "
+          "confirm your agent's hook shows it to verify pickup. A canary lasts 24 h; after that `doctor` "
+          "says `canary: MISSING_OR_STALE` (exit 2) until you file another.")
     if args.adapter == "claude-code":
         print("  Start `claude` from the project root: started in a subdirectory it did not run "
               "the hook (Claude Code 2.1.300, headless).")
