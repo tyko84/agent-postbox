@@ -30,6 +30,11 @@ behaviour).
 
 ### Fixed
 
+- `list`, `inbox`, `status`, `latency`, `show` and `verify` no longer read a mailbox directory this
+  account cannot list (for example mode 000) as an empty one with exit 0. They print
+  `UNREADABLE MAILBOX at <path>` and a `hint:` on stderr, nothing on stdout, and exit 2, the status a
+  missing store already had; `doctor` already said `store: UNREADABLE`. A readable empty mailbox is
+  unchanged (exit 0). Root is unaffected (permission bits do not bind it). Issue #94.
 - `send --key` takes over a key marker longer than 4096 bytes instead of refusing it.
 - `send --to <alias>` now warns on stderr when the alias was read from a different PARTICIPANTS.md than
   the mailbox's own registry (a working directory's or a public checkout's example table could fan mail
