@@ -22,6 +22,8 @@ import unittest
 from pathlib import Path
 from types import ModuleType
 
+from test_fake_claude import FakeClaudeUnavailable, fake_claude_path
+
 HERE = Path(__file__).resolve().parent
 SCRIPT = HERE / "scripts" / "e2e_claude.py"
 TIMEOUT = 120
@@ -84,13 +86,13 @@ class E2EScript(unittest.TestCase):
                             text=True, timeout=TIMEOUT, env=env)
         return cp.returncode, cp.stdout, cp.stderr
 
-    def fake_claude(self) -> Path:
-        bin_dir = self.dir / "bin"
-        bin_dir.mkdir()
-        exe = bin_dir / "claude"
-        exe.write_text(f"#!{sys.executable}\n{FAKE}", encoding="utf-8")
-        exe.chmod(0o755)
-        return bin_dir
+    def fake_claude(self) -> str:
+        """The PATH on which `claude` is the stand-in and no real one exists. Fail closed: if the
+        stand-in cannot be verified the test does not run (see test_fake_claude.py)."""
+        try:
+            return fake_claude_path(self.dir / "bin", FAKE)
+        except FakeClaudeUnavailable as exc:
+            self.skipTest(f"no verified stand-in claude: {exc}")
 
     def check_schema(self, data: dict) -> None:
         self.assertEqual(set(data), KEYS)
@@ -135,13 +137,13 @@ class E2EScript(unittest.TestCase):
         self.assertEqual(zero.used, 0)
 
     def test_a_session_beyond_max_calls_is_never_started(self) -> None:
-        bin_dir = self.fake_claude()
+        path = self.fake_claude()
         log = self.dir / "calls.log"
         report = self.dir / "r.json"
         rc, out, err = self.run_script(
             "--tests", "T1", "--max-calls", "1", "--json", str(report),
             "--workdir", str(self.dir / "work"),
-            path=f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+            path=path,
             extra={"FAKE_LOG": str(log)})
         self.assertEqual(rc, 1, out + err)   # the stand-in answers NONE: positive fails
         calls = log.read_text(encoding="utf-8").splitlines()
@@ -175,9 +177,9 @@ class E2EScript(unittest.TestCase):
         self.assertEqual({c["status"] for c in data["checks"]}, {"SKIP"})
 
     def test_signed_out_skips_everything_and_exits_2(self) -> None:
-        bin_dir = self.fake_claude()
+        path = self.fake_claude()
         log = self.dir / "calls.log"
-        rc, out, _ = self.run_script("--tests", "T2", path=str(bin_dir),
+        rc, out, _ = self.run_script("--tests", "T2", path=path,
                                      extra={"FAKE_LOGGED_OUT": "1", "FAKE_LOG": str(log)})
         self.assertEqual(rc, 2)
         self.assertRegex(out, r"(?m)^SKIP +T2 all +`claude` is not signed in")

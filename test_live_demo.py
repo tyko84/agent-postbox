@@ -27,6 +27,8 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+from test_fake_claude import FakeClaudeUnavailable, fake_claude_path
+
 # A hook, `rebase --exec` or `bisect run` exports GIT_DIR and friends; inherited, they would
 # point this script's temporary repositories at the real one. Test scripts ignore them.
 for _v in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
@@ -414,23 +416,24 @@ class Check(Fixture):
         self.assertEqual(cp.returncode, 2, cp.stdout)
 
 
-# The stand-in `claude` is a script with a shebang, which Windows cannot launch: a PATH lookup
-# there would find the REAL claude (and spend money). Never run these without a working stub.
-@unittest.skipUnless(os.name == "posix", "the stand-in claude is a shebang script; on Windows a "
-                                         "PATH lookup would reach the real claude")
+# These start `claude` sessions of the script under test. They get their PATH from
+# fake_claude_path, which refuses to run unless the stand-in is verified to be the only `claude`.
 class Rehearse(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.dir = Path(self.tmp.name)
         self.bin = self.dir / "bin"
-        self.bin.mkdir()
         self.log = self.dir / "calls.log"
         self.empty = self.dir / "empty"
         self.empty.mkdir()
-        fake = self.bin / "claude"
-        fake.write_text("#!" + sys.executable + "\n" + FAKE)
-        fake.chmod(0o755)
+        # Fail closed: the PATH holds the verified stand-in and no other `claude`. If the
+        # stand-in cannot be launched here the test does not run -- it never falls through to
+        # the real, billable CLI (test_fake_claude.py proves that).
+        try:
+            self.path = fake_claude_path(self.bin, FAKE)
+        except FakeClaudeUnavailable as exc:
+            self.skipTest(f"no verified stand-in claude: {exc}")
 
     def calls(self) -> list[list[str]]:
         if not self.log.exists():
@@ -439,7 +442,7 @@ class Rehearse(unittest.TestCase):
 
     def rehearse(self, *args: str, **env: str) -> subprocess.CompletedProcess[str]:
         return run("rehearse", "--dir", str(self.dir / "demo"), *args,
-                   path=f"{self.bin}{os.pathsep}{os.environ.get('PATH', '')}",
+                   path=self.path,
                    FAKE_LOG=str(self.log), **env)
 
     def test_claude_absent_is_a_skip_with_exit_2_and_nothing_made(self) -> None:
