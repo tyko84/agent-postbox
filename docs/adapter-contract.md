@@ -65,7 +65,7 @@ adds `--since` or reads `status`. It is a building block, not a complete adapter
 
 ## Smallest valuable implementations, in order
 
-1. **Layer-aware health** (shipped as a proposal in the `doctor` change: a fresh install is healthy but
+1. **Layer-aware health** (proposed in the open `doctor` change, PR #93: a fresh install is healthy but
    `UNVERIFIED`). Extend later with the declared activation method and the last canary result.
 2. **Deterministic overflow in the hook.** Today the hook lists every owed ASK and up to 20 other
    messages; the owed block is unbounded, so many open ASKs could exceed a host's hook limit before the
