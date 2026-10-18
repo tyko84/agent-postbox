@@ -247,6 +247,77 @@ class FirstReaderPath(unittest.TestCase):
             self.assertEqual(cp.returncode, 0, cp.stderr)
             self.assertIn("agent-postbox", cp.stdout)
 
+    def test_pip_option_says_it_needs_a_package_index(self) -> None:
+        """pip builds in an isolated environment and fetches setuptools from an index
+        (measured with the index disabled), so the README must not imply pip works offline."""
+        m = re.search(r"\*\*Option 1: pip.*?\*\*Option 2", self.README, re.S)
+        self.assertIsNotNone(m, "README lost its pip option")
+        assert m is not None
+        self.assertIn("setuptools>=77", m.group(0))
+        self.assertRegex(m.group(0), r"network access|package mirror")
+        pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        self.assertIn('requires = ["setuptools>=77"]', pyproject)   # the claim names the real pin
+
+
+class RemovalInstructions(unittest.TestCase):
+    """docs/troubleshooting.md "Removing it" is copy-pasted by someone who wants the tool gone
+    and the messages kept, so the block that deletes messages must not be in the first block."""
+
+    DOC = ROOT / "docs" / "troubleshooting.md"
+
+    @staticmethod
+    def blocks(text: str) -> list[str]:
+        m = re.search(r"^## Removing it\n(.*)", text, re.S | re.M)
+        return re.findall(r"^```sh\n(.*?)^```", m.group(1), re.S | re.M) if m else []
+
+    def test_mailbox_deletion_is_its_own_block_and_the_first_block_keeps_it(self) -> None:
+        blocks = self.blocks(self.DOC.read_text(encoding="utf-8"))
+        self.assertEqual(len(blocks), 2, "expected the keep-the-mailbox block and the delete block")
+        self.assertNotIn("rm -rf docs", blocks[0])
+        self.assertIn("rm -rf docs/agent-mail", blocks[1])
+        self.assertIn("DESTRUCTIVE", blocks[1])
+
+    def test_positive_control_block_splitter_sees_a_merged_block(self) -> None:
+        merged = "## Removing it\n\n```sh\nrm -rf tools\nrm -rf docs/agent-mail\n```\n"
+        self.assertEqual(len(self.blocks(merged)), 1)
+        self.assertIn("rm -rf docs", self.blocks(merged)[0])
+        self.assertEqual(self.blocks("no section"), [])
+
+    def test_first_block_removes_the_tool_and_hook_and_keeps_the_messages(self) -> None:
+        import json
+        blocks = self.blocks(self.DOC.read_text(encoding="utf-8"))
+        self.assertEqual(len(blocks), 2)
+        with tempfile.TemporaryDirectory() as tmp:
+            proj = Path(tmp) / "proj"
+            (proj / ".git").mkdir(parents=True)
+            (proj / ".claude").mkdir()
+            original = {"model": "x", "hooks": {"UserPromptSubmit": [
+                {"hooks": [{"type": "command", "command": "echo mine"}]}]}}
+            (proj / ".claude" / "settings.json").write_text(json.dumps(original, indent=2) + "\n")
+            env = {k: v for k, v in os.environ.items() if not k.startswith("AGENT_MAIL")}
+            env["HOME"] = tmp
+
+            def sh(*argv: str) -> subprocess.CompletedProcess[str]:
+                return subprocess.run(list(argv), cwd=proj, env=env, text=True,
+                                      capture_output=True, timeout=120)
+
+            ins = sh(sys.executable, "-I", str(ROOT / "install.py"), ".", "--adapter", "claude-code")
+            self.assertEqual(ins.returncode, 0, ins.stdout + ins.stderr)
+            sent = sh(sys.executable, "tools/agent-postbox/agent_mail.py", "send", "--type", "NOTICE",
+                      "--from", "agent-a", "--to", "agent-b", "--subject", "keep me", "--body", "x")
+            self.assertEqual(sent.returncode, 0, sent.stderr)
+            script = Path(tmp) / "remove.sh"
+            script.write_text(blocks[0], encoding="utf-8")
+            done = sh("bash", str(script))
+            self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+            self.assertFalse((proj / "tools").exists())
+            self.assertEqual(len(list((proj / "docs" / "agent-mail").glob("*-keep-me.md"))), 1)
+            self.assertEqual(json.loads((proj / ".claude" / "settings.json").read_text()), original)
+            self.assertFalse((proj / ".claude" / "settings.json.bak").exists())
+            # the second block is the one that deletes the messages
+            script.write_text(blocks[1], encoding="utf-8")
+            self.assertEqual(sh("bash", str(script)).returncode, 0)
+            self.assertFalse((proj / "docs").exists())
 
 
 if __name__ == "__main__":
