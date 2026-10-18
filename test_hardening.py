@@ -1808,8 +1808,8 @@ def main() -> int:
 
         if os.geteuid() != 0:
             dark = b3 / "01ARZ3NDEKTSV4RRFFQ69G5FAX-dark.md"
-            dark.write_text(f"---\nid: 01ARZ3NDEKTSV4RRFFQ69G5FAX\ntype: ASK\nfrom: carol\nto: bob\n"
-                            f"date: 2026-10-17T10:00:00Z\nsubject: dark\n---\n\nb\n")
+            dark.write_text("---\nid: 01ARZ3NDEKTSV4RRFFQ69G5FAX\ntype: ASK\nfrom: carol\nto: bob\n"
+                            "date: 2026-10-17T10:00:00Z\nsubject: dark\n---\n\nb\n")
             dark.chmod(0)
             try:
                 seen = run(b3, "inbox", "--to", "bob")
