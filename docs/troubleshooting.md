@@ -30,6 +30,9 @@ python3 tools/agent-postbox/agent_mail.py doctor
 | `selftest.py` takes about 20 s | It exercises crashes and races on purpose | wait; it ends `all checks passed` |
 | `pip install agent-postbox` installed something else | That name on PyPI is an unrelated project | `python3 -m pip uninstall agent-postbox`, then `python3 -m pip install ./agent-postbox` from a clone. This project's distribution is `tyko84-agent-postbox` |
 | `git status` shows `.claude/`, `.codex/`, `docs/`, `tools/` untracked | The install added them | commit `.claude/settings.json` and `.codex/hooks.json` (that is how the hook reaches the next clone) along with `docs/agent-mail/` and `tools/agent-postbox/` if the team shares them; `*.bak*` files are your pre-install originals |
+| `send` prints `send failed: cannot write to the mailbox: Permission denied (EACCES); nothing written` (exit 1), or `install.py` prints `ABORT: ... is not writable; make it writable, then re-run. Nothing was changed.` (exit 2) | The mailbox directory (or the project, `docs/`, `.claude/`) is read-only for this account. `doctor` reports it as `writable: NO` yet still exits 0, and reading (`list`, `inbox`) works | `chmod u+w` the directory, or run as the account that owns it, then repeat. A read-only `settings.json` inside a writable `.claude/` is not refused: `install.py` replaces the file (after a `.bak`), so lock the directory instead if you want it left alone |
+| `inbox` or the hook prints nothing although mail was sent to you | `AGENT_MAIL_IDENTITY` is set but spelled differently from the `--to` name (`agent_b` versus `agent-b`). `inbox` and the hook do not warn about a name that is not in `PARTICIPANTS.md`: the result is an empty inbox, exit 0 | compare `echo $AGENT_MAIL_IDENTITY` with the `to` names `list --live` shows, and export the exact name |
+| `python3 -m pip install ./agent-postbox` fails with `No matching distribution found for setuptools>=77` | pip builds the package in an isolated environment and fetches its build tool from a package index, so this command needs network access (or a mirror). Checked with the index disabled | use Option 2 or 3 of the README Install section, which need no pip and no index, or make an index reachable |
 | Windows | Unsupported and untested. WSL: not tried | use Linux or macOS |
 
 A mailbox that is wrong in some other way: `agent_mail.py status` and
@@ -42,14 +45,17 @@ There is no uninstall command. These steps were run in three throwaway git
 projects (nothing of ours; an existing `.claude/settings.json` with other keys;
 an existing `UserPromptSubmit` hook plus a `.codex/hooks.json` of its own) and
 each came back to the exact prior state (SHA-256 of every file and the
-directory list compared; `git status` empty). The one change since then: step 4
-used a glob that stops with `no matches found` in zsh (the macOS default shell)
-when no numbered backup exists; it now uses `find`. Re-run on 2026-10-13 in zsh,
-on a project with both adapters. Not covered: Codex's own trust record for the
+directory list compared; `git status` empty). The changes since then: the
+numbered-backup step used a glob that stops with `no matches found` in zsh (the
+macOS default shell) when no numbered backup exists, so it now uses `find`; and the
+step that deletes the mailbox is its own block (step 4), so that running the first
+block whole cannot delete messages. Re-run on 2026-10-13 in zsh, on a project with
+both adapters. Not covered: Codex's own trust record for the
 hook, and any tooling of yours that learned the paths.
 
-Run from the project root. Read each step first; **step 3 deletes every
-message and claim.**
+Run from the project root. Read each step first. The first block (steps 1 to 3)
+keeps `docs/agent-mail/`, so every message and claim survives it; **step 4 is a
+separate block and deletes every message and claim.**
 
 ```sh
 # 1. The tool and the adapter script. Nothing else lives there by default.
@@ -100,16 +106,18 @@ for name in sys.argv[1:]:
         pass
 EOF
 
-# 3. OPTIONAL AND DESTRUCTIVE: the mailbox, which is every message and claim.
-#    Skip it, or `git add` it somewhere first, if anyone might want the history.
-rm -rf docs/agent-mail
-rmdir docs 2>/dev/null || true
-
-# 4. The numbered backups (.bak.1, .bak.2, ...). The unnumbered .bak is
+# 3. The numbered backups (.bak.1, .bak.2, ...). The unnumbered .bak is
 #    consumed by step 2 when it matches; if step 2 said "left for you to
 #    inspect", compare, then delete by hand.
 find .claude .codex -maxdepth 1 -name '*.bak.[0-9]*' -delete 2>/dev/null
 rmdir .claude .codex 2>/dev/null || true   # without this the block exits 1 when they are not empty
+```
+
+```sh
+# 4. OPTIONAL AND DESTRUCTIVE: the mailbox, which is every message and claim.
+#    Skip it, or `git add` it somewhere first, if anyone might want the history.
+rm -rf docs/agent-mail
+rmdir docs 2>/dev/null || true
 ```
 
 What it matches and what it leaves:
@@ -120,9 +128,11 @@ What it matches and what it leaves:
 * If you edited `settings.json` after the install, the result no longer equals
   the `.bak`, so the file is rewritten (two-space indent, key order kept) and
   the `.bak` is left; nothing else in the file is lost.
+* If you stopped part way (after step 1, say), run the first block again: each step skips what
+  is already gone (a missing hook file prints `skip ... not there`).
 * `rmdir` removes `.claude`, `.codex`, `docs` and `tools` only when empty, so a
   directory that was already there with other contents stays.
-* With `--dest` or `--mailbox`, substitute those paths in steps 1 and 3.
+* With `--dest` or `--mailbox`, substitute those paths in steps 1 and 4.
 * Nothing under `~`, `.git/`, `.gitignore`, global Claude Code or Codex
   settings, environment variables or shell profiles was touched by the install,
   so nothing there needs undoing except an `AGENT_MAIL_IDENTITY` you exported
