@@ -914,6 +914,14 @@ reserved once per writer and a retry of the fan-out is unaffected. Another sende
 key text is independent. To keep the cost flat the check reads only the newest 64 messages: an
 original older than that is not found, and the retry is then written as before.
 
+The check is best effort. It is not atomic with the reservation, so two sends of one key to two
+recipients started at the same instant can both publish (observed in a few percent of simultaneous
+trials; a sequential retry is always caught). It fails open where it cannot read: a mailbox that can
+be written but not listed, or an original message file that cannot be read, does not stop a send to
+another recipient. A key used for an alias and then retried to one of that alias's writers is
+refused (the original went to a different recipient); the reverse, a key used for one writer and
+then sent to the alias, files the other writers' copies and reports `duplicate of` for the first.
+
 **Rule.** A send that reserves a key holds an exclusive kernel lock
 (`flock(2)`) on its marker from before the marker becomes visible until it has
 published or given up. The kernel drops the lock the instant the holder exits,
