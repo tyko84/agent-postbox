@@ -479,7 +479,9 @@ Detail and the checklist for confirming a host: [docs/hosts.md](docs/hosts.md).
 agent-postbox is one stdlib-only file. **POSIX only** (Linux, macOS): the
 atomic-send and lock code relies on POSIX file semantics, CI runs on Linux and
 macOS, and Windows is untested and unsupported (WSL has not been tried).
-Python 3.10-3.14.
+Python 3.10-3.14. `git` is needed to clone it and for `--adapter codex`, whose hook runs
+`git rev-parse` at every prompt; the CLI, the Claude Code hook and `install.py` do not run git
+(checked with git absent from `PATH`).
 
 > **Not on PyPI. Do not `pip install agent-postbox`.** This project is not
 > published on PyPI, and its distribution name is `tyko84-agent-postbox`. The
@@ -502,7 +504,10 @@ On Debian and Ubuntu (24.04 observed) and other systems whose `python3` is distr
 that `pip install` stops with `error: externally-managed-environment` (PEP 668) and installs
 nothing. Install into a virtual environment instead:
 `python3 -m venv .venv && .venv/bin/python -m pip install ./agent-postbox`, then run
-`.venv/bin/agent-postbox`. Options 2 and 3 below need no pip and are not affected.
+`.venv/bin/agent-postbox`. Options 2 and 3 below need no pip and are not affected. This option also needs network access
+(or a package mirror): pip builds the package in an isolated environment and fetches
+`setuptools>=77` from an index, and with the index disabled it stops with
+`No matching distribution found for setuptools>=77`.
 
 The `./` matters: `pip install ./agent-postbox` installs the directory you just
 cloned, while `pip install agent-postbox` would ask PyPI for the unrelated
