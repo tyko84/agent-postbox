@@ -1072,6 +1072,20 @@ published <id> with a different <header>`, and writes nothing, instead of
 (an ANSWER retried with the correct `--reply-to` left its ASK open). An orphan
 whose message never landed is not affected: the retry publishes its own headers.
 
+**A retry whose original is quarantined.** `duplicate of` promises that the message exists
+for readers. A landed message that `load_messages` quarantines (§5a, §24: an unreadable-frontmatter,
+bad body, missing or malformed id, unknown type, missing `from`/`to` or unparseable date
+file) is shown to nobody, so the retry is refused: exit 2, one stderr line naming the id and
+why (`... already published <id>, but that message is quarantined (<reason>) and will never be
+delivered; nothing written`), no `duplicate of`, no `id:` line on stdout. Nothing is published,
+the key marker is left as it was (the key stays bound to that id) and the quarantined file is
+neither read for repair nor touched. When the file is repaired, the same key answers
+`duplicate of` again. A file that cannot be read at all, is absent, or is a symlink or other
+non-regular file (never followed, §2) stays a plain duplicate (unchanged: it cannot be judged). The check applies the same per-file rules as `load_messages`
+(one shared function), so the two cannot disagree; the duplicate-id rule needs the whole
+mailbox and is not applied. Exit 2 is the existing "refused or unhealthy: quarantined files
+present" meaning (§33); no exit code is added.
+
 **Invariant a test must pin.** (a) A marker whose holder is alive is never
 taken over, however long the retry waits: with a live process holding the
 marker lock and no message, a retry at key wait 0 exits 3, writes nothing and

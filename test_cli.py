@@ -1852,6 +1852,47 @@ def test_visibility(root: Path) -> None:
           r.returncode == base.returncode, f"{r.returncode} vs {base.returncode}")
 
 
+def test_keyed_retry_of_quarantined_original(root: Path) -> None:
+    """A keyed retry whose landed original is quarantined is refused (exit 2), not reported as a
+    duplicate of mail nobody will ever be shown (PROTOCOL.md section 31)."""
+    box = root / "kq"
+    box.mkdir()
+    argv = ("send", "--type", "ASK", "--from", "alice", "--to", "bob", "--subject", "do it",
+            "--body", "please", "--key", "k1")
+    first = run(box, *argv)
+    landed = sorted(box.glob("*.md"))
+    mid = first.stdout.split("id:")[-1].strip().split()[0] if "id:" in first.stdout else ""
+    check("setup: the keyed send lands one message", first.returncode == 0 and len(landed) == 1
+          and mid != "", repr((first.returncode, first.stdout, first.stderr)))
+    control = run(box, *argv)
+    check("control: a retry of an intact original is still `duplicate of`, exit 0",
+          control.returncode == 0 and control.stdout.startswith("duplicate of ")
+          and len(list(box.glob("*.md"))) == 1, repr((control.returncode, control.stdout)))
+    path = landed[0]
+    good = path.read_text(encoding="utf-8")
+    marker = next(box.glob(".idem.*"))
+    marker_before = marker.read_bytes()
+    for what, damaged in (
+            ("loses its from:", "\n".join(ln for ln in good.split("\n") if not ln.startswith("from:"))),
+            ("is truncated before the closing ---", good.split("\n---\n")[0]),
+            ("has an unknown type", good.replace("type: ASK", "type: WHATEVER", 1))):
+        path.write_text(damaged, encoding="utf-8")
+        r = run(box, *argv)
+        check(f"a retry whose original {what} exits 2 and says quarantined, not `duplicate of`",
+              r.returncode == 2 and "quarantined" in r.stderr and "duplicate of" not in r.stdout
+              and mid in r.stderr, repr((r.returncode, r.stdout, r.stderr)))
+        check(f"...and writes nothing: one file, same bytes, same marker ({what})",
+              list(box.glob("*.md")) == [path] and path.read_text(encoding="utf-8") == damaged
+              and marker.read_bytes() == marker_before
+              and not any(p.name.startswith(".tmp") for p in box.iterdir()),
+              repr(sorted(p.name for p in box.iterdir())))
+    path.write_text(good, encoding="utf-8")
+    again = run(box, *argv)
+    check("once the original is repaired the same key answers `duplicate of` again",
+          again.returncode == 0 and again.stdout.startswith("duplicate of "),
+          repr((again.returncode, again.stdout, again.stderr)))
+
+
 def test_answer_from_third_party(root: Path) -> None:
     """A bare ANSWER from someone the ASK was not addressed to is reported, never undone
     (PROTOCOL.md section 45)."""
@@ -2763,6 +2804,7 @@ def main() -> int:
         test_doctor_writable_line(root)
         test_answer_from_third_party(root)
         test_citation_from_third_party(root)
+        test_keyed_retry_of_quarantined_original(root)
         test_alias_mail_undelivered(root)
         test_fanout_holds(root)
         test_silent_recipient(root)
