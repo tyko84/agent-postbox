@@ -131,6 +131,64 @@ class ReadmeExamples(unittest.TestCase):
         self.assertIn("already held by agent-a", res.stdout)  # rival claim refused
         self.assertIn("store: OK", res.stdout)      # doctor ran
 
+    def test_readme_upgrade_instructions_are_true(self) -> None:
+        """README's "Upgrading" section says re-running install.py from a newer clone replaces
+        the copied tool and keeps the mailbox, its messages and PARTICIPANTS.md."""
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        m = re.search(r"^### Upgrading\n(.*?)(?=^#{2,3} )", readme, re.S | re.M)
+        self.assertIsNotNone(m, "README has no 'Upgrading' section under Install")
+        assert m is not None
+        section = m.group(1)
+        for needle in ("pull", "install.py", "PARTICIPANTS.md", "selftest.py"):
+            self.assertIn(needle, section)
+        with tempfile.TemporaryDirectory() as tmp:
+            proj = Path(tmp) / "proj"
+            proj.mkdir()
+            env = {k: v for k, v in os.environ.items() if not k.startswith("AGENT_MAIL")}
+            env["HOME"] = tmp
+
+            def run(*argv: str) -> subprocess.CompletedProcess[str]:
+                return subprocess.run([sys.executable, *argv], cwd=proj, env=env, text=True,
+                                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=120)
+
+            subprocess.run(["git", "init", "-q", str(proj)], check=True, env=env)
+            self.assertEqual(run(str(ROOT / "install.py"), ".").returncode, 0)
+            tool = proj / "tools" / "agent-postbox" / "agent_mail.py"
+            sent = run(str(tool), "send", "--type", "NOTICE", "--from", "agent-a",
+                       "--to", "agent-b", "--subject", "kept", "--body", "survives an upgrade")
+            self.assertEqual(sent.returncode, 0, sent.stdout)
+            people = proj / "docs" / "agent-mail" / "PARTICIPANTS.md"
+            people.write_text(people.read_text(encoding="utf-8") + "\n<!-- mine -->\n", encoding="utf-8")
+            mine = people.read_text(encoding="utf-8")
+            # an older tool: put a stale marker in the copy
+            tool.write_text(tool.read_text(encoding="utf-8") + "\n# STALE-COPY\n", encoding="utf-8")
+            up = run(str(ROOT / "install.py"), ".")
+            self.assertEqual(up.returncode, 0, up.stdout)
+            self.assertNotIn("STALE-COPY", tool.read_text(encoding="utf-8"))   # tool replaced
+            self.assertEqual(people.read_text(encoding="utf-8"), mine)          # participants kept
+            listed = run(str(tool), "list")
+            self.assertIn("kept", listed.stdout)                                # message kept
+
+    def test_first_doctor_exit_status_matches_the_walkthrough(self) -> None:
+        """The first `doctor` on a fresh install exits 0 and says UNVERIFIED; no page may
+        describe that first run as an exit 2."""
+        with tempfile.TemporaryDirectory() as tmp:
+            proj = Path(tmp) / "proj"
+            proj.mkdir()
+            env = {k: v for k, v in os.environ.items() if not k.startswith("AGENT_MAIL")}
+            env["HOME"] = tmp
+            subprocess.run(["git", "init", "-q", str(proj)], check=True, env=env)
+            inst = subprocess.run([sys.executable, str(ROOT / "install.py"), "."], cwd=proj,
+                                  env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            self.assertEqual(inst.returncode, 0, inst.stdout)
+            doc = subprocess.run([sys.executable, "tools/agent-postbox/agent_mail.py", "doctor"],
+                                 cwd=proj, env=env, text=True, stdout=subprocess.PIPE,
+                                 stderr=subprocess.STDOUT)
+            self.assertEqual(doc.returncode, 0, doc.stdout)
+            self.assertIn("canary: UNVERIFIED", doc.stdout)
+        page = (ROOT / "docs" / "onboarding-first-exchange.md").read_text(encoding="utf-8")
+        self.assertNotIn("`doctor` (exit 2), `canary`", page)
+
     def test_positive_control_failing_example_is_caught(self) -> None:
         self.assertNotEqual(run_blocks(["false"]).returncode, 0)
         bad = run_blocks([

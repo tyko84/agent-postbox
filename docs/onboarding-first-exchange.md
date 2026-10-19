@@ -146,10 +146,13 @@ offline (`pip install --no-index`) into a fresh venv.
 | Quickstart 4: `send` ASK, `inbox`, `send` ANSWER, `inbox` (4 commands) | 0.20 s | 0.20 s | 0.20 s |
 | Quickstart 5: hook preview | 0.06 s | 0.06 s | 0.06 s |
 | **Quickstart steps 1-5, total** | **1.29 s** | **1.31 s** | **1.27 s** |
-| `doctor` (exit 2), `canary`, `doctor` (PASS) | 0.15 s | 0.16 s | 0.15 s |
+| `doctor` (first run), `canary`, `doctor` (PASS) | 0.15 s | 0.16 s | 0.15 s |
 | `selftest.py` | 21.31 s | 19.13 s | 19.13 s |
 | Everything above | 22.75 s | 20.60 s | 20.55 s |
 | Optional: venv + `pip install` of the wheel + `agent-postbox --version` | 1.50 s | 1.54 s | 1.40 s |
+
+The first `doctor` exited 2 when these runs were made; it now exits 0 and reports
+`canary: UNVERIFIED` (step 4 above). The seconds are unchanged in kind: `doctor` is read-only.
 
 By commands alone a first exchange takes about 1.3 seconds (about 20 seconds with
 `selftest.py`); reading takes the rest. "Five minutes" in this page's title is a claim about a

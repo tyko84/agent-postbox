@@ -1699,6 +1699,22 @@ class Workflows(unittest.TestCase):
         # profiles and everything that drives agent_mail.py stay in every cell
         self.assertEqual(sorted(t.argv[0] for t in mod.TESTS if t.once), ["test_publication.py"])
 
+    def test_contributing_lists_every_test_script_ci_runs(self) -> None:
+        # CONTRIBUTING.md tells a contributor which scripts "must pass" before a pull request.
+        # A script CI runs that the list omits is a red CI job after a clean local run.
+        mod = self.runner()
+        root = self.RUNNER.parent.parent
+        doc = root / "CONTRIBUTING.md"
+        if not doc.is_file():
+            self.skipTest("CONTRIBUTING.md is not shipped here (e.g. unpacked sdist)")
+        text = doc.read_text(encoding="utf-8")
+        named = set(re.findall(r"`python ([^\s/`]+\.py)`", text))   # root-level scripts only
+        want = {t.argv[0] for t in mod.TESTS if "/" not in t.argv[0]} | set(mod.ELSEWHERE)
+        self.assertEqual(sorted(want - named), [], "CONTRIBUTING.md omits a test script CI runs")
+        self.assertEqual(sorted(named - want), [], "CONTRIBUTING.md names a script CI does not run")
+        # positive control: the check does see a script that is not named
+        self.assertIn("test_nonexistent_script.py", {"test_nonexistent_script.py"} - named)
+
     def test_the_selftest_job_keeps_every_cell_and_gives_the_once_scripts_to_3_12(self) -> None:
         job = self.jobs("ci.yml")["selftest"]
         self.assertIn("matrix.python == '3.12' && '--with-once'", job)
