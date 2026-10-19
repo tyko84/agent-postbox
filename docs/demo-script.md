@@ -86,7 +86,7 @@ scope 'billing/client.py' is already held by agent-b (01M5342YVYWP2PEZBC51JAAGZ7
 
 ```text
 == 8. a holder disappears, its lease expires, a rival takes over  (scripted, no model)
-# agent-b takes a deliberately short lease (3 s) on billing/retry.py and then
+# agent-b takes a deliberately short lease (6 s) on billing/retry.py and then
 # does nothing more: it has crashed. Nothing releases the scope but the clock.
 $ AGENT_MAIL_IDENTITY=agent-b python tools/agent-postbox/agent_mail.py send --type CLAIM \
       --from agent-b --to agent-a --subject 'editing the retry module' --scope billing/retry.py \
@@ -105,7 +105,7 @@ scope 'billing/retry.py' is already held by agent-b (01M5342ZGR1DKF75ESWHSH7YJG,
    [checked] while the lease is live, agent-a is refused with exit 3
    [checked] the refusal wrote nothing
 
-... agent-b never renews. Waiting for the lease to run out (2 s) ...
+... agent-b never renews. Waiting for the lease to run out (5 s) ...
 $ AGENT_MAIL_IDENTITY=agent-a python tools/agent-postbox/agent_mail.py status \
       --scope billing/retry.py
 # status  mailbox: <project>/docs/agent-mail  now: 2026-10-16T19:47:43Z
@@ -421,7 +421,7 @@ Step 8 (`--takeover` only) prints, after step 7:
 
 ```text
 == 8. a holder disappears, its lease expires, a rival takes over  (scripted, no model)
-# agent-b takes a deliberately short lease (3 s) on billing/retry.py and then
+# agent-b takes a deliberately short lease (6 s) on billing/retry.py and then
 # does nothing more: it has crashed. Nothing releases the scope but the clock.
 $ AGENT_MAIL_IDENTITY=agent-b python tools/agent-postbox/agent_mail.py send --type CLAIM \
       --from agent-b --to agent-a --subject 'editing the retry module' --scope billing/retry.py \
@@ -440,7 +440,7 @@ scope 'billing/retry.py' is already held by agent-b (01M5342ZGR1DKF75ESWHSH7YJG,
    [checked] while the lease is live, agent-a is refused with exit 3
    [checked] the refusal wrote nothing
 
-... agent-b never renews. Waiting for the lease to run out (2 s) ...
+... agent-b never renews. Waiting for the lease to run out (5 s) ...
 $ AGENT_MAIL_IDENTITY=agent-a python tools/agent-postbox/agent_mail.py status \
       --scope billing/retry.py
 # status  mailbox: <project>/docs/agent-mail  now: 2026-10-16T19:47:43Z
@@ -503,7 +503,7 @@ Removed <the temporary directory>. Run with --keep to look at the files.
 |---|---|---|
 | `python3: command not found` or a license prompt on macOS | no Python, or Xcode license not accepted | `brew install python` or `sudo xcodebuild -license` |
 | `FAILED at step N: ...` | the script found a step that did not behave as described | stop; that is a bug report (CONTRIBUTING.md, field reports), not something to retake around |
-| Step 8 seems to hang | it waits about 4 seconds for a real 3-second lease | leave it; cutting it hides the point |
+| Step 8 seems to hang | it waits about 7 seconds for a real 6-second lease | leave it; cutting it hides the point |
 | `doctor` says `canary: UNVERIFIED` (exit 0), or later ends `FAIL: pickup canary missing or stale` (exit 2) | no canary filed yet (healthy, unverified), or the last one lapsed after 24 hours | `agent_mail.py canary --from agent-a --to agent-a`, then `doctor` |
 | `doctor` says `AGENT_MAIL_IDENTITY: UNSET` | the shell has no identity | `export AGENT_MAIL_IDENTITY=agent-a` |
 | `NO MAILBOX at ...` | you are outside the kept project | `cd` into it, or set `AGENT_MAIL_DIR` |

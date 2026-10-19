@@ -147,7 +147,7 @@ wall-clock, which is exactly what we have not measured.
    chose, and what the agent did next.
 6. Claims (about 5 minutes; optional): from one identity send a `CLAIM` on a scope with an expiry
    (README, "Claims and findings"), try the same scope from another identity and note the
-   refusal (exit 3), then either wait for a short lease to run out (`demo-script.md` uses 3
+   refusal (exit 3), then either wait for a short lease to run out (`demo-script.md` uses 6
    seconds) and claim it again, or say you did not try. Note anything that differed from the README.
 7. Follow the removal steps and say whether the project is back to how it was.
 

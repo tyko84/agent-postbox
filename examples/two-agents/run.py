@@ -48,7 +48,7 @@ SCOPE = "billing/client.py"
 SUBJECT = "can you add a retry test for the billing client?"
 TIMEOUT = 60
 LEASE_SCOPE = "billing/retry.py"
-LEASE_SECONDS = 3                                   # step 8 only: a deliberately short lease
+LEASE_SECONDS = 6                                   # step 8 only: a short lease, with room for two process starts
 _ID = re.compile(r"^id: ([0-9A-HJKMNP-TV-Z]{26})$", re.M)
 
 
@@ -259,7 +259,7 @@ def play(d: Demo) -> None:
 def takeover(d: Demo) -> None:
     """Step 8 (opt-in, `--takeover`): a holder that never renews loses the scope.
 
-    Scripted, no model. The only wait is the real clock running past a 3 second lease,
+    Scripted, no model. The only wait is the real clock running past a short lease (LEASE_SECONDS),
     because `send` refuses an expiry in the past and the tool reads the real time."""
     d.step("a holder disappears, its lease expires, a rival takes over  (scripted, no model)",
            f"agent-b takes a deliberately short lease ({LEASE_SECONDS} s) on {LEASE_SCOPE} and then",
@@ -318,7 +318,7 @@ def main(argv: list[str] | None = None) -> int:
                     help="wait for Enter between steps (for reading along or recording)")
     ap.add_argument("--takeover", action="store_true",
                     help="add step 8: a holder's short lease expires and a rival takes over "
-                         "(waits about 4 seconds; scripted, no model)")
+                         "(waits about 7 seconds; scripted, no model)")
     args = ap.parse_args(argv)
     if sys.version_info < (3, 10):  # noqa: UP036  (say so, instead of a traceback)
         print("agent-postbox needs Python 3.10 or newer", file=sys.stderr)

@@ -45,7 +45,7 @@ program could not be started or the run stopped early before any check failed (a
 exits non-zero for everything fails checks, exit 1). Python 3.10 or newer is required (macOS ships 3.9 as
 `python3`: use an explicit interpreter). On Windows the tool under test must be a Windows-capable
 `agent_mail.py` (the unmerged Windows port); main alone cannot start there. A run takes about 15 to 30 seconds, most of it
-process start-up and one three-second wait for a short lease to lapse.
+process start-up and one six-second wait for a short lease to lapse.
 
 ## The three groups
 
