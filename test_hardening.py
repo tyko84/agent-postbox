@@ -1118,7 +1118,12 @@ def main() -> int:
         dead_lock = next(r12.glob(".scope.*.lock"))
         age(dead_marker, 59)
         age(dead_lock, 59)
-        check("59 s old: still in flight", codes(r12) == {}, str(stj(r12)))
+        # Evaluated at the files' own time plus 59 s, not at the real clock: on a loaded runner
+        # a pause of a second between `age` and `status` made them 60 s old and failed this.
+        newest = max(dead_marker.stat().st_mtime, dead_lock.stat().st_mtime)
+        at59 = dt.datetime.fromtimestamp(int(newest) + 59, dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        check("59 s old: still in flight", codes(r12, "--now", at59) == {},
+              str(stj(r12, "--now", at59)))
         age(dead_marker, 61)
         age(dead_lock, 61)
         before12 = tree(r12)
