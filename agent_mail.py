@@ -2089,9 +2089,7 @@ def _idem_other_recipient(box: Path, sender: str, to: str, key: str,
             # no evidence of anything.
             cid = name.split("-", 1)[0]
             if _is_ulid(cid) and (meta.get("id") or "").strip().upper() == cid.upper():
-                ok = (not problem and _body_char_error(body) == ""
-                      and meta.get("type", "") in KNOWN_TYPES and bool(meta.get("from"))
-                      and "date" in meta and _parse_iso(meta["date"]) is not None)
+                ok = _admit_message(box / name, meta, body, problem)[0] is not None
                 copies.append(_KeyedCopy(cid, ok, (meta.get("type", ""), meta.get("subject", ""),
                                                    body.strip()) == want))
     return "", ""

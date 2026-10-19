@@ -1986,6 +1986,25 @@ def test_keyed_retry_recovers_from_the_header(root: Path) -> None:
     check("a symlink out of the mailbox is never followed as the original: the retry publishes",
           r.returncode == 0 and r.stdout.startswith("wrote"), repr((r.returncode, r.stdout, r.stderr)))
 
+    b, mid = fresh("fifo")
+    next(b.glob(".idem.*")).unlink()
+    os.mkfifo(b / "01ARZ3NDEKTSV4RRFFQ69G5FB1-fifo.md")
+    r = run(b, *argv)
+    check("a FIFO named like a message is never opened (no hang) and the real original is still found",
+          r.returncode == 0 and r.stdout.startswith(f"duplicate of {mid}"),
+          repr((r.returncode, r.stdout, r.stderr)))
+
+    b, mid = fresh("race")
+    next(b.glob(".idem.*")).unlink()
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(8) as pool:
+        outs = list(pool.map(lambda _: run(b, *argv), range(8)))
+    check("8 concurrent retries after marker loss leave exactly one message and publish none",
+          len(list(b.glob("*.md"))) == 1
+          and all(o.returncode in (0, 3) for o in outs)
+          and any(o.stdout.startswith(f"duplicate of {mid}") for o in outs),
+          repr([(o.returncode, o.stdout.strip()[:40]) for o in outs]))
+
     b, mid = fresh("window")
     next(b.glob(".idem.*")).unlink()
     for i in range(70):
