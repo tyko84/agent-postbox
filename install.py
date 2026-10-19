@@ -153,6 +153,19 @@ def hook_python_refusal() -> str | None:
             f"({seen}); install Python 3.10+ or put it on PATH, then re-run")
 
 
+def installer_python_refusal(version: tuple[int, ...] | None = None) -> str | None:
+    """The installer's own interpreter is the one the no-adapter instructions tell
+    the user to run; below 3.10 the tool refuses to start, so refuse here, up front,
+    with or without --adapter."""
+    version = version or tuple(sys.version_info[:3])
+    if version >= (3, 10):
+        return None
+    running = ".".join(map(str, version))
+    return (f"agent-postbox needs Python 3.10 or newer; this installer is running {running} "
+            f"({sys.executable}). Re-run it with a newer interpreter, for example "
+            "`python3.12 install.py <project>` (check with `python3 --version`)")
+
+
 def python_cmd() -> str:
     """The interpreter that ran this installer, used only in local instructions."""
     return sys.executable
@@ -553,7 +566,8 @@ def main() -> int:
 
     dest_rel = args.dest.replace("\\", "/").strip("/")
     dest = project / dest_rel
-    runtime_refusal = hook_python_refusal() if args.adapter else None
+    runtime_refusal = installer_python_refusal() or (
+        hook_python_refusal() if args.adapter else None)
     refusal = escaped or runtime_refusal or path_refusal(
         project, dest_rel, args.mailbox) or (
         codex_refusal(project, dest_rel) if args.adapter == "codex"
