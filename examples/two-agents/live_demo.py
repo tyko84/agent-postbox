@@ -149,12 +149,22 @@ class Spend:
 
 
 # ---- setup ------------------------------------------------------------------------------
+# Variables that select which repository a git command acts on. A hook, `git rebase --exec` or
+# `bisect run` exports them; inherited, `git add -A` and `git commit` below would act on the
+# invoking repository instead of the demo project (`git -C` does not override them).
+GIT_REPO_VARS = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
+                 "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_PREFIX",
+                 "GIT_NAMESPACE", "GIT_CEILING_DIRECTORIES")
+
+
 def clean_env(extra: dict[str, str] | None = None) -> dict[str, str]:
-    """No inherited AGENT_MAIL_* and none of the variables a parent Claude Code sets."""
+    """No inherited AGENT_MAIL_*, no git repository selectors, and none of the variables a
+    parent Claude Code sets."""
     parent = re.compile(r"^(CLAUDECODE|CLAUDE_PID|CLAUDE_PROJECT_DIR|CLAUDE_EFFORT|"
                         r"CLAUDE_CODE_\w+|PAYMENTS_REGISTRY)$")
     env = {k: v for k, v in os.environ.items()
-           if not parent.match(k) and not k.startswith("AGENT_MAIL_")}
+           if not parent.match(k) and not k.startswith("AGENT_MAIL_")
+           and k not in GIT_REPO_VARS}
     env.update(extra or {})
     return env
 
