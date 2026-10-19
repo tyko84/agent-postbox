@@ -417,7 +417,7 @@ def write_atomic(path: Path, data: bytes, mode: int | None = None) -> None:
                  0o666 if mode is None else mode)
     try:
         with os.fdopen(fd, "wb") as f:
-            if mode is not None:
+            if mode is not None and hasattr(os, "fchmod"):   # no fchmod on Windows
                 os.fchmod(f.fileno(), mode)     # the umask must not narrow it
             f.write(data)
             f.flush()
