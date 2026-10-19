@@ -13,6 +13,10 @@ behaviour).
 
 ### Changed
 
+- Argument errors now print the `error:` line first and the usage block after it (argparse printed
+  usage first and the error last, so the error sat under about 18 lines of usage). Exit status 2
+  and an empty stdout are unchanged. A script that parsed the last stderr line for the error must
+  now read the first.
 - `show <id>` for an id that only a quarantined file carries still exits 1 with `no message with id
   <id>` as its first line, and now adds a second stderr line naming the quarantined file, so a
   reader does not conclude the mail never arrived.

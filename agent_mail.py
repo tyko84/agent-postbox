@@ -80,7 +80,7 @@ import signal  # noqa: E402
 import time  # noqa: E402
 import unicodedata  # noqa: E402
 from pathlib import Path  # noqa: E402
-from typing import Any  # noqa: E402
+from typing import Any, NoReturn  # noqa: E402
 
 TYPES = ("ASK", "ANSWER", "NOTICE", "CLAIM", "DISPUTE")
 EXTENSION_TYPES: frozenset[str] = frozenset()
@@ -4380,6 +4380,14 @@ class _Parser(argparse.ArgumentParser):
         # nowhere to say it, so it is not said.
         if message:
             print(message, end="", file=file)
+
+    def error(self, message: str) -> NoReturn:
+        # The `error:` line goes first so it is not buried under the usage block
+        # (argparse's default prints usage, then the error). Exit status stays 2.
+        # Subparsers are built with this same class (add_parser uses type(self)).
+        print(f"{self.prog}: error: {message}", file=sys.stderr)
+        self.print_usage(sys.stderr)
+        self.exit(2)
 
 
 def _refuse_list_values(ap: argparse.ArgumentParser, args: argparse.Namespace) -> None:
