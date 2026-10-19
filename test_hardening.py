@@ -378,6 +378,55 @@ def main() -> int:
         check("publish fsyncs the file, then the directory",
               kinds == ["file", "dir"] and (dbox / "m.md").read_text() == "x", str(kinds))
 
+        print("reading a message file: the size cap, and files larger than one chunk")
+        spec_rd = ilu.spec_from_file_location("am_read", TOOL)
+        am_rd = ilu.module_from_spec(spec_rd)  # type: ignore[arg-type]
+        spec_rd.loader.exec_module(am_rd)  # type: ignore[union-attr]
+        CAP = 200_000
+        vars(am_rd)["MAX_FILE_BYTES"] = CAP          # a small cap: the boundaries without 32 MiB files
+        rdir = Path(td) / "readcap"
+        rdir.mkdir()
+
+        for label, size in (("empty", 0), ("one byte", 1), ("one chunk less 1", 65535), ("one chunk", 65536),
+                            ("one chunk and 1", 65537), ("three chunks and a bit", 3 * 65536 + 17),
+                            ("the cap less 1", CAP - 1), ("exactly the cap", CAP)):
+            f = rdir / f"{label.replace(' ', '-')}.md"
+            f.write_bytes(b"a" * size)
+            text, why = am_rd._read_mail_file(f)
+            check(f"{label} ({size} bytes): read whole, byte for byte", text == "a" * size and why == "",
+                  f"len={None if text is None else len(text)} {why}")
+        multi = rdir / "multibyte.md"
+        # 5 bytes a pair, 100,000 bytes: 65,536 is not a multiple of 5, so a character straddles
+        # the chunk boundary
+        multi.write_text("é日" * 20_000, encoding="utf-8")
+        text, why = am_rd._read_mail_file(multi)
+        check("multi-byte characters that straddle a chunk boundary decode intact",
+              text == "é日" * 20_000 and why == "", why)
+        over = rdir / "over.md"
+        over.write_bytes(b"a" * (CAP + 1))
+        text, why = am_rd._read_mail_file(over)
+        check("the cap plus 1: refused up front as oversized, nothing read",
+              text is None and why.startswith("oversized (") and why.endswith(f"> {CAP})"), why)
+        # A file that grew after the size check: the read itself must still stop at the cap.
+        real_lstat = os.lstat
+
+        def small_lstat(path, *a, **k):  # type: ignore[no-untyped-def,unused-ignore]
+            st = real_lstat(path, *a, **k)
+            return os.stat_result((st.st_mode, st.st_ino, st.st_dev, st.st_nlink, st.st_uid, st.st_gid,
+                                   10, int(st.st_atime), int(st.st_mtime), int(st.st_ctime)))
+
+        os.lstat = small_lstat
+        try:
+            text, why = am_rd._read_mail_file(over)
+            grown_ok, grown_why = text, why
+            text, why = am_rd._read_mail_file(rdir / "exactly-the-cap.md")
+        finally:
+            os.lstat = real_lstat
+        check("a file that grew past the cap after the size check is refused by the read itself",
+              grown_ok is None and grown_why == f"oversized (> {CAP} bytes)", grown_why)
+        check("...and one of exactly the cap that did the same is still read whole",
+              text == "a" * CAP and why == "", why)
+
         print("python version guard")
         old = subprocess.run(
             [sys.executable, "-I", "-c",

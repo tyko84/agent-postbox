@@ -123,6 +123,12 @@ behaviour).
   3.11+ happened to accept (basic `20300101T120000`, week dates, an arbitrary separator character,
   an offset with 60 minutes) now read as unparseable everywhere, as 3.10 already did. PROTOCOL.md
   section 5 states the accepted form. The adversarial test no longer expects one fewer CLAIM on 3.10.
+- Reading a message file no longer asks for a 32 MiB buffer per file. Every `list`, `inbox`, `status`,
+  `doctor` and the prompt hook read each file with `read(MAX_FILE_BYTES + 1)`, which allocates the whole
+  cap each time; it is now read in 64 KiB chunks up to the same cap. Output and limits are unchanged.
+  With `scripts/perf_audit.py --sizes 1000,10000 --reps 3` on Linux (WSL2): `list` of 10,000 messages
+  1,336 ms to 767 ms, the hook 1,278 ms to 761 ms, peak memory the same. On Windows the allocation was
+  about 4 ms per file (97 s for 10,000 messages, 2 s after).
 
 ### Added
 
