@@ -2054,13 +2054,16 @@ def test_keyed_retry_recovers_from_the_header(root: Path) -> None:
     check("a symlink out of the mailbox is never followed as the original: the retry publishes",
           r.returncode == 0 and r.stdout.startswith("wrote"), repr((r.returncode, r.stdout, r.stderr)))
 
-    b, mid = fresh("fifo")
-    next(b.glob(".idem.*")).unlink()
-    os.mkfifo(b / "01ARZ3NDEKTSV4RRFFQ69G5FB1-fifo.md")
-    r = run(b, *argv)
-    check("a FIFO named like a message is never opened (no hang) and the real original is still found",
-          r.returncode == 0 and r.stdout.startswith(f"duplicate of {mid}"),
-          repr((r.returncode, r.stdout, r.stderr)))
+    if hasattr(os, "mkfifo"):
+        b, mid = fresh("fifo")
+        next(b.glob(".idem.*")).unlink()
+        os.mkfifo(b / "01ARZ3NDEKTSV4RRFFQ69G5FB1-fifo.md")
+        r = run(b, *argv)
+        check("a FIFO named like a message is never opened (no hang) and the real original is still found",
+              r.returncode == 0 and r.stdout.startswith(f"duplicate of {mid}"),
+              repr((r.returncode, r.stdout, r.stderr)))
+    else:
+        print("  SKIP  a FIFO named like a message is never opened (no FIFOs on this platform)")
 
     b, mid = fresh("race")
     next(b.glob(".idem.*")).unlink()
