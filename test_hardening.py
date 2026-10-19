@@ -1720,6 +1720,112 @@ def main() -> int:
         rk_old = rsend("carol", key="KOLD", subject="old")
         check("documented limit: an original older than the newest 64 messages is not found (written as kbefore)",
               rk_old.returncode == 0 and "duplicate of" not in rk_old.stdout, rk_old.stdout + rk_old.stderr)
+    print("B3: failure recovery leaves valid mail alone, and concurrent answers settle exactly once")
+    import hashlib as hl_b3  # noqa: PLC0415
+    with tempfile.TemporaryDirectory() as tdb3:
+        b3 = Path(tdb3) / "b"
+        b3.mkdir()
+        ask_b3 = mid(run(b3, "ask", "--from", "alice", "--to", "bob", "--subject", "q", "--body", "q"))
+        # Leftovers of crashed senders and of damage: nothing may remove, edit or "finish" them.
+        stale = b3 / f".{'01ARZ3NDEKTSV4RRFFQ69G5FAV'}-x.md.4242.tmp"
+        stale.write_text("---\nid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\ntype: ASK\n")
+        orphan_marker = b3 / f".idem.{'a' * 24}"
+        orphan_marker.write_text(f"01ARZ3NDEKTSV4RRFFQ69G5FAV\n{'b' * 64}\nflock\n")
+        junk_marker = b3 / f".idem.{'c' * 24}"
+        junk_marker.write_text("not a marker")
+        orphan_lock = b3 / f".scope.{'d' * 24}.lock"
+        orphan_lock.write_text("99999\n")
+        (b3 / "01ARZ3NDEKTSV4RRFFQ69G5FAW-torn.md").write_text("---\nid: 01ARZ3NDEKTSV4RRFFQ69G5FAW\ntype: ASK\n")
+        for leftover in (stale, orphan_marker, junk_marker, orphan_lock):
+            os.utime(leftover, (1_000_000_000, 1_000_000_000))
+
+        def snap_b3() -> dict[str, tuple[int, int, int, str]]:
+            return {f.name: (f.lstat().st_ino, f.lstat().st_mtime_ns, f.lstat().st_size,
+                             hl_b3.sha256(f.read_bytes()).hexdigest())
+                    for f in sorted(b3.iterdir())}
+        before_b3 = snap_b3()
+        rcs_b3, tb_b3 = [], False
+        for _round in range(2):
+            for argv in (("list",), ("list", "--json"), ("inbox", "--to", "bob"), ("inbox", "--to", "bob", "--json"),
+                         ("status",), ("status", "--json"), ("doctor",), ("show", ask_b3)):
+                cp = run(b3, *argv)
+                rcs_b3.append((argv[0], cp.returncode))
+                tb_b3 = tb_b3 or "Traceback" in cp.stdout + cp.stderr
+        check("recovery: list, inbox, status, doctor and show twice change no file, inode, mtime or byte "
+              "(stale temp, orphan marker, junk marker, orphan lock, torn file all left in place)",
+              snap_b3() == before_b3, "")
+        check("recovery: no traceback, and the torn file keeps list/inbox/doctor at exit 2 while show of "
+              "the valid ASK is 0",
+              not tb_b3 and all(rc == 2 for name, rc in rcs_b3 if name in ("list", "inbox", "doctor"))
+              and all(rc == 0 for name, rc in rcs_b3 if name in ("show", "status")), str(rcs_b3))
+        after_inbox = run(b3, "inbox", "--to", "bob")
+        check("recovery: the owed ASK is still owed and still shown beside the torn file "
+              "(nothing invented an ANSWER, nothing dropped the ASK)",
+              ask_b3 in after_inbox.stdout and "REJECT" in after_inbox.stderr
+              and not any(f.name.endswith("-answer.md") for f in b3.iterdir()), after_inbox.stderr)
+        unrelated = run(b3, "send", "--type", "NOTICE", "--from", "carol", "--to", "bob", "--subject", "n",
+                        "--body", "b")
+        after_b3 = snap_b3()
+        check("recovery: an unrelated send leaves every pre-existing file byte-for-byte as it was",
+              unrelated.returncode == 0 and all(after_b3.get(k) == v for k, v in before_b3.items()),
+              unrelated.stderr)
+
+        for n_procs in (2, 4, 8):
+            for rnd in range(3):
+                cbox = Path(tdb3) / f"c{n_procs}-{rnd}"
+                cbox.mkdir()
+                ask_c = mid(run(cbox, "ask", "--from", "alice", "--to", "bob", "--subject", "q", "--body", "q"))
+
+                def answer_c(i: int, key: str | None, same: bool, cbox: Path = cbox, ask_c: str = ask_c,
+                             ) -> subprocess.CompletedProcess[str]:
+                    extra = ["--key", key] if key else []
+                    return run(cbox, "send", "--type", "ANSWER", "--from", "bob", "--to", "alice",
+                               "--subject", f"a{key or i}", "--reply-to", ask_c,
+                               "--body", "same" if same else f"body {i}", *extra)
+                with ThreadPoolExecutor(n_procs) as pool:
+                    plain = list(pool.map(lambda i: answer_c(i, None, False), range(n_procs)))
+                    keyed_same = list(pool.map(lambda i: answer_c(i, "K1", True), range(n_procs)))
+                    keyed_diff = list(pool.map(lambda i: answer_c(i, "K2", False), range(n_procs)))
+                names = [f.name for f in cbox.iterdir()]
+                owed_c = run(cbox, "inbox", "--to", "bob").stdout
+                tbs = any("Traceback" in c.stdout + c.stderr for c in plain + keyed_same + keyed_diff)
+                good = (all(c.returncode == 0 for c in plain)
+                        and sum(1 for n in names if n.endswith("-ak1.md")) == 1
+                        and all(c.returncode == 0 for c in keyed_same)
+                        and sum(1 for n in names if n.endswith("-ak2.md")) == 1
+                        and sorted(c.returncode for c in keyed_diff).count(0) == 1
+                        and all(c.returncode in (0, 2, 3) for c in keyed_diff)
+                        and not any(n.endswith(".tmp") for n in names)
+                        and ask_c not in owed_c and not tbs)
+                check(f"{n_procs} concurrent ANSWERs to one ASK, round {rnd}: plain answers all land, a shared "
+                      "key gives one file for identical content and exactly one winner for different content, "
+                      "the ASK is closed, no temp file",
+                      good, f"{[c.returncode for c in plain]} {[c.returncode for c in keyed_same]} "
+                            f"{[c.returncode for c in keyed_diff]} {sorted(names)}")
+
+        other = Path(tdb3) / "other"
+        other.mkdir()
+        ask_other = mid(run(other, "ask", "--from", "alice", "--to", "bob", "--subject", "q", "--body", "q"))
+        stray = run(b3, "send", "--type", "ANSWER", "--from", "bob", "--to", "alice", "--subject", "r",
+                    "--body", "b", "--reply-to", ask_other)
+        owed_here = run(b3, "inbox", "--to", "bob").stdout
+        check("an ANSWER citing an ASK of ANOTHER mailbox is filed (exit 0) and closes nothing here: "
+              "the local ASK stays owed",
+              stray.returncode == 0 and ask_b3 in owed_here, stray.stderr)
+
+        if os.geteuid() != 0:
+            dark = b3 / "01ARZ3NDEKTSV4RRFFQ69G5FAX-dark.md"
+            dark.write_text("---\nid: 01ARZ3NDEKTSV4RRFFQ69G5FAX\ntype: ASK\nfrom: carol\nto: bob\n"
+                            "date: 2026-10-17T10:00:00Z\nsubject: dark\n---\n\nb\n")
+            dark.chmod(0)
+            try:
+                seen = run(b3, "inbox", "--to", "bob")
+            finally:
+                dark.chmod(0o644)
+            check("a message that became unreadable after it was written is named as unreadable "
+                  "(exit 2, REJECT line), never treated as absent; the readable ASK is still shown",
+                  seen.returncode == 2 and "REJECT 01ARZ3NDEKTSV4RRFFQ69G5FAX-dark.md: unreadable" in seen.stderr
+                  and ask_b3 in seen.stdout, seen.stderr)
 
     print("A2: a keyed retry whose headers differ is not reported as a duplicate")
     with tempfile.TemporaryDirectory() as tdk:
