@@ -452,8 +452,9 @@ def optional_checks(cmd: list[str], root: Path) -> None:
 
 def main() -> int:
     if sys.version_info < (3, 10):  # noqa: UP036 - a clear message on an older python3
-        print("run_conformance.py needs Python 3.10 or newer (this is %d.%d); run it with a newer interpreter, "
-              "for example `python3.12 conformance/run_conformance.py`" % sys.version_info[:2], file=sys.stderr)
+        have = f"{sys.version_info[0]}.{sys.version_info[1]}"
+        print(f"run_conformance.py needs Python 3.10 or newer (this is {have}); run it with a newer "
+              "interpreter, for example `python3.12 conformance/run_conformance.py`", file=sys.stderr)
         return 2
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0],
                                  epilog="--cmd must come last: everything after it is the program and its arguments.")
