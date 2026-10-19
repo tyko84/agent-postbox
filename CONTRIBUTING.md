@@ -56,7 +56,7 @@ Code changes:
   `python test_adversarial.py`, `python test_field.py`, `python test_handoff.py`,
   `python test_readme_examples.py`, `python test_publication.py`,
   `python test_packaging.py`, `python test_cli.py`, `python test_scenario.py`,
-  `python test_team_sim.py`, `python test_adapters.py`, `python test_examples.py`, `python test_e2e_script.py`, `python test_live_demo.py`,
+  `python test_team_sim.py`, `python test_adapters.py`, `python test_conformance.py`, `python test_examples.py`, `python test_e2e_script.py`, `python test_live_demo.py`,
   `python test_micro_experiment.py`, `python test_experiment_v2.py`, `python test_experiment_v3.py`
   and `python test_experiment_v4.py`
   must pass
