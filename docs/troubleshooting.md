@@ -19,7 +19,7 @@ python3 tools/agent-postbox/agent_mail.py doctor
 | `send` prints a usage block ending `the following arguments are required: --from` | `send` always needs `--from`; `AGENT_MAIL_IDENTITY` is read by `inbox` and the adapter only | add `--from <you>` |
 | `UNREADABLE MAILBOX at <path>` (exit 2) | The directory exists but this account cannot list it (mode, ownership, a different user). Not an empty inbox: `doctor` says `store: UNREADABLE` | `chmod u+rwx` it or run as the owner, then repeat the command |
 | `NO MAILBOX at <path>` (exit 2) | No `docs/agent-mail` above the current directory, or `AGENT_MAIL_DIR` points at a missing directory. Not an empty inbox | `cd` into the project, run `install.py`, or `mkdir` the `AGENT_MAIL_DIR` directory (it is never created for you) |
-| `send --to agent_b` prints `wrote ...` but nobody gets it | The recipient is not an identity anyone uses (hyphen versus underscore); the message waits as an open ASK | resend with the exact name; check `list --to <name> --live` |
+| `send --to agent_b` prints `wrote ...` but nobody gets it | The recipient is not an identity anyone uses (hyphen versus underscore); the message waits as an open ASK. If the mailbox has a `PARTICIPANTS.md` with rows, a `warning: --to 'agent_b' is not a row in PARTICIPANTS.md` line on stderr names the near match (exit is still 0); with no such table there is no warning | resend with the exact name; check `list --to <name> --live` |
 | Mail was sent, the other session shows nothing | Hook not registered or not trusted (Codex: `/hooks`), identity unset, or the host does not run hooks | `doctor` in that shell; positive control in [hosts.md](hosts.md) |
 | The agent says the `send` command was denied by the permission mode | Claude Code refuses a command that holds a line starting with `#` inside quotes (a markdown heading in `--body`) even when an allow rule matches; or no rule matches the spelling used (a rule for the relative path does not cover the absolute quoted path the pickup hook prints); or a chained `&& other-command` is not allowed. In [experiment v2](experiment-v2-results.md) 9 of 60 runs failed this way, all from the `#` line | `doctor` prints the exact rules to add (`send_permission:`); add the **absolute quoted** one at least, because it is the spelling the pickup hook's `Reply:` line prints (measured: with only the relative rule the agent's own `Reply:` command is denied, with only the absolute one it runs; see "Measured on Claude Code 2.1.300" in [hosts.md](hosts.md)); send multi-line bodies as `--body-file - <<'EOF' ... EOF`; keep each mail command its own call. Do not use `Bash(python3 *agent_mail.py *)`: it does not match the quoted path and does match any script of that name anywhere. Measured on Claude Code 2.1.296 and again on 2.1.300 (same results for these cases; the host's checks can change between versions): `docs/data/permission-probe/`. One more refusal seen on 2.1.300: a heredoc body containing a Python-dict-like `{'count': 3}` was refused although the rule matched (one body tested; backticks were allowed). If a body is refused, write it with `--body-file PATH` from a file the agent wrote with its file tool |
 | Mail was sent, the hook never fires, and `claude` was started in a subdirectory of the project | Claude Code 2.1.300 (headless) did not load the project's `.claude/settings.json` from a parent directory, so the hook did not run at all (no hook event, nothing in context). Measured: [hosts.md](hosts.md) | start `claude` from the directory that holds `.claude/` |
@@ -37,6 +37,17 @@ python3 tools/agent-postbox/agent_mail.py doctor
 A mailbox that is wrong in some other way: `agent_mail.py status` and
 `agent_mail.py verify <id>` (recomputes the fingerprints one message cites; it needs a message
 id) are read-only too.
+
+## Upgrading
+
+There is no upgrade command. Pull or clone the newer release and re-run the same
+`python3 <clone>/install.py <project> [--adapter ...]`. Checked on one version only (a second run
+of the same version, 2026-10-17, macOS, Python 3.13): it prints `copied tool + spec into
+tools/agent-postbox/`, `kept existing docs/agent-mail/PARTICIPANTS.md` and, for an adapter,
+`already registered (no change)`; the mailbox and its messages are not touched. The copy under
+`tools/agent-postbox/` is overwritten without a prompt, so a local edit to it is lost. Upgrading
+across versions was not tested here: read [CHANGELOG.md](../CHANGELOG.md) first and run `doctor`
+afterwards.
 
 ## Removing it
 
