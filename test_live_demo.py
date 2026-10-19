@@ -18,6 +18,7 @@ import importlib.util
 import json
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -310,6 +311,38 @@ class GitIsolation(unittest.TestCase):
             project = Path(tmp) / "demo" / "project"
             self.assertEqual(self.git(project, "rev-list", "--count", "HEAD").strip(), "1")
             self.assertEqual(self.git(project, "log", "-1", "--format=%s").strip(), "baseline")
+
+
+class BaselineCommit(unittest.TestCase):
+    def test_setup_fails_when_the_baseline_commit_fails(self) -> None:
+        # A `git` that fails on commit (a signing or hook failure on a developer's machine would
+        # do the same): setup must exit non-zero and name the step, not print the guide and
+        # exit 0 with a project that has no history.
+        with tempfile.TemporaryDirectory() as tmp:
+            real = shutil.which("git")
+            if real is None:
+                self.skipTest("git is not installed")
+            fake = Path(tmp) / "bin"
+            fake.mkdir()
+            wrapper = fake / "git"
+            wrapper.write_text("#!/bin/sh\nfor a in \"$@\"; do\n  if [ \"$a\" = commit ]; then\n"
+                               "    echo 'simulated commit failure' >&2; exit 1\n  fi\ndone\n"
+                               f"exec '{real}' \"$@\"\n")
+            wrapper.chmod(0o755)
+            env = {k: v for k, v in os.environ.items() if not k.startswith("AGENT_MAIL")}
+            env["PATH"] = f"{fake}{os.pathsep}{env.get('PATH', '')}"
+            cp = subprocess.run([sys.executable, "-I", str(SCRIPT), "setup", "--dir",
+                                 str(Path(tmp) / "demo")], capture_output=True, text=True,
+                                env=env, timeout=TIMEOUT)
+            self.assertNotEqual(cp.returncode, 0, cp.stdout)
+            self.assertIn("the baseline commit exited 1", cp.stderr)
+            self.assertIn("simulated commit failure", cp.stderr)
+            # control: the same setup with the real git succeeds
+            ok = subprocess.run([sys.executable, "-I", str(SCRIPT), "setup", "--dir",
+                                 str(Path(tmp) / "demo2")], capture_output=True, text=True,
+                                env={k: v for k, v in os.environ.items()
+                                     if not k.startswith("AGENT_MAIL")}, timeout=TIMEOUT)
+            self.assertEqual(ok.returncode, 0, ok.stderr)
 
 
 class Check(Fixture):

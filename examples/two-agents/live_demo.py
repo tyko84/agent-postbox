@@ -232,6 +232,16 @@ def load_state(demo: Path) -> dict[str, Any]:
     return state
 
 
+def run_git(argv: list[str], what: str) -> None:
+    """Run git for the throwaway project; a failure stops `setup` instead of leaving a project
+    without its baseline commit (the demo's later steps read that history)."""
+    cp = subprocess.run(["git", *argv], capture_output=True, text=True, env=clean_env())
+    if cp.returncode != 0:
+        detail = (cp.stderr.strip() or cp.stdout.strip()).splitlines()[:1]
+        raise Usage(f"setup failed: {what} exited {cp.returncode}"
+                    + (f" ({detail[0]})" if detail else ""))
+
+
 def setup(demo: Path, out: Any = None) -> dict[str, Any]:
     """Build the throwaway project; return its state. Prints the guide to `out`."""
     out = out or sys.stdout
@@ -248,7 +258,7 @@ def setup(demo: Path, out: Any = None) -> dict[str, Any]:
     (project / "client.py").write_text(CLIENT_PY, encoding="utf-8")
     (project / "discover.py").write_text(DISCOVER_PY, encoding="utf-8")
     if shutil.which("git"):
-        subprocess.run(["git", "init", "-q", str(project)], capture_output=True, env=clean_env())
+        run_git(["init", "-q", str(project)], "git init")
     subprocess.run([sys.executable, "-I", str(INSTALL), str(project), "--adapter",
                     "claude-code"], check=True, capture_output=True, text=True, env=clean_env())
     register_participants(project)
@@ -258,7 +268,7 @@ def setup(demo: Path, out: Any = None) -> dict[str, Any]:
     if shutil.which("git"):
         for cmd in (["add", "-A"], ["-c", "user.name=demo", "-c", "user.email=demo@example.invalid",
                                     "commit", "-q", "-m", "baseline"]):
-            subprocess.run(["git", "-C", str(project), *cmd], capture_output=True, env=clean_env())
+            run_git(["-C", str(project), *cmd], "the baseline commit" if "commit" in cmd else "git add")
     (demo / "logs").mkdir()
     (demo / "prompts").mkdir()
     for name, text in (("B1", PROMPT_B1), ("A", PROMPT_A), ("B2", PROMPT_B2)):
