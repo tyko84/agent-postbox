@@ -219,6 +219,38 @@ class GitIsolation(unittest.TestCase):
             self.assertEqual(self.git(project, "log", "-1", "--format=%s").strip(), "baseline")
             self.assertFalse(ran.exists(), "the user's global pre-commit hook ran")
 
+    def test_setup_ignores_git_configuration_passed_in_the_environment(self) -> None:
+        # GIT_CONFIG_COUNT/KEY_n/VALUE_n and GIT_CONFIG_PARAMETERS override every config file,
+        # and GIT_TEMPLATE_DIR can copy hooks into a new repository: none may reach the demo.
+        with tempfile.TemporaryDirectory() as tmp:
+            hooks = Path(tmp) / "hooks"
+            (hooks).mkdir()
+            ran = Path(tmp) / "hook-ran"
+            hook = hooks / "pre-commit"
+            hook.write_text(f"#!/bin/sh\necho ran >> '{ran}'\n")
+            hook.chmod(0o755)
+            templates = Path(tmp) / "templates" / "hooks"
+            templates.mkdir(parents=True)
+            (templates / "pre-commit").write_text(hook.read_text())
+            (templates / "pre-commit").chmod(0o755)
+            variants = {
+                "count": {"GIT_CONFIG_COUNT": "2", "GIT_CONFIG_KEY_0": "core.hooksPath",
+                          "GIT_CONFIG_VALUE_0": str(hooks), "GIT_CONFIG_KEY_1": "commit.gpgsign",
+                          "GIT_CONFIG_VALUE_1": "true"},
+                "parameters": {"GIT_CONFIG_PARAMETERS": f"'core.hooksPath={hooks}'"},
+                "template": {"GIT_TEMPLATE_DIR": str(Path(tmp) / "templates")},
+            }
+            for name, extra in variants.items():
+                env = {k: v for k, v in os.environ.items() if not k.startswith("AGENT_MAIL")}
+                env.update(extra)
+                demo = Path(tmp) / f"demo-{name}"
+                cp = subprocess.run([sys.executable, "-I", str(SCRIPT), "setup", "--dir", str(demo)],
+                                    capture_output=True, text=True, env=env, timeout=TIMEOUT)
+                self.assertEqual(cp.returncode, 0, f"{name}: {cp.stderr}")
+                self.assertEqual(self.git(demo / "project", "log", "-1", "--format=%s").strip(),
+                                 "baseline", name)
+                self.assertFalse(ran.exists(), f"{name}: the hook from the environment ran")
+
     def test_setup_does_not_commit_the_invoking_repositorys_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             victim = Path(tmp) / "victim"

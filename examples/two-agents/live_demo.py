@@ -157,6 +157,11 @@ GIT_REPO_VARS = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
                  "GIT_NAMESPACE", "GIT_CEILING_DIRECTORIES")
 
 
+# Git configuration given through the environment overrides files; a template directory could
+# copy hooks into the new repository.
+GIT_CONFIG_ENV = re.compile(r"^(GIT_CONFIG_(PARAMETERS|COUNT|KEY_\d+|VALUE_\d+)|GIT_TEMPLATE_DIR)$")
+
+
 def clean_env(extra: dict[str, str] | None = None) -> dict[str, str]:
     """No inherited AGENT_MAIL_*, no git repository selectors, and none of the variables a
     parent Claude Code sets."""
@@ -164,7 +169,7 @@ def clean_env(extra: dict[str, str] | None = None) -> dict[str, str]:
                         r"CLAUDE_CODE_\w+|PAYMENTS_REGISTRY)$")
     env = {k: v for k, v in os.environ.items()
            if not parent.match(k) and not k.startswith("AGENT_MAIL_")
-           and k not in GIT_REPO_VARS}
+           and k not in GIT_REPO_VARS and not GIT_CONFIG_ENV.match(k)}
     # The throwaway project must not run the user's own git hooks or signing settings.
     env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
     env.update(extra or {})
