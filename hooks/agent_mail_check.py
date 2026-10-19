@@ -30,10 +30,14 @@ and stand in for both: the live test of an ASK, the "[awaiting your reply]"
 marker and the owed list; `build_status` itself (with `scan_hidden`) is linear
 and cheap.
 
-FAILS SILENTLY, ALWAYS. A broken mailbox must never block a prompt, so every
-error path exits 0 with no output. That is exactly why the test suite has a
-POSITIVE control: "prints nothing" is both the success case for an empty
-inbox and the symptom of total breakage, so silence alone proves nothing.
+NEVER BLOCKS, NEARLY ALWAYS SILENT. A broken mailbox must never block a prompt, so every
+error path exits 0. All but one print nothing. That is exactly why the test suite has a
+POSITIVE control: "prints nothing" is both the success case for an empty inbox and the
+symptom of total breakage, so silence alone proves nothing. The one exception: a mailbox
+directory that exists but that this user cannot list prints a single fixed line, because
+without it that state reads as "no mail" and mail addressed to this identity is lost. The line
+names no path, no message and no system error text. A missing mailbox, a path that is not a
+directory, an empty mailbox and a damaged file stay silent.
 
 Reads only. Never writes, never deletes, never marks anything read.
 """
@@ -123,6 +127,23 @@ def holdings(agent_mail: Any, me: str, everything: list[Any], owed: list[Any],
     return out
 
 
+UNREADABLE_NOTICE = ("Agent mail: this user cannot read the mailbox directory, so mail addressed to "
+                     "'{me}' cannot be shown. Fix its permissions (for example chmod u+rwx), then retry.")
+
+
+def _cannot_list(box: Path) -> bool:
+    """True when `box` exists as a directory this user cannot list. A missing path or a
+    non-directory is not this case (it stays silent)."""
+    try:
+        with os.scandir(box) as it:
+            next(it, None)
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    except OSError:
+        return True
+    return False
+
+
 def main() -> int:
     try:
         here = Path(__file__).resolve()
@@ -137,6 +158,9 @@ def main() -> int:
 
         me = (os.environ.get("AGENT_MAIL_IDENTITY") or "").strip().lower()
         if not me:
+            return 0
+        if _cannot_list(agent_mail.mail_dir()):
+            print(UNREADABLE_NOTICE.format(me=_clip(me, MAX_IDENT)))
             return 0
         now = dt.datetime.now(dt.timezone.utc)
         everything, _rejects = agent_mail.load_messages()
