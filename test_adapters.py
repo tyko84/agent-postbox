@@ -269,6 +269,59 @@ class CodexPickup(unittest.TestCase):
         self.assertEqual(snapshot(), before)
 
 
+class ThirdPartyClosureHook(unittest.TestCase):
+    """PROTOCOL.md section 45: a citation from someone who is neither side of an ASK still closes
+    it, `status` reports it as CITATION_FROM_THIRD_PARTY, and the pickup hook is untouched: it
+    simply stops showing the ASK, says nothing about who closed it, and still exits 0."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory(prefix="test-adapters-")
+        self.addCleanup(tmp.cleanup)
+        self.box = Path(tmp.name).resolve() / "mail"
+        self.box.mkdir()
+
+    def hook(self, who: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run([sys.executable, "-I", str(HOOK)], input="{}", capture_output=True,
+                              text=True, timeout=TIMEOUT, cwd=str(self.box),
+                              env=clean_env(AGENT_MAIL_DIR=str(self.box), AGENT_MAIL_IDENTITY=who))
+
+    def test_a_third_party_citation_closes_the_ask_and_the_hook_only_stops_showing_it(self) -> None:
+        for typ in ("ANSWER", "NOTICE", "DISPUTE"):
+            with self.subTest(type=typ):
+                ask = send(self.box, type="ASK", **{"from": "alice"}, to="bob",
+                           subject=f"owed {typ.lower()} question")
+                before = self.hook("bob")
+                self.assertEqual((before.returncode, before.stderr), (0, ""))
+                self.assertIn(ask, before.stdout)                   # control: it is owed and shown
+                send(self.box, type=typ, **{"from": "carol"}, to="alice",
+                     subject=f"carol {typ.lower()}", reply_to=ask)
+                after = self.hook("bob")
+                self.assertEqual((after.returncode, after.stderr), (0, ""))
+                self.assertNotIn(ask, after.stdout)                 # closed: no longer shown
+                self.assertNotIn("THIRD_PARTY", after.stdout)       # the hook names no diagnostic
+                alice = self.hook("alice")
+                self.assertEqual((alice.returncode, alice.stderr), (0, ""))
+                self.assertNotIn("THIRD_PARTY", alice.stdout)       # nor to the citing message's reader
+                st = subprocess.run([sys.executable, "-I", str(TOOL), "status", "--json"],
+                                    capture_output=True, text=True, timeout=TIMEOUT,
+                                    env=clean_env(AGENT_MAIL_DIR=str(self.box)))
+                codes = {q["code"] for q in json.loads(st.stdout)["problems"]}
+                self.assertTrue(codes & {"ANSWER_FROM_THIRD_PARTY", "CITATION_FROM_THIRD_PARTY"},
+                                codes)                              # status is where it is reported
+
+    def test_the_addressees_own_citation_closes_the_ask_the_same_way_and_is_not_reported(self) -> None:
+        ask = send(self.box, type="ASK", **{"from": "alice"}, to="bob", subject="owed question")
+        self.assertIn(ask, self.hook("bob").stdout)
+        send(self.box, type="NOTICE", **{"from": "bob"}, to="alice", subject="bob's own",
+             reply_to=ask)
+        after = self.hook("bob")
+        self.assertEqual((after.returncode, after.stderr, ask in after.stdout), (0, "", False))
+        st = subprocess.run([sys.executable, "-I", str(TOOL), "status", "--json"],
+                            capture_output=True, text=True, timeout=TIMEOUT,
+                            env=clean_env(AGENT_MAIL_DIR=str(self.box)))
+        self.assertEqual(json.loads(st.stdout)["problems"], [])
+
+
 def install(project: Path, *args: str, **env: str) -> subprocess.CompletedProcess[str]:
     install_env = clean_env(**env)
     return subprocess.run([sys.executable, "-I", str(INSTALL), str(project), *args],
