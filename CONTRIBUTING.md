@@ -116,3 +116,100 @@ Code changes:
 * **No claim of benefit.** The experiments did not show that Postbox improves agents' work
   ([docs/experiment-v2-results.md](docs/experiment-v2-results.md)). Documentation changes
   must not add one; say what was measured, with the model, host and permission mode.
+
+## How changes get in
+
+Principle: any authorized contributor or agent may propose a change. No agent may
+declare its own implementation independently reviewed and verified. GitHub CI is the
+technical enforcement layer; Postbox records coordination and review evidence; the owner
+(`@tyko84`) approves protocol contracts, security boundaries, major architecture, releases
+and production deployment. Nothing below adds a merge queue, a required-review rule or
+automatic closing of pull requests; branch protection is what
+`docs/release-process.md` (Required checks) says it is.
+
+### Roles
+
+* **Integration owner.** One session coordinates acceptance: it keeps the queue and the merge
+  order, and merges only after explicit owner approval.
+* **Platform owners.** Linux/Ubuntu: reliability and recovery. Windows: Windows
+  compatibility and the installer (Windows stays untested and unclaimed until a CI job proves
+  it, see above). macOS: integration. Independent reviewers (for example Codex and Grok)
+  provide review and verification evidence.
+* **Owner.** Approves the items in the principle above. `.github/CODEOWNERS` names the owner
+  for review routing. That review is advisory: branch protection does not require code-owner
+  review or any approving review.
+
+### Review and evidence
+
+* An author never declares its own change independently reviewed or verified.
+* Independent reviews are recorded as **evidence** in the pull request (a link, or pasted
+  output), not as approvals. Every pull request currently comes from the same GitHub
+  account and GitHub cannot tell AI reviewers apart, so a review there is not authenticated.
+* Before asking for a merge, run locally and paste the last lines of: `python3
+  scripts/ci_run.py`, `ruff check .`, the `mypy` command from `ci.yml`, and
+  `python3 check_publication.py --git-log`. Every required check listed in
+  `docs/release-process.md` must be green on the exact head commit.
+* **Done** means: the diff is the agreed scope; the checks above pass locally and in CI on
+  the head; new behavior has a check that asserts on content that must appear; docs and
+  `CHANGELOG.md` match; the evidence is in the pull request; the owner approved where the
+  rules below require it.
+
+### Unexplained CI failures
+
+Never call a failure harmless without evidence. Keep the log, identify the failing script,
+rerun it, note the machine load, and report all of it in the pull request. Do not merge over
+an unexplained failure on the pull request's own head. A fix for it may land in a separate
+pull request.
+
+### Branches, worktrees and pull request size
+
+* One branch per task, and a separate `git worktree` per parallel agent. Never two writers on
+  one branch.
+* Never force-push another contributor's branch. On your own branch use
+  `git push --force-with-lease` only after checking the remote head.
+* Aim for about 100 changed lines and one concern per pull request; call out an exception.
+  Keep a contract change apart from unrelated work.
+* Squash-merge breaks stacked children, so prefer independent pull requests off `main`. If a
+  stack is unavoidable, put the dependency order in each pull request body. The author
+  rebases their own branch; the integration owner rebases only trivial conflicts and says so.
+
+### Approvals
+
+* **Protocol.** A change to `PROTOCOL.md` contracts, exit codes, the JSON schema or the
+  on-disk format needs explicit owner approval and a `CHANGELOG.md` entry that states
+  compatibility.
+* **Security.** A change to trust boundaries, publication checks, workflow permissions or
+  secrets handling needs owner approval. Report sensitive findings privately through
+  private vulnerability reporting (`SECURITY.md`), never in a public issue or pull request.
+* **Release.** The owner approves releases. Tags are never moved.
+
+### Merge, build, release, deployment
+
+* **Merge:** accepted into `main` after review and CI.
+* **Build:** automated packaging and validation (`release.yml`, `packaging`).
+* **Release:** a version published for users, with owner approval
+  (`docs/release-process.md`).
+* **Deployment:** installing into an environment. That is outside this repository.
+
+### Claim overlapping work
+
+Before editing files another agent may also be editing, take a CLAIM (`PROTOCOL.md` section
+5). A lease must carry a zone and may not exceed 168 hours; claim hours, not days:
+
+```sh
+python agent_mail.py send --type CLAIM --from <you> --to all \
+  --subject "Editing CONTRIBUTING.md" --scope file:CONTRIBUTING.md \
+  --expires 2030-01-01T12:00:00Z --body "Docs edit, about 2 hours."
+```
+
+(Use a future time.) Release or renew it when done: a new CLAIM from the same sender with
+`--supersedes <claim id>` and no `--scope` frees the scope at once (the old claim stays in
+the record); with the same `--scope` it renews. A CLAIM is advisory, not a permission
+(section 5, "How a claim ends").
+
+### Attribution and stale pull requests
+
+* No AI co-author trailers and no session URLs in commits or pull request text for this
+  repository. Keep real human attribution.
+* A stale pull request gets a reminder, and the maintainer is asked to decide. Nothing is
+  closed automatically after a fixed period of inactivity.

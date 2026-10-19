@@ -1,0 +1,7 @@
+# Advisory only. Review by the owners below is NOT a required check: branch protection on
+# main requires a pull request and the status checks in docs/release-process.md, and no
+# approving or code-owner review. This file only routes review requests.
+*              @tyko84
+/.github/      @tyko84
+/PROTOCOL.md   @tyko84
+/SECURITY.md   @tyko84
