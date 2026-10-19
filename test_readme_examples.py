@@ -37,14 +37,21 @@ ROOT = Path(__file__).resolve().parent
 
 
 def _bash() -> str:
-    """The `bash` the README's shell blocks run under. On Windows a bare `bash` is found in
-    System32 first, where it is WSL's launcher: it fails ("no installed distributions") on a
-    machine without a WSL distribution. Git for Windows' bash sits next to git.exe, so use that."""
-    if os.name == "nt":
-        git = shutil.which("git")
-        if git:
-            here = Path(git).resolve().parent
-            for cand in (here / "bash.exe", here.parent / "bin" / "bash.exe"):
+    """The `bash` the README's shell blocks run under. On Windows a bare `bash` handed to
+    CreateProcess is found in System32 first, where it is WSL's launcher: it fails ("no installed
+    distributions") on a machine without a WSL distribution. So resolve a full path along PATH, refuse
+    anything under the Windows directory, and fall back to Git for Windows' bash near git.exe."""
+    if os.name != "nt":
+        return "bash"
+    windir = os.path.normcase(os.path.realpath(os.environ.get("SystemRoot", r"C:\Windows")))
+    found = shutil.which("bash")
+    if found and not os.path.normcase(os.path.realpath(found)).startswith(windir):
+        return found
+    git = shutil.which("git")
+    if git:
+        here = Path(git).resolve().parent
+        for root in (here, here.parent, here.parent.parent):
+            for cand in (root / "bash.exe", root / "bin" / "bash.exe", root / "usr" / "bin" / "bash.exe"):
                 if cand.is_file():
                     return str(cand)
     return "bash"
