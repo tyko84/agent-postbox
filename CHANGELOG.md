@@ -13,6 +13,10 @@ behaviour).
 
 ### Changed
 
+- A NOTICE, DISPUTE, ASK or CLAIM that cites an ASK from someone who is neither its recipient nor
+  its sender is now reported in `status` as `CITATION_FROM_THIRD_PARTY`, as a bare ANSWER already was
+  (PROTOCOL.md section 45). It still closes the ASK, nothing is stored or refused, `schema` stays 1
+  and the only new JSON value is that code in `problems`.
 - `send --key` whose retry marker this account cannot read still prints the one failure line (exit 1,
   nothing written), but the reason now says it was the marker: `cannot write to the mailbox: the retry
   marker for this --key is unreadable: Permission denied (EACCES); nothing written`. No marker name,

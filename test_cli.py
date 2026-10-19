@@ -1880,6 +1880,49 @@ def test_answer_from_third_party(root: Path) -> None:
     check("status stays read-only", snapshot(box) == before)
 
 
+def test_citation_from_third_party(root: Path) -> None:
+    """Any citation closes an ASK; from a party to neither side it is reported too, whatever the
+    type (PROTOCOL.md section 45). Closing is unchanged: only the report is new."""
+    box = root / "c3p"
+    box.mkdir()
+    for n, (typ, extra) in enumerate([
+            ("ANSWER", {}), ("NOTICE", {}), ("DISPUTE", {}), ("ASK", {}),
+            ("CLAIM", {"scope": "x", "expires": "2030-01-01T10:00:00Z"})], start=1):
+        hand(box, f"Q{n}", "ASK", "alice", "bob", f"2030-01-01T09:0{n}:00Z", f"question {n}")
+        hand(box, f"R{n}", typ, "carol", "alice", f"2030-01-01T09:1{n}:00Z", f"third {typ}",
+             reply_to=P + f"Q{n}", **extra)
+    hand(box, "Q6", "ASK", "alice", "bob", "2030-01-01T09:06:00Z", "question 6")
+    hand(box, "R6", "NOTICE", "bob", "alice", "2030-01-01T09:16:00Z", "addressee",
+         reply_to=P + "Q6")                        # the addressee: normal closure
+    hand(box, "Q7", "ASK", "alice", "bob", "2030-01-01T09:07:00Z", "question 7")
+    hand(box, "R7", "NOTICE", "alice", "bob", "2030-01-01T09:17:00Z", "never mind",
+         reply_to=P + "Q7")                        # the asker withdrawing: not a third party
+    hand(box, "R8", "NOTICE", "carol", "alice", "2030-01-01T09:18:00Z", "dangling",
+         reply_to=P + "NOSUCH")                    # cites no ASK here: nothing to flag
+    before = snapshot(box)
+    sj = doc(run(box, "status", "--json", "--now", "2030-01-02T00:00:00Z"))
+    check("one row per non-addressee citation, any type; ANSWER keeps its own code",
+          {q["code"]: q["count"] for q in sj["problems"]
+           if q["code"].endswith("_FROM_THIRD_PARTY")}
+          == {"ANSWER_FROM_THIRD_PARTY": 1, "CITATION_FROM_THIRD_PARTY": 4}, repr(sj["problems"]))
+    check("every one of them still closed its ASK: the flag changes no status (only R4, itself an "
+          "ASK to alice, is open)",
+          sj["asks"]["open"] == 1 and sj["asks"]["oldest_open_id"] == P + "R4", repr(sj["asks"]))
+    txt = run(box, "status", "--now", "2030-01-02T00:00:00Z").stdout
+    rows = [ln for ln in txt.splitlines() if ln.startswith("  CITATION_FROM_THIRD_PARTY")]
+    check("text status names reason, ask, citing message and sender",
+          f"CITATION_FROM_THIRD_PARTY  {P}Q2  {P}R2  carol  -" in "\n".join(rows)
+          and len(rows) == 4 and not any(P + t in ln for ln in rows for t in ("Q6", "Q7", "R6", "R7", "R8")),
+          txt[-600:])
+    check("status stays read-only: no stored message changed", snapshot(box) == before)
+    r = run(box, "inbox", "--to", "bob", "--exit-code", "--now", "2030-01-02T00:00:00Z")
+    check("inbox --exit-code for bob: nothing owed, exit 0 (closure unchanged)",
+          r.returncode == 0, f"{r.returncode} {r.stdout[-200:]}")
+    r = run(box, "inbox", "--to", "alice", "--exit-code", "--now", "2030-01-02T00:00:00Z")
+    check("inbox --exit-code for alice: R4 is owed, exit 10 (unchanged)",
+          r.returncode == 10, f"{r.returncode} {r.stdout[-200:]}")
+
+
 def test_alias_mail_undelivered(root: Path) -> None:
     """Mail filed to an alias before it was declared is reported (PROTOCOL.md section 46)."""
     box = root / "amu"
@@ -2719,6 +2762,7 @@ def main() -> int:
         test_claim_in_linked_worktree_warns(root)
         test_doctor_writable_line(root)
         test_answer_from_third_party(root)
+        test_citation_from_third_party(root)
         test_alias_mail_undelivered(root)
         test_fanout_holds(root)
         test_silent_recipient(root)
