@@ -71,7 +71,10 @@ import faulthandler
 import json
 import os
 import re
-import resource
+try:
+    import resource
+except ImportError:   # Windows: only the DEBUG CPU accounting uses it
+    resource = None  # type: ignore[assignment]
 import statistics
 import subprocess
 import sys
@@ -85,6 +88,7 @@ from pathlib import Path
 from typing import Any
 
 HERE = Path(__file__).resolve().parent
+KILLED_RC = -9 if os.name != "nt" else 1   # what Popen.kill() leaves: SIGKILL / TerminateProcess
 TOOL = str(HERE / "agent_mail.py")
 HOOK = str(HERE / "hooks" / "agent_mail_check.py")
 AGENTS = ("alice", "bob", "carol", "dave")
@@ -178,7 +182,7 @@ def call(cmd: list[str], env: dict[str, str], box: Path, what: str) -> CP[str]:
     A child that does not finish is killed and reaped, the run is failed with a
     diagnostic, and TIMED_OUT is returned so the caller's own checks fail too."""
     t0 = time.monotonic()
-    cpu0 = resource.getrusage(resource.RUSAGE_CHILDREN) if DEBUG else None
+    cpu0 = resource.getrusage(resource.RUSAGE_CHILDREN) if DEBUG and resource else None
     proc = subprocess.Popen(cmd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE, text=True)
     CHILDREN.append(proc)
@@ -346,7 +350,10 @@ def park(box: Path, ready: Path, patch: str, *argv: str) -> subprocess.Popen[str
     harness for long."""
     code = (
         "import os, signal, sys\n"
-        f"signal.alarm({PARK_LIMIT})\n"
+        f"if hasattr(signal, 'alarm'):\n    signal.alarm({PARK_LIMIT})\n"
+        "else:\n    import threading\n"
+        f"    _wd = threading.Timer({PARK_LIMIT}, os._exit, [1])\n"
+        "    _wd.daemon = True\n    _wd.start()\n"
         f"sys.path.insert(0, {str(HERE)!r})\n"
         "import agent_mail\n"
         "def block(*_a, **_k):\n"
@@ -558,7 +565,7 @@ def scenario(td: Path, box: Path) -> None:
               with_subject(box, "schema migrated") == [] and parked.poll() is None)
         rc = kill(parked)
         ready.unlink(missing_ok=True)
-        check("the sender is SIGKILLed there", rc == -9, f"rc={rc}")
+        check("the sender is SIGKILLed there", rc == KILLED_RC, f"rc={rc}")
         check("the killed send left no message (and no partial one)",
               with_subject(box, "schema migrated") == [] and run(box, "list").returncode == 0)
         # The retry runs in the background: phases 3 and 4 share the mailbox with it.
@@ -585,7 +592,7 @@ def scenario(td: Path, box: Path) -> None:
         oready = td / "orphan-ready"
         o_killed = park(obox, oready, AT_LINK, *keyed_claim("file:parser.py"))
         check("orphan: the keyed claimant is parked after reserving its key, then SIGKILLed",
-              oready.exists() and len(markers()) == 1 and kill(o_killed) == -9, box_state(obox))
+              oready.exists() and len(markers()) == 1 and kill(o_killed) == KILLED_RC, box_state(obox))
         oready.unlink(missing_ok=True)
         o_taken = send(obox, "frank", "all", "CLAIM", "parser is mine", "mine end",
                      "--scope", "file:parser.py", "--expires", o_until)
@@ -868,7 +875,7 @@ def scenario(td: Path, box: Path) -> None:
               [r[5] for r in listing if r[4] == "cache flushed"] == [mid(cp) for cp in wrote])
 
         check("the crashing writer was SIGKILLed mid-publish: temp file written, nothing linked",
-              crashed["reached"] and crashed["rc"] == -9 and len(crashed["temps"]) == 1
+              crashed["reached"] and crashed["rc"] == KILLED_RC and len(crashed["temps"]) == 1
               and [cp.returncode for cp in crashed["before"]] == [0] * CRASH_AT,
               str({k: v for k, v in crashed.items() if k in ("reached", "rc", "temps")}))
         again = crashed["again"]
@@ -1025,68 +1032,72 @@ def scenario(td: Path, box: Path) -> None:
               "--json), doctor, inbox (text, --json), list (text, --json) and latency",
               base == no_column == empty_cells,
               str([(i, a == b, a == c) for i, (a, b, c) in enumerate(zip(base, no_column, empty_cells, strict=True))]))
-        me = os.geteuid()
-        parts.write_text(table(dict.fromkeys(AGENTS, str(me))), encoding="utf-8")
-        bound = snapshot()
-        st_b = json.loads(bound[0][0])
-        st_0 = json.loads(base[0][0])
-        ident = st_b.get("identity", {})
-        check("positive: every agent bound to this uid: status --json gains an identity block in "
-              "which every message is checked and matches, and no other key changes",
-              ident.get("checked") == st_0["messages"]["total"] == ident.get("matched")
-              and ident.get("mismatched") == 0 and ident.get("attention") == []
-              and {k: v for k, v in st_b.items() if k != "identity"} == st_0,
-              json.dumps(ident)[:300])
-        check("positive: doctor still passes, prints the binding lines, and notes that bindings "
-              "that all name the reader's uid do not distinguish participants",
-              bound[2][2] == 0 and "identity_bindings: 4" in bound[2][0]
-              and f"identity_check: checked={st_0['messages']['total']}" in bound[2][0]
-              and "do not distinguish participants" in bound[2][0], bound[2][0][-400:])
-        check("the reader views never change with a binding: inbox (text, --json), list (text, "
-              "--json) and latency are byte-identical to the unbound run",
-              bound[3:] == base[3:], str([a == b for a, b in zip(bound[3:], base[3:], strict=True)]))
-        n0 = len(list(box.glob("*.md")))
-        bound_sends = [send(box, a, "all", "NOTICE", f"bound {a}", "still writes end") for a in AGENTS]
-        check("positive: every bound agent still sends (exit 0, one file each)",
-              all(cp.returncode == 0 for cp in bound_sends) and len(list(box.glob("*.md"))) == n0 + 4,
-              str([(cp.returncode, cp.stderr[:80]) for cp in bound_sends]))
-        other = me + 1 if me + 1 < 60000 else me - 1
-        cells = dict.fromkeys(AGENTS, str(me))
-        cells["alice"] = str(other)
-        parts.write_text(table(cells), encoding="utf-8")
-        st_m = status(box, "--now", fixed)
-        n_alice = st_m["messages"]["total"] - sum(
-            1 for r in st_m.get("identity", {}).get("attention", []) if r["sender"] != "alice")
-        rows_ = st_m.get("identity", {}).get("attention", [])
-        check("alice bound to another uid: one IDENTITY_MISMATCH row per message she sent, each "
-              "with observed uid = this process and bound uid = the row's; the others still match",
-              rows_ and all(r["reason"] == "IDENTITY_MISMATCH" and r["sender"] == "alice"
-                            and r["observed_uid"] == me and r["bound_uid"] == other for r in rows_)
-              and st_m["identity"]["mismatched"] == len(rows_)
-              and st_m["identity"]["matched"] + len(rows_) == st_m["messages"]["total"]
-              and [q for q in st_m["problems"] if q["code"] != "ANSWER_FROM_THIRD_PARTY"]
-              == [{"code": "IDENTITY_MISMATCH", "count": len(rows_)}],   # section 45 is its own flag
-              json.dumps(rows_)[:300] + str(n_alice))
-        doc = run(box, "doctor")
-        denied = send(box, "alice", "all", "NOTICE", "as alice", "must not land end")
-        okay = send(box, "bob", "all", "NOTICE", "as bob", "lands end")
-        check("doctor fails closed (exit 2, FAIL line names the count); send --from alice is "
-              "refused in one line and writes nothing; bob still sends",
-              doc.returncode == 2 and f"FAIL: identity mismatch: {len(rows_)} message(s)" in doc.stdout
-              and denied.returncode == 2 and denied.stderr.count("\n") == 1
-              and "remove the uid cell" in denied.stderr and okay.returncode == 0
-              and len(list(box.glob("*.md"))) == n0 + 5, doc.stdout[-300:] + denied.stderr)
-        parts.unlink()
-        after = snapshot()
-        check("opt-out again: removing PARTICIPANTS.md restores the unbound output for the "
-              "same mailbox (status --json minus the five new messages, doctor PASS)",
-              "identity" not in after[0][0] and after[2][2] == 0 and "identity" not in after[2][0]
-              and json.loads(after[0][0])["messages"]["total"] == st_0["messages"]["total"] + 5,
-              after[2][0][-200:])
-        check("...and the reader views are what they were plus those five rows",
-              after[6][2] == 0 and len(after[6][0].splitlines()) == len(base[6][0].splitlines()) + 10,
-              str((len(after[6][0].splitlines()), len(base[6][0].splitlines()))))
+        if hasattr(os, "geteuid"):
+            me = os.geteuid()
+            parts.write_text(table(dict.fromkeys(AGENTS, str(me))), encoding="utf-8")
+            bound = snapshot()
+            st_b = json.loads(bound[0][0])
+            st_0 = json.loads(base[0][0])
+            ident = st_b.get("identity", {})
+            check("positive: every agent bound to this uid: status --json gains an identity block in "
+                  "which every message is checked and matches, and no other key changes",
+                  ident.get("checked") == st_0["messages"]["total"] == ident.get("matched")
+                  and ident.get("mismatched") == 0 and ident.get("attention") == []
+                  and {k: v for k, v in st_b.items() if k != "identity"} == st_0,
+                  json.dumps(ident)[:300])
+            check("positive: doctor still passes, prints the binding lines, and notes that bindings "
+                  "that all name the reader's uid do not distinguish participants",
+                  bound[2][2] == 0 and "identity_bindings: 4" in bound[2][0]
+                  and f"identity_check: checked={st_0['messages']['total']}" in bound[2][0]
+                  and "do not distinguish participants" in bound[2][0], bound[2][0][-400:])
+            check("the reader views never change with a binding: inbox (text, --json), list (text, "
+                  "--json) and latency are byte-identical to the unbound run",
+                  bound[3:] == base[3:], str([a == b for a, b in zip(bound[3:], base[3:], strict=True)]))
+            n0 = len(list(box.glob("*.md")))
+            bound_sends = [send(box, a, "all", "NOTICE", f"bound {a}", "still writes end") for a in AGENTS]
+            check("positive: every bound agent still sends (exit 0, one file each)",
+                  all(cp.returncode == 0 for cp in bound_sends) and len(list(box.glob("*.md"))) == n0 + 4,
+                  str([(cp.returncode, cp.stderr[:80]) for cp in bound_sends]))
+            other = me + 1 if me + 1 < 60000 else me - 1
+            cells = dict.fromkeys(AGENTS, str(me))
+            cells["alice"] = str(other)
+            parts.write_text(table(cells), encoding="utf-8")
+            st_m = status(box, "--now", fixed)
+            n_alice = st_m["messages"]["total"] - sum(
+                1 for r in st_m.get("identity", {}).get("attention", []) if r["sender"] != "alice")
+            rows_ = st_m.get("identity", {}).get("attention", [])
+            check("alice bound to another uid: one IDENTITY_MISMATCH row per message she sent, each "
+                  "with observed uid = this process and bound uid = the row's; the others still match",
+                  rows_ and all(r["reason"] == "IDENTITY_MISMATCH" and r["sender"] == "alice"
+                                and r["observed_uid"] == me and r["bound_uid"] == other for r in rows_)
+                  and st_m["identity"]["mismatched"] == len(rows_)
+                  and st_m["identity"]["matched"] + len(rows_) == st_m["messages"]["total"]
+                  and [q for q in st_m["problems"] if q["code"] != "ANSWER_FROM_THIRD_PARTY"]
+                  == [{"code": "IDENTITY_MISMATCH", "count": len(rows_)}],   # section 45 is its own flag
+                  json.dumps(rows_)[:300] + str(n_alice))
+            doc = run(box, "doctor")
+            denied = send(box, "alice", "all", "NOTICE", "as alice", "must not land end")
+            okay = send(box, "bob", "all", "NOTICE", "as bob", "lands end")
+            check("doctor fails closed (exit 2, FAIL line names the count); send --from alice is "
+                  "refused in one line and writes nothing; bob still sends",
+                  doc.returncode == 2 and f"FAIL: identity mismatch: {len(rows_)} message(s)" in doc.stdout
+                  and denied.returncode == 2 and denied.stderr.count("\n") == 1
+                  and "remove the uid cell" in denied.stderr and okay.returncode == 0
+                  and len(list(box.glob("*.md"))) == n0 + 5, doc.stdout[-300:] + denied.stderr)
+            parts.unlink()
+            after = snapshot()
+            check("opt-out again: removing PARTICIPANTS.md restores the unbound output for the "
+                  "same mailbox (status --json minus the five new messages, doctor PASS)",
+                  "identity" not in after[0][0] and after[2][2] == 0 and "identity" not in after[2][0]
+                  and json.loads(after[0][0])["messages"]["total"] == st_0["messages"]["total"] + 5,
+                  after[2][0][-200:])
+            check("...and the reader views are what they were plus those five rows",
+                  after[6][2] == 0 and len(after[6][0].splitlines()) == len(base[6][0].splitlines()) + 10,
+                  str((len(after[6][0].splitlines()), len(base[6][0].splitlines()))))
 
+        else:
+            print("  SKIP  identity binding checks (Windows has no uid to bind a name to)")
+            parts.unlink(missing_ok=True)
 
 
 def main() -> int:
@@ -1131,8 +1142,9 @@ def main() -> int:
           not errors and not td.exists() and not Path(aside.name).exists(), str(errors))
     unreaped = [p.pid for p in CHILDREN if p.returncode is None]
     try:
-        stray_child = os.waitpid(-1, os.WNOHANG)   # ChildProcessError: this process has no child
-    except ChildProcessError:
+        # no waitpid(WNOHANG) on Windows: every child here is a Popen, whose returncode says it
+        stray_child = os.waitpid(-1, os.WNOHANG) if hasattr(os, "WNOHANG") else None
+    except ChildProcessError:   # this process has no child
         stray_child = None
     check(f"all {len(CHILDREN)} child processes were reaped and none is left running",
           not unreaped and stray_child is None, f"unreaped={unreaped} waitpid={stray_child}")

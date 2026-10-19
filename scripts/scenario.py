@@ -195,7 +195,7 @@ PERCENTILE_MIN_N = {"p50": 10, "p95": 20, "p99": 100}
 STEP_TIMEOUT = 120.0       # seconds; any single child
 PARK_LIMIT = 300           # seconds; a parked child ends itself after this
 TIMED_OUT = 124
-KILLED = -9
+KILLED = -9 if os.name != "nt" else 1   # what Popen.kill() leaves: SIGKILL / TerminateProcess
 GRACE_SHIFT = 61           # seconds; `status --now` shift that ends the 60 s in-flight grace
 DEBUG = os.environ.get("SCENARIO_DEBUG", "") not in ("", "0")   # log slow calls to stderr
 DEBUG_SLOW = 1.0           # seconds
@@ -438,7 +438,10 @@ def park_and_kill(box: Path, patch: str, argv: list[str]) -> tuple[int, bool]:
     whether it parked (a child that exited on its own did not take the fault)."""
     ready = Path(tempfile.mkdtemp(prefix="scenario-park-")) / "ready"
     code = ("import os, signal, sys\n"
-            f"signal.alarm({PARK_LIMIT})\n"
+            f"if hasattr(signal, 'alarm'):\n    signal.alarm({PARK_LIMIT})\n"
+            "else:\n    import threading\n"
+            f"    _wd = threading.Timer({PARK_LIMIT}, os._exit, [1])\n"
+            "    _wd.daemon = True\n    _wd.start()\n"
             f"sys.path.insert(0, {str(HERE)!r})\n"
             "import agent_mail\n"
             "def block(*_a, **_k):\n"
