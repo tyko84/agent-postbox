@@ -3,7 +3,8 @@
 **Windows is not a supported platform.** The README says so and this page does not change that. It
 records what was observed when the tool and installer were run by hand on native Windows 11 (Python
 3.12 from python.org and Python 3.13 from the Microsoft Store, Windows PowerShell 5.1, cmd.exe, Git
-for Windows with Git Bash, a non-elevated user, no model, no network, no real Claude Code session).
+for Windows with Git Bash, a non-elevated user, no model, no network; the one exception is the hook shell, observed in real Claude Code sessions, see
+"Real Claude Code hook").
 It claims nothing beyond that. No person was timed; the timings are machine time.
 
 Each line carries one status label:
@@ -127,23 +128,41 @@ command, however, calls `python3` by name (see [Real Claude Code hook](#real-cla
 
 ## Real Claude Code hook
 
-* Untested: **no real Claude Code session was started, so nothing about the hook running inside the host
-  has been verified on Windows.** Everything above runs the hook script by hand.
-* Works but unverified in a real host: the installer registers this command in `.claude/settings.json`:
-  `python3 "$CLAUDE_PROJECT_DIR/tools/agent-postbox/hooks/agent_mail_check.py" || true`. That is POSIX
-  shell syntax (`$VAR`, `||`, `true`). It runs correctly through Git Bash and fails under cmd.exe and
-  PowerShell 5.1 as described above.
-* Untested: what the Claude Code documentation says (read, not exercised here): hook commands run in Git Bash when
-  Git for Windows is installed and in PowerShell otherwise, and a hook entry may carry a `"shell"` field such
-  as `"powershell"`. Re-check the current Claude Code documentation; this page cannot vouch for it.
-* Works but unverified in a real host: if Git Bash is installed, the registered command should be correct as written. This is unverified in a
-  real session: do the positive control from [hosts.md](hosts.md) and look for the mail in the session.
-* Untested: if PowerShell is the only shell: the registered command will not work there, and a failed hook looks
-  like an empty inbox, so use polling instead (it needs no hook): set `$env:AGENT_MAIL_IDENTITY` and run
-  `python3 tools\agent-postbox\agent_mail.py inbox` at the start of each turn. Or hand-edit the entry to a
-  PowerShell form, for example `python3 "$env:CLAUDE_PROJECT_DIR/tools/agent-postbox/hooks/agent_mail_check.py"`
-  with `"shell": "powershell"`; that spelling is **untested**, and `|| true` has no PowerShell 5.1 equivalent.
-  Verified: after a hand-edit of that kind, re-running `install.py` printed `claude-code adapter already
+Each limit below is either **Verified** (observed on Windows 11 with the stated tool) or marked **from vendor
+documentation, not re-read** (relayed from the Claude Code documentation; this page cannot vouch for it).
+
+* Verified: in real headless Claude Code sessions (Claude Code 2.1.302, Windows 11, three sessions) the hook
+  ran in Git Bash 5.2.37, with `CLAUDE_PROJECT_DIR` as a `C:/...` path with forward slashes (a space intact)
+  and the working directory set to the project directory. The installer registers this command in
+  `.claude/settings.json`:
+  `python3 "$CLAUDE_PROJECT_DIR/tools/agent-postbox/hooks/agent_mail_check.py" || true`
+  Run through Git Bash by hand it delivers a waiting ASK.
+* Verified: without Git Bash that command does not work. In Windows PowerShell 5.1 the `||` is a parse error
+  (and `$CLAUDE_PROJECT_DIR` is not an environment reference there; `$env:CLAUDE_PROJECT_DIR` is). In cmd.exe
+  `$CLAUDE_PROJECT_DIR` is not expanded and `true` is not a command. A failed hook looks like an empty
+  inbox. PowerShell 7 was not installed: untested.
+* Untested: from vendor documentation, not re-read: hook commands run in Git Bash when Git for Windows is installed and
+  in PowerShell otherwise, and a hook entry may carry a `"shell"` field (`"bash"` or `"powershell"`). Re-check
+  the current Claude Code documentation.
+* Untested: from vendor documentation, not re-read: hook entries merge across the user, project and local settings
+  files instead of replacing each other, and distinct handlers from different files all run. A local
+  override of this hook (for example in `.claude/settings.local.json`) therefore runs **in addition to** the
+  committed one and would deliver the same mail twice. Remove or change the committed entry instead of
+  adding a second one. An identical handler defined twice is documented to run once.
+* Verified: a bare `python3` or `python` in a hook command is resolved by the shell that runs it. cmd.exe
+  looks in the current directory first (the project directory, for a hook) unless the environment variable
+  `NoDefaultCurrentDirectoryInExePath` is set, so a file named `python3.exe` in the project would run
+  instead of Python (tested with a harmless decoy). Windows PowerShell 5.1 and Git Bash do not search the
+  current directory for a bare name. Under the default Git Bash shell this cannot happen.
+* Verified: `python3` and `python` can be different programs on one machine. Here `python3` was a Microsoft
+  Store app-execution alias (Python 3.13) and `python` the installed 3.12 first. Where no Python is installed
+  that alias is a stub that opens the Store instead of running. Check with `where python3` and `where python`.
+* Untested: Codex on native Windows. No Codex was installed; which shell it uses for hooks there is unknown.
+* Untested: a hand-written PowerShell form such as `python3 "$env:CLAUDE_PROJECT_DIR/tools/agent-postbox/hooks/agent_mail_check.py"`
+  with `"shell": "powershell"`; `|| true` has no PowerShell 5.1 equivalent. If PowerShell is the only shell,
+  use polling instead (it needs no hook): set `$env:AGENT_MAIL_IDENTITY` and run
+  `python3 tools\agent-postbox\agent_mail.py inbox` at the start of each turn.
+* Verified: after a hand-edit of that kind, re-running `install.py` printed `claude-code adapter already
   registered (no change)` and left `settings.json` byte for byte unchanged.
 * Unsupported: the pickup adapter for Codex and Cursor on Windows (never run in those hosts anywhere).
 * Verified: `doctor` reports `pickup_hook: registered` as soon as the settings entry and script exist. It
