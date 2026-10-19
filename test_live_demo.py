@@ -17,6 +17,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -250,6 +251,38 @@ class GitIsolation(unittest.TestCase):
                 self.assertEqual(self.git(demo / "project", "log", "-1", "--format=%s").strip(),
                                  "baseline", name)
                 self.assertFalse(ran.exists(), f"{name}: the hook from the environment ran")
+
+    def test_setup_under_a_real_git_c_rebase_exec(self) -> None:
+        # The case that exposed it: `git -c ... rebase --exec <demo setup>` exports GIT_DIR,
+        # GIT_WORK_TREE and the -c settings (as GIT_CONFIG_PARAMETERS) to the command it runs.
+        with tempfile.TemporaryDirectory() as tmp:
+            hooks = Path(tmp) / "hooks"
+            hooks.mkdir()
+            ran = Path(tmp) / "hook-ran"
+            hook = hooks / "pre-commit"
+            hook.write_text(f"#!/bin/sh\necho ran >> '{ran}'\n")
+            hook.chmod(0o755)
+            victim = Path(tmp) / "victim"
+            victim.mkdir()
+            self.git(victim, "init", "-q")
+            for n in ("one", "two"):
+                (victim / f"{n}.txt").write_text(n)
+                self.git(victim, "add", f"{n}.txt")
+                self.git(victim, "commit", "-q", "-m", n)
+            (victim / "untracked.txt").write_text("synthetic\n")
+            head = self.git(victim, "rev-parse", "HEAD")
+            demo = Path(tmp) / "demo"
+            cmd = f"{shlex.quote(sys.executable)} -I {shlex.quote(str(SCRIPT))} setup --dir {shlex.quote(str(demo))}"
+            cp = subprocess.run(["git", "-C", str(victim), "-c", f"core.hooksPath={hooks}",
+                                 "-c", "commit.gpgsign=true", "-c", "gpg.program=/nonexistent-gpg",
+                                 "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                                 "rebase", "--exec", cmd, "HEAD~1"],
+                                capture_output=True, text=True, timeout=TIMEOUT)
+            self.assertEqual(cp.returncode, 0, cp.stdout + cp.stderr)
+            self.assertEqual(self.git(demo / "project", "log", "-1", "--format=%s").strip(), "baseline")
+            self.assertFalse(ran.exists(), "an inherited -c hook ran")
+            self.assertEqual(self.git(victim, "rev-parse", "HEAD"), head)
+            self.assertEqual(self.git(victim, "status", "--porcelain").strip(), "?? untracked.txt")
 
     def test_setup_does_not_commit_the_invoking_repositorys_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
