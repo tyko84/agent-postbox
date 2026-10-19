@@ -1842,7 +1842,7 @@ def main() -> int:
               "the local ASK stays owed",
               stray.returncode == 0 and ask_b3 in owed_here, stray.stderr)
 
-        if os.geteuid() != 0:
+        if hasattr(os, "geteuid") and os.geteuid() != 0:   # POSIX permission bits; none on Windows
             dark = b3 / "01ARZ3NDEKTSV4RRFFQ69G5FAX-dark.md"
             dark.write_text("---\nid: 01ARZ3NDEKTSV4RRFFQ69G5FAX\ntype: ASK\nfrom: carol\nto: bob\n"
                             "date: 2026-10-17T10:00:00Z\nsubject: dark\n---\n\nb\n")
