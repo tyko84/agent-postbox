@@ -469,14 +469,14 @@ python3 examples/two-agents/run.py --pause --takeover
 
 | # | From | On screen | Hold it until the viewer has read | Say |
 |---|---|---|---|---|
-| 8 | 0:59 | `== 8. a holder disappears, its lease expires, a rival takes over  (scripted, no model)`: agent-b claims `billing/retry.py` for 3 seconds | `--expires ...` three seconds ahead, then agent-a's claim refused: `[exit 3]` | "B takes a short lease on a second file, then stops: think of a crashed session. While the lease is live, A is refused." |
-| 8 | 1:12 | `... agent-b never renews. Waiting for the lease to run out (2 s) ...`, then `status` with `claims: held=1  expired=1` | `expired=1` | "Nothing released it. The clock did: the lease is now expired, no longer held." |
+| 8 | 0:59 | `== 8. a holder disappears, its lease expires, a rival takes over  (scripted, no model)`: agent-b claims `billing/retry.py` for 6 seconds | `--expires ...` six seconds ahead, then agent-a's claim refused: `[exit 3]` | "B takes a short lease on a second file, then stops: think of a crashed session. While the lease is live, A is refused." |
+| 8 | 1:12 | `... agent-b never renews. Waiting for the lease to run out (5 s) ...`, then `status` with `claims: held=1  expired=1` | `expired=1` | "Nothing released it. The clock did: the lease is now expired, no longer held." |
 | 8 | 1:20 | agent-a's claim `wrote ...`, then `status` listing `billing/retry.py  agent-a`, and `All 8 steps behaved as described.` | the `held claims` row naming agent-a | "A takes over. B's expired claim stays in the mailbox; the history keeps both." |
 
 What it shows: a claim needs an expiry, a live lease refuses a rival (exit 3, nothing written), a
 lapsed lease no longer counts as held, and the rival's claim then succeeds. What it does not show:
 that a real agent notices the refusal or recovers well, or that anything is "dead" (the script
-simply never runs agent-b again; the wait is the real clock, about 4 seconds). The kernel-held scope lock
+simply never runs agent-b again; the wait is the real clock, about 7 seconds). The kernel-held scope lock
 that PROTOCOL.md section 30 describes (a crashed claimant's lock is reclaimed at once) is exercised by
 `selftest.py` with real processes, not by this beat. A claim is advisory: it stops nobody who ignores it.
 
@@ -550,5 +550,5 @@ rehearsal can be added at the end as a separate, labelled segment).
 | Want real-model evidence without a terminal | `live_demo.py rehearse --max-calls 2 --max-cost 0.5` (about USD 0.005); label it headless |
 | Hook block not visible in the TUI | Show the ANSWER and `check`; say the host ran a hook; do not paste the block |
 | Beat 6 fails (v1 URL used) | A model choice; re-record or publish as a failure |
-| `--takeover` is slow | It waits about 4 seconds for a real 3-second lease; this is the point, do not cut it |
+| `--takeover` is slow | It waits about 7 seconds for a real 6-second lease; this is the point, do not cut it |
 | `run.py` fails at a step | Report it (CONTRIBUTING.md, field reports); do not retake around it |
