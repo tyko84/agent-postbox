@@ -20,6 +20,7 @@ import os
 import re
 import shutil
 import stat
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -423,6 +424,27 @@ class WindowsGuide(unittest.TestCase):
                and not ln[2:].startswith("**")]
         self.assertEqual(bad, [])
         self.assertIn("(windows.md)", (ROOT / "docs" / "README.md").read_text(encoding="utf-8"))
+
+    def test_selftest_command_is_valid_in_each_windows_shell(self) -> None:
+        """A quoted interpreter path (it holds a space) is a command in cmd.exe but not in PowerShell,
+        which needs the call operator: that case prints one labelled command per shell."""
+        import importlib.util  # noqa: PLC0415
+        spec = importlib.util.spec_from_file_location("install_for_docs", ROOT / "install.py")
+        assert spec is not None and spec.loader is not None
+        inst = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(inst)
+        proj = Path("C:/work/my proj")
+        quoted = r'"C:\Program Files\Python312\python.exe"'
+        win = inst.selftest_lines(proj, "tools/agent-postbox", quoted, True)
+        self.assertIn(f"  PowerShell: & {quoted} tools/agent-postbox/selftest.py", win)
+        self.assertIn(f"  cmd.exe:    {quoted} tools/agent-postbox/selftest.py", win)
+        self.assertFalse([ln for ln in win if ln.lstrip().startswith(quoted)], "a bare quoted command is invalid in PowerShell")
+        plain = inst.selftest_lines(proj, "tools/agent-postbox", "python3", True)
+        self.assertEqual(plain[-1], "  python3 tools/agent-postbox/selftest.py")
+        self.assertNotIn("PowerShell:", " ".join(plain))
+        where = Path("/work/p")
+        posix = inst.selftest_lines(where, "tools/agent-postbox", "python3", False)
+        self.assertEqual(posix, [f"  cd {shlex.quote(str(where))} && python3 tools/agent-postbox/selftest.py"])
 
     def test_installer_next_steps_by_platform(self) -> None:
         with tempfile.TemporaryDirectory(prefix="pbD_ ") as tmp:

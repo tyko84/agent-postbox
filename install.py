@@ -180,6 +180,22 @@ def python_cmd() -> str:
     return sys.executable
 
 
+def selftest_lines(project: Path, dest_rel: str, py: str, windows: bool) -> list[str]:
+    """The lines that tell the user how to run the selftest. On Windows a quoted interpreter path
+    (it holds a space) is a command in cmd.exe but, in PowerShell, a string expression followed by
+    arguments: PowerShell needs the call operator `&`. So that case prints one command per shell,
+    labelled; `&&` and single quotes are not portable between the two either."""
+    tail = f"{dest_rel}/selftest.py"
+    if not windows:
+        return [f"  cd {shlex.quote(str(project))} && {py} {tail}"]
+    lines = [f'  cd "{project}"']
+    if py.startswith('"'):
+        lines += [f"  PowerShell: & {py} {tail}", f"  cmd.exe:    {py} {tail}"]
+    else:
+        lines.append(f"  {py} {tail}")
+    return lines
+
+
 def hook_command(dest_rel: str, adapter: str = "claude-code") -> str:
     # A bare `python` does not exist on stock macOS; a hook that cannot start
     # delivers nothing, and looks exactly like an empty inbox.
@@ -646,11 +662,8 @@ def main() -> int:
               "still goes through).")
     print("Verify pickup before trusting it -- silence proves nothing (PROTOCOL.md §8). "
           "Takes about 20 seconds:")
-    if os.name == "nt":   # `&&` and single quotes are not portable across PowerShell 5.1 and cmd.exe
-        print(f'  cd "{project}"')
-        print(f"  {python_cmd()} {dest_rel}/selftest.py")
-    else:
-        print(f"  cd {shlex.quote(str(project))} && {python_cmd()} {dest_rel}/selftest.py")
+    for line in selftest_lines(project, dest_rel, python_cmd(), os.name == "nt"):
+        print(line)
     return 0
 
 
