@@ -584,6 +584,39 @@ def _named_for_id(name: str, raw_id: str) -> bool:
     return name[:27].upper() == raw_id.upper() + "-"
 
 
+def _admit_message(path: Path, meta: dict[str, str], body: str,
+                   problem: str) -> tuple[Message | None, str]:
+    """The admission rules of one readable mail file, shared by `load_messages` and the keyed
+    retry (section 31): (the Message, "") when it is mail, else (None, why it is quarantined).
+    Per file only: the duplicate-id rule needs the whole mailbox and stays in `load_messages`."""
+    if not problem:
+        bad = _body_char_error(body)
+        if bad:
+            problem = f"body {bad}"
+    if problem:
+        return None, f"{problem} (CANNOT_VERIFY; quarantined — never admitted as mail)"
+    msg = Message(path, meta, body)
+    raw_id = message_id_raw(msg)
+    # Fix A (persist/admit): missing/malformed/REPLACE_ID never enter pickup.
+    # INVALID ≠ OLD/NEW — omit from ordered set (distinct from §22 sort).
+    if not raw_id:
+        return None, "missing id (CANNOT_VERIFY; not admitted — INVALID ≠ OLD/NEW)"
+    if raw_id.upper() == "REPLACE_ID" or not _is_ulid(raw_id):
+        return None, (f"malformed id {raw_id!r} "
+                      "(CANNOT_VERIFY; not admitted — INVALID ≠ OLD/NEW)")
+    if not type_ok(msg):
+        tname = msg.type or "(empty)"
+        return None, (f"unknown type {tname!r} "
+                      "(CANNOT_VERIFY; closed set ASK/ANSWER/NOTICE/CLAIM/DISPUTE)")
+    if not msg.sender or not msg.to:
+        return None, ("missing from/to "
+                      "(CANNOT_VERIFY; not admitted — nobody can be addressed)")
+    if "date" in meta and _parse_iso(meta["date"]) is None:
+        return None, (f"unparseable date {meta['date']!r} "
+                      "(CANNOT_VERIFY; a message with no valid date never goes stale)")
+    return msg, ""
+
+
 def load_messages() -> tuple[list[Message], list[str]]:
     """Read mailbox, sort by fail-closed id key, collect loud REJECT reasons."""
     out: list[Message] = []
@@ -612,51 +645,11 @@ def load_messages() -> tuple[list[Message], list[str]]:
             rejects.append(f"REJECT {_shown(path.name)}: {why}")
             continue
         meta, body, problem = _parse_frontmatter(text)
-        if not problem:
-            bad = _body_char_error(body)
-            if bad:
-                problem = f"body {bad}"
-        if problem:
-            rejects.append(
-                f"REJECT {_shown(path.name)}: {problem} "
-                "(CANNOT_VERIFY; quarantined — never admitted as mail)"
-            )
+        msg, why = _admit_message(path, meta, body, problem)
+        if msg is None:
+            rejects.append(f"REJECT {_shown(path.name)}: {why}")
             continue
-        msg = Message(path, meta, body)
         raw_id = message_id_raw(msg)
-        # Fix A (persist/admit): missing/malformed/REPLACE_ID never enter pickup.
-        # INVALID ≠ OLD/NEW — omit from ordered set (distinct from §22 sort).
-        if not raw_id:
-            rejects.append(
-                f"REJECT {_shown(path.name)}: missing id "
-                "(CANNOT_VERIFY; not admitted — INVALID ≠ OLD/NEW)"
-            )
-            continue
-        if raw_id.upper() == "REPLACE_ID" or not _is_ulid(raw_id):
-            rejects.append(
-                f"REJECT {_shown(path.name)}: malformed id {raw_id!r} "
-                "(CANNOT_VERIFY; not admitted — INVALID ≠ OLD/NEW)"
-            )
-            continue
-        if not type_ok(msg):
-            tname = msg.type or "(empty)"
-            rejects.append(
-                f"REJECT {_shown(path.name)}: unknown type {tname!r} "
-                "(CANNOT_VERIFY; closed set ASK/ANSWER/NOTICE/CLAIM/DISPUTE)"
-            )
-            continue  # quarantined: listed by doctor, never injected as live mail
-        if not msg.sender or not msg.to:
-            rejects.append(
-                f"REJECT {_shown(path.name)}: missing from/to "
-                "(CANNOT_VERIFY; not admitted — nobody can be addressed)"
-            )
-            continue
-        if "date" in meta and _parse_iso(meta["date"]) is None:
-            rejects.append(
-                f"REJECT {_shown(path.name)}: unparseable date {meta['date']!r} "
-                "(CANNOT_VERIFY; a message with no valid date never goes stale)"
-            )
-            continue
         if raw_id.upper() in seen_ids:
             loser, keeper = path.name, seen_ids[raw_id.upper()]
             if _named_for_id(loser, raw_id) and not _named_for_id(keeper, raw_id):
@@ -2110,6 +2103,24 @@ def _idem_header_drift(box: Path, old_id: str, want: dict[str, str]) -> str:
     return ""
 
 
+def _idem_quarantined(box: Path, old_id: str) -> str:
+    """Why the landed message `old_id` is quarantined, or "" when it is mail, or when that cannot
+    be told (no file, an unreadable one: a retry then stays a duplicate, as `_idem_header_drift`).
+    It judges the file by the rules `load_messages` applies, so a retry never reports `duplicate`
+    for a message no reader will ever be shown (section 31). One admitted copy is enough."""
+    why_not = ""
+    for path in box.glob(f"{old_id}-*.md"):
+        text, _why = _read_mail_file(path)
+        if text is None:
+            return ""
+        meta, body, problem = _parse_frontmatter(text)
+        msg, why = _admit_message(path, meta, body, problem)
+        if msg is not None:
+            return ""
+        why_not = why_not or why.split(" (CANNOT_VERIFY", 1)[0]
+    return why_not
+
+
 def _idem_drop_orphan(box: Path, sender: str, to: str, key: str, content: str) -> None:
     """A keyed send refused at the scope stage never reaches _idem_claim, so it
     clears its own key's ORPHAN here (PROTOCOL.md section 31, "Refused at the
@@ -2686,6 +2697,13 @@ def cmd_send(args: argparse.Namespace) -> int:
                       "nothing written; retry", file=sys.stderr)
                 return 3
             if prior:
+                quarantined = _idem_quarantined(box, prior)
+                if quarantined:
+                    print(f"idempotency key {idem!r} already published {prior}, but that message is "
+                          f"quarantined ({_shown(quarantined)}) and will never be delivered; nothing "
+                          "written (repair or remove the file, see `doctor`, or use a new key)",
+                          file=sys.stderr)
+                    return 2
                 drift = _idem_header_drift(box, prior, {
                     "reply_to": reply_to, "supersedes": supersedes, "scope": scope,
                     **{k: str(getattr(args, k, "") or "") for k in _IDEM_HEADERS}})
