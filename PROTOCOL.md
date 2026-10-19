@@ -1126,7 +1126,9 @@ refuses the write (read-only mailbox, disk full, permission denied on the
 mailbox or on a lock or marker file), `send` prints
 `send failed: cannot write to the mailbox: <reason> (<ERRNO>); nothing written`
 on stderr and exits 1. No traceback, and nothing it created is left behind: no
-temp file, no key marker, no scope lock. Exit 1 is the status such a failure
+temp file, no key marker, no scope lock. When the refusal is on the marker of a
+`--key` retry, the `<reason>` begins `the retry marker for this --key is
+unreadable:`; it names neither the marker file nor the key. Exit 1 is the status such a failure
 already had (as an uncaught exception); 2 stays "refused, do not retry
 unchanged" and 3 stays "contended, retry". A filesystem that refuses `flock`
 for a scope lock is still exit 2 as §30 says. The read-only commands never

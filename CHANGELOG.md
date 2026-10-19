@@ -13,6 +13,10 @@ behaviour).
 
 ### Changed
 
+- `send --key` whose retry marker this account cannot read still prints the one failure line (exit 1,
+  nothing written), but the reason now says it was the marker: `cannot write to the mailbox: the retry
+  marker for this --key is unreadable: Permission denied (EACCES); nothing written`. No marker name,
+  key or path is shown; other errors are unchanged (PROTOCOL.md section 32).
 - Argument errors now print the `error:` line first and the usage block after it (argparse printed
   usage first and the error last, so the error sat under about 18 lines of usage). Exit status 2
   and an empty stdout are unchanged. A script that parsed the last stderr line for the error must

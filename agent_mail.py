@@ -2125,6 +2125,10 @@ def _idem_drop_orphan(box: Path, sender: str, to: str, key: str, content: str) -
         os.close(rfd)  # also releases the orphan's lock
 
 
+class _IdemMarkerUnreadable(PermissionError):
+    """The key's marker exists but this account cannot open it (names the cause in one line)."""
+
+
 def _idem_claim(box: Path, sender: str, to: str, key: str, msg_id: str,
                 mtype: str, subject: str, body: str,
                 wait: float = IDEM_WAIT_DEFAULT) -> tuple[str, int | None]:
@@ -2149,6 +2153,10 @@ def _idem_claim(box: Path, sender: str, to: str, key: str, msg_id: str,
             rfd = os.open(marker, ro)
         except FileNotFoundError:
             continue  # its sender gave up between our link and our open
+        except PermissionError as exc:
+            # Same errno and text as before; only the failure line learns that it was the
+            # key's marker, not the mailbox, that refused. Other errors (a symlink) are unchanged.
+            raise _IdemMarkerUnreadable(exc.errno, exc.strerror) from exc
         try:
             seen = os.pread(rfd, 4096, 0)
             old_id, old_content, locked = _idem_parse(seen)
@@ -2699,6 +2707,8 @@ def cmd_send(args: argparse.Namespace) -> int:
         if landed():
             print(f"send failed after publishing: {why}; id: {msg_id}", file=sys.stderr)
         else:
+            if isinstance(exc, _IdemMarkerUnreadable):
+                why = f"the retry marker for this --key is unreadable: {why}"
             print(f"send failed: cannot write to the mailbox: {why}; nothing written",
                   file=sys.stderr)
         return 1
