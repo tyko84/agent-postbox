@@ -276,7 +276,12 @@ this, in a throwaway mailbox; run it whenever you touch delivery.
   `docs/agent-mail` wins. A nested `.git` under an ancestor mailbox is
   occupied -- `send` and `install.py` both refuse to mint a second owner.
   They also refuse to file into this spec checkout. A missing store is
-  `NO MAILBOX at <path>` exit 2, not an empty list.
+  `NO MAILBOX at <path>` exit 2, not an empty list. So is a store this account cannot
+  list (mode 000, or no read or search bit): `UNREADABLE MAILBOX at <path>`, exit 2, from every
+  read-only command (`list`, `inbox`, `status`, `latency`, `show`, `verify`), the same refusal
+  `doctor` reports as `store: UNREADABLE`. An unreadable directory never reads as an empty one,
+  including when the permission changes between that check and the listing: the load then ends in a
+  `REJECT <mailbox>: mailbox cannot be listed (...)` line, which `list` and `inbox` already answer with exit 2.
 
 ---
 
@@ -1835,6 +1840,7 @@ not a contract.
 
 | When | Added |
 |---|---|
+| `UNREADABLE MAILBOX at <path>` from a read-only command | exit 2, nothing on stdout, a second line on stderr, `hint: ...`: the directory exists but this account cannot list it, so fix the permissions. Before this, `list`, `status` and `inbox` read it as empty and exited 0 (a silent broker is not an empty inbox, §15) |
 | `NO MAILBOX at <path>` from a read-only command | a second line on stderr, `hint: ...`. With `AGENT_MAIL_DIR` set: it must name an existing directory and is never created (§9). Unset: none was found walking up, so set it or install into the project |
 | `list`, `inbox`, `latency` exit 2 because files are quarantined | a `hint: ...` line on stderr after the `REJECT` lines: the files are never delivered and never deleted, the listing is complete, and the status stays 2 until they are repaired or moved out |
 | `doctor` prints `canary: UNVERIFIED` or `canary: MISSING_OR_STALE` | indented `  - ...` lines under it on stdout, in the form of the detail lines `doctor` already prints (§33): file one with `canary`, run `doctor` again; for a lapsed canary, also which one expired |
