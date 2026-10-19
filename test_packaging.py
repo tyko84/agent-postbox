@@ -66,6 +66,13 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 import check_publication  # noqa: E402  (the scanner is the single source of the matching rules)
 
+# A hook, `rebase --exec` or `bisect run` exports GIT_DIR and friends; inherited, they would
+# point this script's temporary repositories at the real one. Test scripts ignore them.
+for _v in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
+           "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_PREFIX", "GIT_NAMESPACE",
+           "GIT_CEILING_DIRECTORIES"):
+    os.environ.pop(_v, None)
+
 # Synthetic stand-ins used by the positive controls. Real forbidden names are never stored
 # here; they arrive at run time via POSTBOX_FORBIDDEN, exactly as for check_publication.py.
 SYNTHETIC = ("acme-private", "widget corp")

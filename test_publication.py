@@ -41,6 +41,13 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # `-I` drops the script dir
 import check_publication as cp  # noqa: E402
 
+# A hook, `rebase --exec` or `bisect run` exports GIT_DIR and friends; inherited, they would
+# point this script's temporary repositories at the real one. Test scripts ignore them.
+for _v in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
+           "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_PREFIX", "GIT_NAMESPACE",
+           "GIT_CEILING_DIRECTORIES"):
+    os.environ.pop(_v, None)
+
 WORD = "zq" + "xjv"            # stand-in forbidden word (not a real name)
 WORD2 = "plug" + "hxy"
 KEY = "-----BEGIN " + "RSA PRIV" + "ATE KEY-----"
@@ -1714,6 +1721,46 @@ class Workflows(unittest.TestCase):
         self.assertEqual(sorted(named - want), [], "CONTRIBUTING.md names a script CI does not run")
         # positive control: the check does see a script that is not named
         self.assertIn("test_nonexistent_script.py", {"test_nonexistent_script.py"} - named)
+
+    def test_tests_ignore_inherited_git_repository_variables(self) -> None:
+        # `git rebase --exec`, hooks and `bisect run` export GIT_DIR and friends. A test
+        # that inherited them would run its temporary-repository git calls against the real
+        # repository. The variables point at paths that do not exist, so a leak fails loudly.
+        mod = self.runner()
+        leak = {"GIT_DIR": "/nonexistent/gitdir", "GIT_WORK_TREE": "/nonexistent/wt",
+                "GIT_INDEX_FILE": "/nonexistent/index"}
+        root = self.RUNNER.parent.parent
+        # 1. ci_run.py hands its children an environment without them
+        probe = mod.Test(("-c", "import os, sys; sys.exit(1 if any(k in os.environ for k in "
+                                f"{tuple(leak)!r}) else 0)"), 1)
+        with mock.patch.dict(os.environ, leak):
+            self.assertEqual(mod.run_one(probe, sys.executable)[1], 0)
+        # 2. this script's own helpers work in a child that inherits them
+        code = ("import tempfile\n"
+                "from pathlib import Path\n"
+                "import test_publication as t\n"
+                "with tempfile.TemporaryDirectory() as d:\n"
+                "    r = Path(d)\n"
+                "    t.git(r, 'init', '-q')\n"
+                "    t.git(r, 'config', 'user.name', 'x')\n"
+                "    print(t.git_out(r, 'rev-parse', '--git-dir'), t.git_out(r, 'config', 'user.name'))\n")
+        with tempfile.TemporaryDirectory() as tmp:
+            child = Path(tmp) / "child.py"
+            child.write_text(code, encoding="utf-8")
+            env = {**os.environ, **leak, "PYTHONPATH": str(Path(__file__).resolve().parent)}
+            r = subprocess.run([sys.executable, str(child)], capture_output=True, text=True,
+                               env=env, cwd=tmp, timeout=120)
+            self.assertEqual((r.returncode, r.stdout.strip()), (0, ".git x"), r.stderr)
+        # 3. every script that builds temporary repositories scrubs the same variables
+        for name in ("test_publication.py", "selftest.py", "test_adapters.py", "test_cli.py",
+                     "test_hardening.py", "test_adversarial.py", "test_readme_examples.py",
+                     "test_packaging.py", "scripts/experiment_v4.py"):
+            f = root / name
+            if not f.is_file():
+                continue
+            body = f.read_text(encoding="utf-8")
+            for var in mod.GIT_REPO_VARS:
+                self.assertIn(f'"{var}"', body, f"{name} does not scrub {var}")
 
     def test_the_selftest_job_keeps_every_cell_and_gives_the_once_scripts_to_3_12(self) -> None:
         job = self.jobs("ci.yml")["selftest"]
