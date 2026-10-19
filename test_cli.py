@@ -1592,6 +1592,15 @@ def test_fuzz(root: Path) -> None:
     check("send with a very long AGENT_MAIL_DIR: NO MAILBOX, not a traceback",
           r.returncode == 2 and "Traceback" not in r.stderr and r.stdout == ""
           and r.stderr.startswith("NO MAILBOX at ") and r.stderr.count("\n") == 1, r.stderr[-120:])
+    loop = root / "mailbox-symlink-loop"
+    loop.symlink_to(loop)
+    for cmdline in (send, ("list",), ("status",), ("doctor",)):
+        r = run(None, *cmdline, env={"AGENT_MAIL_DIR": str(loop)}, cwd=root)
+        check(f"{cmdline[0]} with AGENT_MAIL_DIR a symlink loop: NO MAILBOX, exit 2, no traceback "
+              "(`send` used to end in RuntimeError, exit 1)",
+              r.returncode == 2 and "Traceback" not in r.stderr
+              and (f"NO MAILBOX at {loop}" in r.stderr
+                   or (cmdline[0] == "doctor" and "store: MISSING" in r.stdout)), r.stderr[-160:])
     for cmdline in (send, ("list",), ("status",), ("doctor",)):
         r = run(None, *cmdline, env={"AGENT_MAIL_DIR": "~no-such-user-zz/mail"}, cwd=root)
         check(f"{cmdline[0]} with AGENT_MAIL_DIR=~<a user nobody has>: exit 2 and no traceback "
