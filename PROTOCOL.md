@@ -2014,6 +2014,7 @@ and none of them changes which result stands or silences any message:
 | `CONTESTED_RESULT` | one sender's ANSWERs cite the same ASK with different valid results (a resend with the same value is not a contest); the latest stands and the ASK is listed, once per sender |
 | `RESULT_FROM_THIRD_PARTY` | the ANSWER's `from` is not the ASK's `to`, compared as writer tokens (§27, the way `send` stores them); the result stands, and the reader is told whose claim it is |
 | `ANSWER_FROM_THIRD_PARTY` | the same test for an ANSWER with no `result:` at all (§45); it closes the ASK as before |
+| `CITATION_FROM_THIRD_PARTY` | the same for a NOTICE, DISPUTE, ASK or CLAIM that cites the ASK, from someone who is neither its `to` nor its `from` (§45); it closes the ASK as before |
 
 Nothing is resolved or voided by the tool: which claim to believe is for the
 reader, as §12 and §34 already say of contested claims.
@@ -2337,12 +2338,29 @@ still stops delivering it, and nobody is blocked or refused. A reply that names 
 dangling reply and is not counted. An ANSWER that carries a malformed or valid `result:` keeps its
 §39 reason. Text `status` prints the attention rows even when no ANSWER carries a `result:`.
 
+**Other types.** A NOTICE, DISPUTE, ASK or CLAIM whose `reply_to:` names an ASK in this mailbox
+closes it just as an ANSWER does (§4), and until now said nothing when it came from a stranger. It is
+now one `CITATION_FROM_THIRD_PARTY` row in the same attention list (same columns: reason, ask id,
+citing message id, sender, `-`), and a problem code counted in `status --json` `problems` right
+after `ANSWER_FROM_THIRD_PARTY`. "Third party" here means neither side of the ASK: a sender equal
+to the ASK's `to` or to its `from` is not reported, so the asker withdrawing or restating its own
+ASK is not a finding. (An ANSWER from the asker is still reported, as before.) Nothing else changes:
+the ASK stays closed, no message is stored or rewritten, no other command's output differs, and the
+pickup hook is untouched. The code is a new value in an existing list and `schema` stays 1; no JSON
+key is added.
+
+**What this is not.** It is not authentication. `from` is self-declared (§40), so a sender who
+writes the addressee's name is not reported; the report catches the honest mistake and the
+unannounced cover, not a forger.
+
 **Why a flag and not a refusal.** A teammate may legitimately answer for someone who is away. The
 tool cannot tell that from a mistake; the reader can, so the reader is told.
 
 **Invariant a test must pin.** A bare ANSWER from a non-addressee is counted once and named in text
 `status`; the addressee's ANSWER and a dangling reply are not; the ASK stays closed and `status`
-writes nothing. `test_cli.py` pins it.
+writes nothing. A NOTICE, DISPUTE, ASK and CLAIM from a third party are each counted once under
+`CITATION_FROM_THIRD_PARTY`; the addressee's, the asker's and a dangling citation are not; every one of
+those ASKs stays closed and `inbox --exit-code` is unchanged. `test_cli.py` pins it.
 
 ---
 
@@ -2354,7 +2372,7 @@ as its `to`, and neither the pickup adapter nor `list --to <writer>` matches it.
 afterwards did not change that. An ASK sent that way stayed open and no writer was ever shown it.
 
 **Rule.** `status --json` adds the problem code `ALIAS_MAIL_UNDELIVERED` (after
-`ANSWER_FROM_THIRD_PARTY`), counting messages that are live (§9: an ASK nobody has answered, an
+`CITATION_FROM_THIRD_PARTY`), counting messages that are live (§9: an ASK nobody has answered, an
 unexpired CLAIM, a fresh NOTICE, ANSWER or DISPUTE) and whose `to` is an alias declared now.
 An alias that is also an Identity row is not counted: that identity reads it. `doctor` prints
 `alias_mail_undelivered: N: ...` with the ids (at most 20) only when N is not zero, and the way out:

@@ -802,7 +802,8 @@ class _Index:
 
 RESULT_VALUES = ("DONE", "PARTIAL", "FAILED", "DECLINED", "CANNOT_VERIFY")   # section 39
 RESULT_ATTENTION_REASONS = ("MALFORMED_RESULT", "UNATTACHED_RESULT", "CONTESTED_RESULT",
-                            "RESULT_FROM_THIRD_PARTY", "ANSWER_FROM_THIRD_PARTY")
+                            "RESULT_FROM_THIRD_PARTY", "ANSWER_FROM_THIRD_PARTY",
+                            "CITATION_FROM_THIRD_PARTY")
 RESULTS_TEXT_ROWS = 20   # attention rows in text status
 
 
@@ -837,7 +838,14 @@ class _Results:
         cited: dict[str, list[Message]] = {}
         for m in everything:
             if m.type != "ANSWER":
-                continue   # result: on any other type is the free field of section 16
+                # result: on any other type is the free field of section 16. A citation still
+                # closes the ASK (section 4); from a party to neither side it is reported (section 45).
+                target = by_id.get(m.re_id.strip().upper()) if m.re_id else None
+                if (target is not None and target.type == "ASK"
+                        and target.id.upper() != m.id.upper()
+                        and m.sender not in (target.to, target.sender)):
+                    self._flag("CITATION_FROM_THIRD_PARTY", target, m, "")
+                continue
             raw = (m.meta.get("result") or "").strip()
             if not raw:
                 # A bare ANSWER closes its ASK like any other (section 32); from someone the
@@ -3239,7 +3247,7 @@ PROBLEM_CODES = (
     "STALE_TAKEOVER_MUTEX", "MALFORMED_CLAIM_EXPIRY", "FOREIGN_SUPERSEDE", "DANGLING_REPLY",
     "STALLED_AGENT", "CONTESTED_SCOPE",
     "MALFORMED_RESULT", "UNATTACHED_RESULT", "CONTESTED_RESULT", "RESULT_FROM_THIRD_PARTY",
-    "ANSWER_FROM_THIRD_PARTY", "ALIAS_MAIL_UNDELIVERED", "SILENT_RECIPIENT",
+    "ANSWER_FROM_THIRD_PARTY", "CITATION_FROM_THIRD_PARTY", "ALIAS_MAIL_UNDELIVERED", "SILENT_RECIPIENT",
     "IDENTITY_MISMATCH", "IDENTITY_UNRESOLVED", "IDENTITY_SHARED_INODE",   # section 40
 )
 CLAIMS_LIST_CAP = 200    # rows per list in status --json (PROTOCOL.md section 34)
