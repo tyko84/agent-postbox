@@ -18,6 +18,13 @@ import sys
 import tempfile
 from pathlib import Path
 
+# A hook, `rebase --exec` or `bisect run` exports GIT_DIR and friends; inherited, they would
+# point this script's temporary repositories at the real one. Test scripts ignore them.
+for _v in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
+           "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_PREFIX", "GIT_NAMESPACE",
+           "GIT_CEILING_DIRECTORIES"):
+    os.environ.pop(_v, None)
+
 HERE = Path(__file__).resolve().parent
 HOOK = HERE / "hooks" / "agent_mail_check.py"
 # The spec checkout ships install.py; an installed copy (tools/agent-postbox/)

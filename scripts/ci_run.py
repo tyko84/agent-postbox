@@ -23,6 +23,7 @@ matrix and its place in branch protection; only the way it runs the list changed
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 import threading
@@ -33,6 +34,12 @@ from pathlib import Path
 from typing import TextIO
 
 ROOT = Path(__file__).resolve().parent.parent
+# Variables that select which repository a git command acts on. `git rebase --exec`, hooks
+# and `bisect run` export them; a test that inherited them would run its temporary-repository
+# git calls against the real repository. Every test child process gets an environment without them.
+GIT_REPO_VARS = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
+                 "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_PREFIX",
+                 "GIT_NAMESPACE", "GIT_CEILING_DIRECTORIES")
 TIMEOUT = 900  # seconds, per script: a hang detector (the job limit is 15 minutes)
 
 
@@ -80,8 +87,9 @@ ELSEWHERE = {"test_packaging.py": "packaging"}
 
 def run_one(test: Test, python: str) -> tuple[Test, int, float, str]:
     start = time.monotonic()
+    env = {k: v for k, v in os.environ.items() if k not in GIT_REPO_VARS}
     try:
-        cp = subprocess.run([python, *test.argv], cwd=ROOT, stdin=subprocess.DEVNULL,
+        cp = subprocess.run([python, *test.argv], cwd=ROOT, env=env, stdin=subprocess.DEVNULL,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=TIMEOUT)
         rc, out = cp.returncode, cp.stdout.decode("utf-8", "replace")
     except subprocess.TimeoutExpired as e:

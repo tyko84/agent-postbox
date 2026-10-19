@@ -56,6 +56,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import e2e_claude as e2e  # noqa: E402
 import experiment_v2 as v2  # noqa: E402
 
+# A hook, `rebase --exec` or `bisect run` exports GIT_DIR and friends; inherited, they would
+# point this script's temporary repositories at the real one. Test scripts ignore them.
+for _v in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
+           "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_PREFIX", "GIT_NAMESPACE",
+           "GIT_CEILING_DIRECTORIES"):
+    os.environ.pop(_v, None)
+
 ROOT = Path(__file__).resolve().parent.parent
 SCHEMA = 4
 ARMS = ("N0", "S", "L", "P", "O")

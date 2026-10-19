@@ -63,7 +63,9 @@ Code changes:
   (`test_packaging.py` skips, loudly, if the `build` package is unavailable), and so must
   `ruff check .` and
   `mypy agent_mail.py install.py hooks/agent_mail_check.py check_handoff.py check_publication.py test_publication.py`
-  (`ci.yml` is the source of truth for what CI runs). The pinned tool versions
+  (`ci.yml` is the source of truth for what CI runs). The test scripts ignore inherited
+  `GIT_DIR`, `GIT_WORK_TREE` and the other `GIT_*` repository variables, so they are safe
+  under `git rebase --exec` and in hooks. The pinned tool versions
   CI uses are in `requirements-dev.txt`:
   `python -m pip install -r requirements-dev.txt`. The tools that build a
   release are pinned by hash as well, in `requirements-build.txt` and

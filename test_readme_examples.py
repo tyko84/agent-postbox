@@ -25,6 +25,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
+# A hook, `rebase --exec` or `bisect run` exports GIT_DIR and friends; inherited, they would
+# point this script's temporary repositories at the real one. Test scripts ignore them.
+for _v in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
+           "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_PREFIX", "GIT_NAMESPACE",
+           "GIT_CEILING_DIRECTORIES"):
+    os.environ.pop(_v, None)
+
 ROOT = Path(__file__).resolve().parent
 _FENCE = re.compile(r"^```bash runnable[ \t]*\n(.*?)^```[ \t]*$", re.S | re.M)
 _HEADING = re.compile(r"^## (\d+[a-z]?)\.", re.M)
