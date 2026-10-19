@@ -7,3 +7,20 @@
 - [ ] A change under `.github/workflows/` keeps the required check names, and a change to `release.yml` was dry-run (`docs/release-process.md`, Changing the release workflow)
 - [ ] New behavior has a check that asserts on content that must appear (not on absence)
 - [ ] Protocol changes are a numbered `PROTOCOL.md` section, not an edit to an old one
+
+## Evidence
+An author does not mark its own change independently reviewed or verified. Reviews are
+evidence (links or pasted output), not authenticated approvals (CONTRIBUTING.md, How changes
+get in).
+
+- Tests run (commands):
+- Platform and Python version:
+- Last lines of output (`python3 scripts/ci_run.py`, `ruff check .`, `mypy`, `python3 check_publication.py --git-log`):
+- Independent review or verification (links or pasted output, by someone other than the author):
+- Dependency order, if stacked:
+
+## Impact
+- [ ] Contract change (PROTOCOL.md, exit codes, JSON schema, on-disk format): owner approval linked, CHANGELOG entry states compatibility
+- [ ] Security change (trust boundary, publication checks, workflow permissions, secrets): owner approval linked
+- [ ] Release impact (version, tag, release workflow): owner approval linked
+- [ ] No AI co-author trailers or session URLs in commits or this text
