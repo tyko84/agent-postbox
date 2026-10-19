@@ -21,6 +21,7 @@ import dataclasses
 import importlib.util
 import io
 import json
+import platform
 import sys
 import tempfile
 import time
@@ -55,6 +56,16 @@ def ev_res(tid: str, text: str = "ok", err: bool = False) -> list[tuple[float, s
         {"type": "tool_result", "tool_use_id": tid, "content": text, "is_error": err}]}}))]
 
 
+# scripts/experiment_v4.py refuses to start on Windows on purpose (main(): "POSIX only (process
+# groups, SIGKILL)") and its prompts, allow rules and simulated commands spell `python3`. Six
+# tests here need that behaviour, so on Windows the whole file is skipped, with this reason.
+_WINDOWS = platform.system() == "Windows"
+if _WINDOWS:
+    print("SKIP  test_experiment_v4.py (experiment_v4.py is POSIX only by design: process groups, "
+          "SIGKILL, python3 spellings)")
+
+
+@unittest.skipIf(_WINDOWS, "experiment_v4.py is POSIX only by design (process groups, SIGKILL)")
 @unittest.skipUnless(SCRIPT.exists(), "scripts/ is not present")
 class Base(unittest.TestCase):
     def setUp(self) -> None:
