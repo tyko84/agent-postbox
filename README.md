@@ -428,9 +428,10 @@ on the wait alone; keep the default there. See PROTOCOL.md section 31.
 |---|---|---|
 | 0 | Done. For `send`: written, or a `duplicate of` an earlier keyed send | all |
 | 1 | Not found, or could not be done: no such message (`show`, `verify`), fingerprint mismatch (`verify`), the OS refused the write (`send`: read-only mailbox, disk full, permission denied; one line on stderr, nothing left behind) | `show`, `verify`, `send`, `ask`, `canary` |
-| 2 | Refused or unhealthy: bad arguments or input, no mailbox, a key reused with different content, a filesystem without `flock` for a scope, quarantined files present (`list`, `inbox`, `latency`), `doctor` FAIL, Python older than 3.10 | all |
+| 2 | Refused or unhealthy: bad arguments or input, no mailbox, a mailbox that exists but cannot be listed (`UNREADABLE MAILBOX`), a key reused with different content or for a different recipient, a filesystem without `flock` for a scope, quarantined files present (`list`, `inbox`, `latency`), `doctor` FAIL, Python older than 3.10 | all |
 | 3 | Contended, nothing written, safe to retry: scope held or being claimed, key being sent by a live process | `send` with `--scope` or `--key` |
 | 130, 143 | Interrupted by SIGINT / SIGTERM; the send released what it held first | `send`, `ask`, `canary` |
+| 10 | An ASK still owes a reply. Only with `inbox --exit-code`, which exits 0 when nothing is owed and 2 when that cannot be known (PROTOCOL.md section 37) | `inbox --exit-code` |
 | 141 | The reader of stdout went away (`list \| head -1`): stopped quietly, no traceback. 128 + SIGPIPE, as a shell reports it | every read-only command: `list`, `inbox`, `show`, `status`, `doctor`, `latency`, `verify`, `capability`, `--help`, `--version` |
 
 A refusal prints one line on stderr and nothing on stdout (a usage error
@@ -729,7 +730,8 @@ Do not use a broad rule such as `Bash(python3 *agent_mail.py *)`.
 Early (v0.x), extracted from a working multi-agent setup. Python 3.10-3.14, standard library
 only, POSIX only; CI runs the test scripts on Linux and macOS. Not on PyPI
 ([docs/pypi-publishing.md](docs/pypi-publishing.md)). The protocol is opinionated and still
-moving, so expect sections to be added. Issues and field reports are welcome (see
+moving, so expect sections to be added. Writing an adapter or a second implementation? [docs/adapter-conformance-guide.md](docs/adapter-conformance-guide.md)
+describes the stdlib-only conformance runner (evidence of listed behaviours, not a certification). Issues and field reports are welcome (see
 [CONTRIBUTING.md](CONTRIBUTING.md)); the most useful report is where you got stuck.
 
 MIT
