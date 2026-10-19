@@ -112,6 +112,8 @@ behaviour).
 - One alias fan-out is one hold: `status --json` adds a top-level `holds` (only when it differs from
   `claims.held`), and text `status` says "N holds" beside the count, so a claim to a two-writer alias
   no longer reads as two holds (PROTOCOL.md section 47). `claims.held` still counts messages.
+- `install.py` on Windows no longer runs a `python3.exe` or `python.exe` found in the current directory
+  (usually the project being installed into) when it probes for the hook interpreter.
 - Mail filed to an alias before the alias was declared is no longer silent: `status` counts it
   as `ALIAS_MAIL_UNDELIVERED` and `doctor` names it (PROTOCOL.md section 46). It is still not shown
   by any writer's pickup, by design; the report says how to re-send it.

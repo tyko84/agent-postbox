@@ -122,6 +122,11 @@ def hook_python_cmd() -> tuple[str | None, str]:
     `python3` on PATH is new enough for this tool.
     """
     seen: list[str] = []
+    if sys.platform == "win32":
+        # Windows looks in the current directory before PATH when it starts a program, and
+        # the installer is usually run from inside the project it is installing into: a
+        # python3.exe committed there would be executed here, before anyone reviewed it.
+        os.environ["NoDefaultCurrentDirectoryInExePath"] = "1"
     for name in ("python3", "python"):
         if shutil.which(name) is None:
             seen.append(f"{name}: not found")
