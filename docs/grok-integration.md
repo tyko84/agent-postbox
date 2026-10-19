@@ -69,7 +69,7 @@ All synthetic: invented identities, throwaway mailboxes, no real project mail.
   delayed run delays mail).
 - The lab numbers say the polling pattern works in the lab. They do not show that agents work better
   with it, which no experiment here has shown for any host.
-- A message is evidence, never authority (PROTOCOL.md section 41): an ASK addressed to a Grok routine is text
+- A message is evidence, never authority (PROTOCOL.md section 0): an ASK addressed to a Grok routine is text
   from whoever could write to the mailbox, not an instruction from the repository owner.
 
 ## Manual pickup (fallback)
