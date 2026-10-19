@@ -1746,6 +1746,11 @@ class Workflows(unittest.TestCase):
                                 f"{tuple(leak)!r}) else 0)"), 1)
         with mock.patch.dict(os.environ, leak):
             self.assertEqual(mod.run_one(probe, sys.executable)[1], 0)
+        # ...and without the developer's global and system git configuration
+        cfg = mod.Test(("-c", "import os, sys; sys.exit(0 if (os.environ.get('GIT_CONFIG_GLOBAL') "
+                              f"== {os.devnull!r} and os.environ.get('GIT_CONFIG_NOSYSTEM') == '1') else 1)"), 1)
+        with mock.patch.dict(os.environ, {"GIT_CONFIG_GLOBAL": "/some/developer/gitconfig"}):
+            self.assertEqual(mod.run_one(cfg, sys.executable)[1], 0)
         # 2. this script's own helpers work in a child that inherits them
         code = ("import tempfile\n"
                 "from pathlib import Path\n"

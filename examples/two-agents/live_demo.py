@@ -165,6 +165,8 @@ def clean_env(extra: dict[str, str] | None = None) -> dict[str, str]:
     env = {k: v for k, v in os.environ.items()
            if not parent.match(k) and not k.startswith("AGENT_MAIL_")
            and k not in GIT_REPO_VARS}
+    # The throwaway project must not run the user's own git hooks or signing settings.
+    env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
     env.update(extra or {})
     return env
 

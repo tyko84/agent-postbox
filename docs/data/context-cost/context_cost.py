@@ -146,6 +146,7 @@ def tokens(repo: str) -> None:
             json.dumps({"hooks": {"UserPromptSubmit": [{"hooks": hooks}]}}), encoding="utf-8")
         env = {k: v for k, v in os.environ.items()
                if not k.startswith("AGENT_MAIL") and k not in GIT_REPO_VARS}
+        env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
         subprocess.run(["git", "init", "-q"], cwd=proj, check=False, env=env)
         done = subprocess.run(["claude", "-p", "Reply with the single word: ok", "--model", "haiku",
                                "--output-format", "json", "--max-turns", "1"], cwd=proj,

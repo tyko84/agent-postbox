@@ -247,6 +247,8 @@ class Runner:
         env = {k: v for k, v in os.environ.items()
                if not _PARENT_VARS.match(k) and not k.startswith("AGENT_MAIL_")
                and k not in _GIT_REPO_VARS}
+        # Throwaway projects must not run the user's own git hooks or signing settings.
+        env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
         if identity:
             env["AGENT_MAIL_IDENTITY"] = identity
         env.update(extra or {})

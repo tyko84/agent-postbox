@@ -40,6 +40,10 @@ ROOT = Path(__file__).resolve().parent.parent
 GIT_REPO_VARS = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
                  "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_PREFIX",
                  "GIT_NAMESPACE", "GIT_CEILING_DIRECTORIES")
+# The temporary repositories the tests build must not run the developer's own hooks
+# (core.hooksPath, init.templateDir) or fail on their signing settings. Test children only:
+# the tool under test, and anything a user runs, keeps reading the git configuration it finds.
+GIT_ISOLATED_CONFIG = {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
 TIMEOUT = 900  # seconds, per script: a hang detector (the job limit is 15 minutes)
 
 
@@ -88,6 +92,7 @@ ELSEWHERE = {"test_packaging.py": "packaging"}
 def run_one(test: Test, python: str) -> tuple[Test, int, float, str]:
     start = time.monotonic()
     env = {k: v for k, v in os.environ.items() if k not in GIT_REPO_VARS}
+    env.update(GIT_ISOLATED_CONFIG)
     try:
         cp = subprocess.run([python, *test.argv], cwd=ROOT, env=env, stdin=subprocess.DEVNULL,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=TIMEOUT)

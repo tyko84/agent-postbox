@@ -195,6 +195,30 @@ class GitIsolation(unittest.TestCase):
                                "-c", "user.email=t@example.invalid", *args], capture_output=True,
                               text=True, check=True).stdout
 
+    def test_setup_ignores_a_hostile_global_git_configuration(self) -> None:
+        # A developer's global config may run hooks on every commit (core.hooksPath) or require
+        # a signature that cannot be made (commit.gpgsign). The demo's throwaway project must
+        # get its baseline commit and run none of it.
+        with tempfile.TemporaryDirectory() as tmp:
+            hooks = Path(tmp) / "hooks"
+            hooks.mkdir()
+            ran = Path(tmp) / "hook-ran"
+            hook = hooks / "pre-commit"
+            hook.write_text(f"#!/bin/sh\necho ran >> '{ran}'\n")
+            hook.chmod(0o755)
+            cfg = Path(tmp) / "gitconfig"
+            cfg.write_text(f"[core]\n\thooksPath = {hooks}\n[commit]\n\tgpgsign = true\n"
+                           "[gpg]\n\tprogram = /nonexistent-gpg\n")
+            env = {k: v for k, v in os.environ.items() if not k.startswith("AGENT_MAIL")}
+            env["GIT_CONFIG_GLOBAL"] = str(cfg)
+            cp = subprocess.run([sys.executable, "-I", str(SCRIPT), "setup", "--dir",
+                                 str(Path(tmp) / "demo")], capture_output=True, text=True,
+                                env=env, timeout=TIMEOUT)
+            self.assertEqual(cp.returncode, 0, cp.stderr)
+            project = Path(tmp) / "demo" / "project"
+            self.assertEqual(self.git(project, "log", "-1", "--format=%s").strip(), "baseline")
+            self.assertFalse(ran.exists(), "the user's global pre-commit hook ran")
+
     def test_setup_does_not_commit_the_invoking_repositorys_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             victim = Path(tmp) / "victim"
