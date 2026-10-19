@@ -2504,6 +2504,12 @@ def test_inbox_shows_owed_superseded(root: Path) -> None:
     text = run(a, "inbox", "--to", "bob").stdout
     check("...the text row keeps its format: '!' owed mark and the derived status",
           f"! ASK     [superseded] alice -> bob  orig\n    {ask}" in text, text)
+    meta = doc(run(a, "inbox", "--to", "bob", "--json"))
+    check("--json filters.status stays what was asked (the four of section 19) while the superseded "
+          "owed ASK is in messages: the metadata is the selection, not the returned statuses",
+          meta["filters"]["status"] == ["open", "blocked", "held", "fresh"]
+          and [(m["status"], m["owes_reply"]) for m in meta["messages"] if m["type"] == "ASK"]
+          == [("superseded", True)], repr(meta["filters"]))
     # 6. nothing is created by looking: no new message, no new obligation
     before = snapshot(a)
     view(a)

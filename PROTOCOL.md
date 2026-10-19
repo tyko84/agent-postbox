@@ -1687,7 +1687,7 @@ text. Top-level keys, schema 1:
 | `view` | `"list"` or `"inbox"` |
 | `mailbox` | the mailbox path: the only path in the document |
 | `now` | the evaluation instant as UTC, `YYYY-MM-DDTHH:MM:SSZ` |
-| `filters` | what was asked: `to`, `from` (lower-cased, or `null`), `live` (bool), `type`, `status` (lists in the order of §3 and §19, or `null`), `scope`, `since` (as UTC, or `null`). For `inbox`, `to` is the identity and `status` is the four statuses of §19 |
+| `filters` | what was asked: `to`, `from` (lower-cased, or `null`), `live` (bool), `type`, `status` (lists in the order of §3 and §19, or `null`), `scope`, `since` (as UTC, or `null`). For `inbox`, `to` is the identity and `status` is the four statuses of §19; that is the selection asked for, not a promise about the rows returned, which also include an ASK that was superseded but still owes a reply (its row says `status: "superseded"`, `owes_reply: true`, §19) |
 | `limit` | `N`, or `null` without `--limit` |
 | `total` | admitted messages in the mailbox |
 | `matched` | messages that passed the filters |
