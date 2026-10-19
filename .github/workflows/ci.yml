@@ -33,6 +33,24 @@ jobs:
       # Python version.
       - run: python scripts/ci_run.py ${{ matrix.python == '3.12' && '--with-once' || '' }}
 
+  selftest-windows:
+    # Native Windows, the platform the Windows-port changes target. Branch protection names
+    # the checks that gate a merge; this one was added to that list only after it was green on
+    # main (a required check that has never passed would block every merge). It runs the same
+    # list as every other cell, with no script left out: a script that cannot run on Windows
+    # skips itself and says why (one SKIP line), so a skip is visible in the log and a
+    # failure is a failure. 3.12 only to begin with; more versions are a matrix row each.
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - run: python scripts/ci_run.py
+
   packaging:
     runs-on: ubuntu-latest
     timeout-minutes: 10
