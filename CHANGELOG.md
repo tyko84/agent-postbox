@@ -17,6 +17,7 @@ behaviour).
   usage first and the error last, so the error sat under about 18 lines of usage). Exit status 2
   and an empty stdout are unchanged. A script that parsed the last stderr line for the error must
   now read the first.
+- `inbox` lists an ASK that was superseded but never answered. It still owed a reply to `inbox --exit-code`, `status` and the pickup hook, so `inbox --type ASK --exit-code` could print an empty list and exit 10. The row format is unchanged (derived status `superseded`, `!` owed mark); exit codes, storage, supersede rules and ids are unchanged (PROTOCOL.md section 19).
 - `show <id>` for an id that only a quarantined file carries still exits 1 with `no message with id
   <id>` as its first line, and now adds a second stderr line naming the quarantined file, so a
   reader does not conclude the mail never arrived.

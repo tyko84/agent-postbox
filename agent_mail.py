@@ -998,9 +998,12 @@ def actionable(
     now = now or _now()
     if not match_identity(msg.to, identity, aliases=aliases):
         return False
-    return derived_status(msg, everything, now=now, _idx=_idx) in (
-        "open", "blocked", "held", "fresh",
-    )
+    status = derived_status(msg, everything, now=now, _idx=_idx)
+    if status == "superseded":
+        # A superseded ASK nobody has cited still owes a reply (open_asks, the hook, status and
+        # `inbox --exit-code` all count it), so the view must show what the gate counts.
+        return owes_reply(msg, everything, _idx)
+    return status in ("open", "blocked", "held", "fresh")
 
 
 def resolve_body(args: argparse.Namespace) -> str | None:
@@ -4641,7 +4644,8 @@ def _run(argv: list[str] | None) -> int:
     ib = sub.add_parser(
         "inbox", help="actionable view: open/blocked/held/owed-to-me",
         description="What one identity should act on: mail addressed to it whose derived "
-                    "status is\nopen, blocked, held or fresh. Same row format as `list`.",
+                    "status is\nopen, blocked, held or fresh, plus any ASK that still owes a reply "
+                    "(even if\nsuperseded). Same row format as `list`.",
         epilog=_VIEW_EPILOG, formatter_class=raw)
     ib.add_argument("--to", default="", metavar="IDENTITY",
                     help="identity whose inbox to show (default: $AGENT_MAIL_IDENTITY)")

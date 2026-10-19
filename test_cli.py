@@ -2462,6 +2462,97 @@ def test_exit_code(root: Path) -> None:
             locked.chmod(0o700)
 
 
+def test_inbox_shows_owed_superseded(root: Path) -> None:
+    print("\ninbox shows a superseded ASK that is still owed (it agrees with the gate)")
+
+    def send(box: Path, mtype: str, frm: str, to: str, subject: str, *extra: str) -> str:
+        r = run(box, "send", "--type", mtype, "--from", frm, "--to", to, "--subject", subject,
+                "--body", "x", *extra)
+        return next((ln.split(": ", 1)[1] for ln in r.stdout.splitlines() if ln.startswith("id: ")), "")
+
+    def hook_ids(box: Path) -> set[str]:
+        env = dict(BASE_ENV, AGENT_MAIL_DIR=str(box), AGENT_MAIL_IDENTITY="bob")
+        out = subprocess.run([sys.executable, "-I", str(HERE / "hooks" / "agent_mail_check.py")],
+                             capture_output=True, text=True, env=env, input="{}",
+                             timeout=STEP_TIMEOUT).stdout
+        return set(re.findall(r"^  ([0-9A-Z]{26}) from ", out, re.M))
+
+    def view(box: Path) -> dict[str, Any]:
+        rows = doc(run(box, "inbox", "--to", "bob", "--json")).get("messages", [])
+        return {
+            "shown": {m["id"] for m in rows if m["type"] == "ASK"},
+            "owed": {m["id"] for m in rows if m["owes_reply"]},
+            "rc": run(box, "inbox", "--to", "bob", "--exit-code").returncode,
+            "status_open": doc(run(box, "status", "--json")).get("asks", {}).get("open"),
+            "hook": hook_ids(box),
+        }
+
+    def agrees(v: dict[str, Any]) -> bool:
+        """The view, the exit status, status and the hook all name the same owed set."""
+        return (v["owed"] == v["hook"] and v["status_open"] == len(v["owed"])
+                and v["rc"] == (10 if v["owed"] else 0))
+
+    # 1. a foreign NOTICE supersedes an ASK: the ASK is still owed, so it is still shown
+    a = root / "owed-sup-foreign"
+    a.mkdir()
+    ask = send(a, "ASK", "alice", "bob", "orig")
+    send(a, "NOTICE", "mallory", "bob", "never mind", "--supersedes", ask)
+    v = view(a)
+    check("foreign NOTICE supersedes an ASK: the inbox still lists the ASK as owed",
+          v["shown"] == {ask} and v["owed"] == {ask}, repr(v))
+    check("...and the view, inbox --exit-code (10), status and the hook agree", agrees(v), repr(v))
+    text = run(a, "inbox", "--to", "bob").stdout
+    check("...the text row keeps its format: '!' owed mark and the derived status",
+          f"! ASK     [superseded] alice -> bob  orig\n    {ask}" in text, text)
+    # 6. nothing is created by looking: no new message, no new obligation
+    before = snapshot(a)
+    view(a)
+    check("reading it again writes nothing", snapshot(a) == before)
+
+    # 2-4. the same sender re-asks and supersedes its earlier ASK
+    b = root / "owed-sup-reask"
+    b.mkdir()
+    first = send(b, "ASK", "alice", "bob", "first")
+    second = send(b, "ASK", "alice", "bob", "second", "--supersedes", first)
+    v = view(b)
+    check("same-sender ASK supersedes an earlier ASK: both are listed, both owed (no duplicate)",
+          v["shown"] == {first, second} and v["owed"] == {first, second}, repr(v))
+    check("...and the gate agrees (2 owed)", agrees(v) and v["status_open"] == 2, repr(v))
+    run(b, "send", "--type", "ANSWER", "--from", "bob", "--to", "alice", "--subject", "re second",
+        "--body", "x", "--reply-to", second)
+    v = view(b)
+    check("answering only the replacement leaves the original owed and listed",
+          v["shown"] == {first} and v["owed"] == {first} and agrees(v), repr(v))
+    run(b, "send", "--type", "ANSWER", "--from", "bob", "--to", "alice", "--subject", "re first",
+        "--body", "x", "--reply-to", first)
+    v = view(b)
+    check("answering the original too closes it: nothing listed, exit 0, nothing owed",
+          v["shown"] == set() and v["owed"] == set() and agrees(v), repr(v))
+
+    # controls: what stays hidden. A superseded NOTICE/CLAIM never owes, and an answered ASK is closed
+    c = root / "owed-sup-controls"
+    c.mkdir()
+    note = send(c, "NOTICE", "alice", "bob", "old notice")
+    send(c, "NOTICE", "alice", "bob", "new notice", "--supersedes", note)
+    done = send(c, "ASK", "alice", "bob", "answered ask")
+    run(c, "send", "--type", "ANSWER", "--from", "bob", "--to", "alice", "--subject", "re",
+        "--body", "x", "--reply-to", done)
+    send(c, "NOTICE", "alice", "bob", "replaces the answered ask", "--supersedes", done)
+    listed = {m["id"] for m in doc(run(c, "inbox", "--to", "bob", "--json")).get("messages", [])}
+    check("control: a superseded NOTICE and a superseded-but-answered ASK stay out of the inbox",
+          note not in listed and done not in listed, repr(listed))
+    check("control: with nothing owed the gate exits 0", run(c, "inbox", "--to", "bob", "--exit-code").returncode == 0)
+    other = doc(run(a, "inbox", "--to", "carol", "--json")).get("messages", [])
+    check("control: another identity does not see bob's owed ASK", other == [], repr(other))
+    # the original contradiction: `--type ASK --exit-code` listed nothing yet exited 10
+    r = run(a, "inbox", "--to", "bob", "--type", "ASK", "--exit-code", "--json")
+    check("inbox --type ASK --exit-code: exit 10 and the owed ASK is in the list",
+          r.returncode == 10 and [m["id"] for m in doc(r).get("messages", [])] == [ask], r.stdout[:300])
+    r = run(a, "inbox", "--to", "bob", "--type", "NOTICE", "--json")
+    check("control: --type NOTICE still filters the ASK out",
+          ask not in {m["id"] for m in doc(r).get("messages", [])}, r.stdout[:300])
+
+
 def _py310_fromisoformat(text: str) -> dt.datetime:
     """What Python 3.10's `datetime.fromisoformat` accepts, in outline: a fraction of
     exactly 3 or 6 digits, a zone only as +HH:MM[:SS], no comma. Used to emulate 3.10 on
@@ -2608,6 +2699,7 @@ def main() -> int:
         test_listing_race(root)
         test_limit_owed(root)
         test_exit_code(root)
+        test_inbox_shows_owed_superseded(root)
         test_views(root)
         test_results(root)
         test_reader_gone(root)

@@ -499,7 +499,11 @@ field agents can drift. Compute status from durable fields:
 **Actionable `inbox`** — default operator view for one identity: only messages
 that are **open**, **blocked**, **held**, or otherwise owed-to-me (live and
 addressed to that identity). Closed / answered / expired / superseded / stale
-rows stay out of the default.
+rows stay out of the default, with one exception: an ASK that was superseded but
+that nobody has cited still owes a reply (§29), so it is listed, with its derived
+status `superseded` and the `!` owed mark, until it is answered. The inbox shows
+exactly the ASKs that `inbox --exit-code` (§37), `status` and the pickup hook count
+as owed. Nothing else about supersession changes.
 
 **Forensic `list`** — full chronology including closed and superseded. Do not
 replace `list` with inbox; keep both.
