@@ -1893,6 +1893,109 @@ def test_keyed_retry_of_quarantined_original(root: Path) -> None:
           repr((again.returncode, again.stdout, again.stderr)))
 
 
+def test_keyed_retry_recovers_from_the_header(root: Path) -> None:
+    """A keyed retry whose marker is gone or damaged finds the message it already published by
+    that message's own `idem:` header, and publishes nothing a second time (PROTOCOL.md section 31)."""
+    argv = ("send", "--type", "ASK", "--from", "alice", "--to", "bob", "--subject", "do it",
+            "--body", "please", "--key", "k1")
+
+    def fresh(name: str) -> tuple[Path, str]:
+        b = root / f"hr-{name}"
+        b.mkdir()
+        first = run(b, *argv)
+        mid = first.stdout.split("id:")[-1].split()[0] if first.returncode == 0 else ""
+        return b, mid
+
+    for what, damage in (("deleted", lambda m: m.unlink()),
+                         ("emptied", lambda m: m.write_bytes(b"")),
+                         ("garbage", lambda m: m.write_bytes(b"\x00\xffnot a marker\n")),
+                         ("truncated", lambda m: m.write_bytes(m.read_bytes()[:30]))):
+        b, mid = fresh(what)
+        damage(next(b.glob(".idem.*")))
+        r = run(b, *argv)
+        check(f"marker {what}: the retry is a duplicate of the message already published",
+              r.returncode == 0 and r.stdout.startswith(f"duplicate of {mid}")
+              and len(list(b.glob("*.md"))) == 1, repr((r.returncode, r.stdout, r.stderr)))
+        again = run(b, *argv)
+        check(f"marker {what}: and so is every later retry (one file, one open ASK)",
+              again.returncode == 0 and len(list(b.glob("*.md"))) == 1
+              and doc(run(b, "status", "--json"))["asks"]["open"] == 1, repr(again.stdout))
+
+    b, mid = fresh("scope")
+    next(b.glob(".idem.*")).unlink()
+    other = run(b, "send", "--type", "ASK", "--from", "carol", "--to", "bob", "--subject", "do it",
+                "--body", "please", "--key", "k1")
+    check("the same key from another sender is its own send, not a duplicate",
+          other.returncode == 0 and other.stdout.startswith("wrote") and len(list(b.glob("*.md"))) == 2,
+          repr((other.returncode, other.stdout, other.stderr)))
+    near = run(b, *argv[:-1], "k10")
+    check("a key that only starts like the original ('k10' vs 'k1') matches nothing",
+          near.returncode == 0 and near.stdout.startswith("wrote"), repr((near.returncode, near.stdout)))
+
+    b, mid = fresh("content")
+    next(b.glob(".idem.*")).unlink()
+    r = run(b, *argv[:-3], "different", "--key", "k1")
+    check("marker gone, same key, different content: refused as a present marker would (exit 2)",
+          r.returncode == 2 and "different content" in r.stderr and len(list(b.glob("*.md"))) == 1,
+          repr((r.returncode, r.stderr)))
+
+    b, mid = fresh("twin")
+    next(b.glob(".idem.*")).unlink()
+    src = next(b.glob("*.md"))
+    twin_id = "01ARZ3NDEKTSV4RRFFQ69G5FA2"
+    (b / f"{twin_id}-do-it.md").write_text(src.read_text(encoding="utf-8").replace(mid, twin_id),
+                                           encoding="utf-8")
+    before = snapshot(b)
+    r = run(b, *argv)
+    check("two messages carry the key: exit 2, both named, nothing written, none chosen",
+          r.returncode == 2 and mid in r.stderr and twin_id in r.stderr
+          and "duplicate of" not in r.stdout and snapshot(b) == before
+          and not list(b.glob(".idem.*")), repr((r.returncode, r.stdout, r.stderr)))
+
+    b, mid = fresh("quarantined")
+    next(b.glob(".idem.*")).unlink()
+    src = next(b.glob("*.md"))
+    src.write_text(src.read_text(encoding="utf-8").replace("type: ASK", "type: WHAT"), encoding="utf-8")
+    before = snapshot(b)
+    r = run(b, *argv)
+    check("the original is quarantined and the marker is gone: exit 2, never `duplicate of`, file untouched",
+          r.returncode == 2 and "quarantined" in r.stderr and "duplicate of" not in r.stdout
+          and snapshot(b) == before, repr((r.returncode, r.stdout, r.stderr)))
+
+    b, mid = fresh("header")
+    next(b.glob(".idem.*")).unlink()
+    src = next(b.glob("*.md"))
+    src.write_text(src.read_text(encoding="utf-8").replace(f"id: {mid}", "id: 01ARZ3NDEKTSV4RRFFQ69G5FA9"),
+                   encoding="utf-8")
+    r = run(b, *argv)
+    check("a file whose `id:` disagrees with its name is no evidence: the retry publishes (as before)",
+          r.returncode == 0 and r.stdout.startswith("wrote"), repr((r.returncode, r.stdout, r.stderr)))
+
+    b = root / "hr-link"
+    b.mkdir()
+    outside = root / "hr-outside"
+    outside.mkdir()
+    first = run(b, *argv)
+    mid = first.stdout.split("id:")[-1].split()[0]
+    src = next(b.glob("*.md"))
+    (outside / "x.md").write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+    src.unlink()
+    next(b.glob(".idem.*")).unlink()
+    (b / f"{mid}-link.md").symlink_to(outside / "x.md")
+    r = run(b, *argv)
+    check("a symlink out of the mailbox is never followed as the original: the retry publishes",
+          r.returncode == 0 and r.stdout.startswith("wrote"), repr((r.returncode, r.stdout, r.stderr)))
+
+    b, mid = fresh("window")
+    next(b.glob(".idem.*")).unlink()
+    for i in range(70):
+        hand(b, f"W{i:03d}", "NOTICE", "zed", "all", "2030-01-01T00:00:00Z", f"n{i}",
+             mid="01ZZZZZZZZZZZZZZZZZZZZ" + f"{i:04d}")
+    r = run(b, *argv)
+    check("only the newest 64 messages are read: an original buried deeper is not found (bounded; as before)",
+          r.returncode == 0 and r.stdout.startswith("wrote"), repr((r.returncode, r.stdout, r.stderr)))
+
+
 def test_answer_from_third_party(root: Path) -> None:
     """A bare ANSWER from someone the ASK was not addressed to is reported, never undone
     (PROTOCOL.md section 45)."""
@@ -2805,6 +2908,7 @@ def main() -> int:
         test_answer_from_third_party(root)
         test_citation_from_third_party(root)
         test_keyed_retry_of_quarantined_original(root)
+        test_keyed_retry_recovers_from_the_header(root)
         test_alias_mail_undelivered(root)
         test_fanout_holds(root)
         test_silent_recipient(root)

@@ -80,7 +80,7 @@ import signal  # noqa: E402
 import time  # noqa: E402
 import unicodedata  # noqa: E402
 from pathlib import Path  # noqa: E402
-from typing import Any, NoReturn  # noqa: E402
+from typing import Any, NamedTuple, NoReturn  # noqa: E402
 
 TYPES = ("ASK", "ANSWER", "NOTICE", "CLAIM", "DISPUTE")
 EXTENSION_TYPES: frozenset[str] = frozenset()
@@ -2046,8 +2046,17 @@ def _idem_content(mtype: str, subject: str, body: str) -> str:
 IDEM_RECIPIENT_SCAN = 64   # newest messages a keyed send reads to find a key reused for another recipient
 
 
+class _KeyedCopy(NamedTuple):
+    """A message in the newest-IDEM_RECIPIENT_SCAN window that carries this sender's key to this
+    recipient: what a retry can recover when the key's marker is damaged or gone (section 31)."""
+    id: str
+    ok: bool        # false: a file `load_messages` would quarantine, never shown to a reader
+    same: bool      # type, subject and body (stripped) equal this send's
+
+
 def _idem_other_recipient(box: Path, sender: str, to: str, key: str,
-                          peers: tuple[str, ...] = ()) -> tuple[str, str]:
+                          peers: tuple[str, ...] = (), copies: list[_KeyedCopy] | None = None,
+                          want: tuple[str, str, str] = ("", "", "")) -> tuple[str, str]:
     """(id, recipient) of a message this sender filed under `key` to a DIFFERENT recipient,
     else ("", ""). The reservation marker is per (sender, recipient, key), so on its own a
     retry whose --to changed would be written as a second message. A retry follows its
@@ -2067,11 +2076,24 @@ def _idem_other_recipient(box: Path, sender: str, to: str, key: str,
         text, _why = _read_mail_file(box / name)
         if text is None or needle not in text:
             continue
-        meta, _body, _problem = _parse_frontmatter(text)
-        if ((meta.get("idem") or "").strip() == key
-                and (meta.get("from") or "").strip().lower() == sender.lower()
-                and (meta.get("to") or "").strip().lower() not in same):
+        meta, body, problem = _parse_frontmatter(text)
+        if ((meta.get("idem") or "").strip() != key
+                or (meta.get("from") or "").strip().lower() != sender.lower()):
+            continue
+        got_to = (meta.get("to") or "").strip().lower()
+        if got_to not in same:
             return name.split("-", 1)[0], (meta.get("to") or "").strip()
+        if copies is not None and got_to == to.lower():
+            # The id comes from the file name only when the file's own `id:` agrees and is a
+            # ULID: a name is never joined into a path here, and a copy that fails that is
+            # no evidence of anything.
+            cid = name.split("-", 1)[0]
+            if _is_ulid(cid) and (meta.get("id") or "").strip().upper() == cid.upper():
+                ok = (not problem and _body_char_error(body) == ""
+                      and meta.get("type", "") in KNOWN_TYPES and bool(meta.get("from"))
+                      and "date" in meta and _parse_iso(meta["date"]) is not None)
+                copies.append(_KeyedCopy(cid, ok, (meta.get("type", ""), meta.get("subject", ""),
+                                                   body.strip()) == want))
     return "", ""
 
 
@@ -2678,8 +2700,10 @@ def cmd_send(args: argparse.Namespace) -> int:
                       file=sys.stderr)
                 return 3
         if idem:
+            copies: list[_KeyedCopy] = []
             other_id, other_to = _idem_other_recipient(
-                box, sender, to, idem, getattr(args, "_fanout_peers", ()))
+                box, sender, to, idem, getattr(args, "_fanout_peers", ()), copies,
+                (mtype, args.subject.strip(), body.strip()))
             if other_id:
                 print(f"idempotency key {idem!r} already published {_shown(other_id)} to {_shown(other_to)!r}, not "
                       f"{to!r}; nothing written: use a new key to send it to a different recipient",
@@ -2714,6 +2738,40 @@ def cmd_send(args: argparse.Namespace) -> int:
                     return 2
                 print(f"duplicate of {prior} (key {idem!r}); nothing written")
                 print(f"id: {prior}")
+                return 0
+            if copies:
+                # The marker did not name a landed message (gone, empty, damaged, or taken
+                # over from a dead sender) yet this key is already on file for this sender and
+                # recipient: the message's own `idem:` header is the evidence (section 31).
+                # Never pick one of several; never report a duplicate of a message no reader
+                # is shown. The marker this send just reserved is released, as for any refusal.
+                ids = ", ".join(_shown(c.id) for c in copies)
+                if len(copies) > 1:
+                    print(f"idempotency key {idem!r} is on {len(copies)} messages here ({ids}) and "
+                          "the retry marker names none of them; nothing written (which one is the "
+                          "original cannot be told: use a new key)", file=sys.stderr)
+                    return 2
+                only = copies[0]
+                if not only.ok:
+                    print(f"idempotency key {idem!r} already published {_shown(only.id)}, but that "
+                          "message is quarantined and will never be delivered; nothing written "
+                          "(repair or remove the file, see `doctor`, or use a new key)",
+                          file=sys.stderr)
+                    return 2
+                if not only.same:
+                    print(f"idempotency key {idem!r} was already used with different content; "
+                          "refusing (use a new key for a new message)", file=sys.stderr)
+                    return 2
+                drift = _idem_header_drift(box, only.id, {
+                    "reply_to": reply_to, "supersedes": supersedes, "scope": scope,
+                    **{k: str(getattr(args, k, "") or "") for k in _IDEM_HEADERS}})
+                if drift:
+                    print(f"idempotency key {idem!r} already published {only.id} with a different "
+                          f"{drift}; nothing written (the retry would otherwise be reported as a "
+                          "duplicate and its header lost): use a new key to send it", file=sys.stderr)
+                    return 2
+                print(f"duplicate of {only.id} (key {idem!r}); nothing written")
+                print(f"id: {only.id}")
                 return 0
             lines.insert(lines.index("---", 1), f"idem: {idem}")
         try:
