@@ -50,8 +50,10 @@ fixed; everything else below held.
 - ASK/ANSWER: a second or third-party answer changes nothing (section 32); a
   reply to an unknown id is written and reported as dangling; ids compare
   case-insensitively. Retried keyed sends under SIGKILL at 80 random instants
-  (notices and scoped claims): always exactly one message, no leftover lock or
-  temp file.
+  (notices and scoped claims): always exactly one message, never a duplicate. A killed send
+  can leave an inert hidden `.tmp` file (a later run of 60 kills left two): readers never see
+  it, `doctor` reports it as `stale_tmp` after ten minutes, and nothing deletes it
+  automatically (PROTOCOL.md section 33).
 - Delivery: 40 concurrent keyed sends with the hook running alongside: no
   partial block, no duplicate, header count at least the listed rows, all 40
   counted in the final run. Hook, `list --to X --live` and `status` agree on
