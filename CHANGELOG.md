@@ -22,6 +22,12 @@ behaviour).
   with one stderr line instead of `duplicate of <id>` (exit 0). Nothing is published and the key
   marker and the quarantined file are left as they were. Valid originals, and originals that
   are absent or unreadable, behave as before (PROTOCOL.md section 31).
+- `send --key` whose retry marker is gone or damaged (deleted, emptied, truncated, overwritten)
+  no longer files the message a second time: the retry finds the original by its own `idem:` header
+  among the newest 64 messages and prints `duplicate of <id>` (exit 0). Exactly one match with the
+  same content is recovered; different content, a quarantined original, or more than one match is
+  refused with exit 2 and nothing written (none is ever chosen); no match publishes as before. Same
+  sender, recipient and exact key only; no new exit code, flag or JSON key (PROTOCOL.md section 31).
 - `send --key` whose retry marker this account cannot read still prints the one failure line (exit 1,
   nothing written), but the reason now says it was the marker: `cannot write to the mailbox: the retry
   marker for this --key is unreadable: Permission denied (EACCES); nothing written`. No marker name,

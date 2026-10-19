@@ -1086,6 +1086,34 @@ non-regular file (never followed, §2) stays a plain duplicate (unchanged: it ca
 mailbox and is not applied. Exit 2 is the existing "refused or unhealthy: quarantined files
 present" meaning (§33); no exit code is added.
 
+**A retry whose marker is gone or damaged.** The marker is what makes a retry a duplicate, so
+a marker that was deleted, emptied, truncated or overwritten used to let the retry file the
+message a second time. The message carries its own evidence: the `idem:` header (and `from`,
+`to`). When a send has reserved the key afresh, so no marker named a landed message, it
+looks at the same newest `IDEM_RECIPIENT_SCAN` (64) messages the different-recipient check
+already reads (one pass for both, no extra reads) for a file with **exactly** this key, this
+sender and this recipient, whose `id:` equals the id in its file name (a ULID; a name is
+never joined into a path, a symlink or a non-regular file is never followed, §2).
+
+| Found | Result |
+|---|---|
+| none | publishes, as before |
+| one, same type, subject and body (stripped) | `duplicate of <id>`, exit 0, nothing written; the same header check as for a marker (`different reply_to`, ...) applies |
+| one, different content | `already used with different content`, exit 2, as a marker would say |
+| one that `load_messages` would quarantine | exit 2, `... is quarantined and will never be delivered`, nothing written |
+| more than one | exit 2 naming the count and the ids, nothing written: which is the original cannot be told, and none is chosen |
+
+A refusal releases the marker this send reserved, as every refusal does. The marker is not
+rewritten, so the recovery is repeatable but bounded: an original buried under more than 64
+newer messages is not found and the retry publishes, exactly as it did (the same
+window §31 "A key names one recipient" and §36 name). A marker that still parses is trusted as before: a well-formed marker naming another
+id or hash is a conflict, not damage. No new exit code, flag or JSON key.
+
+This is a best-effort guard, not global exactly-once delivery. It cannot see an original
+older than the newest 64 messages, one whose headers are too damaged to read, one in another
+mailbox directory, or one filed under a different sender, recipient or key; in each of those
+the retry publishes. Callers that need to know a message exists check for it (`show`, `list`).
+
 **Invariant a test must pin.** (a) A marker whose holder is alive is never
 taken over, however long the retry waits: with a live process holding the
 marker lock and no message, a retry at key wait 0 exits 3, writes nothing and
@@ -1641,7 +1669,9 @@ Three things are not promised: on macOS `fsync` does not flush the drive's
 own cache (that needs `F_FULLFSYNC`, which the tool does not request); the
 key marker's directory entry is made durable by the same directory `fsync`
 as the message, so a power loss between the two can keep a message whose
-marker is gone, and a retry then files it again; and the removal of a temp
+marker is gone, and a retry then recognises the message by its `idem:` header (§31, "A retry
+whose marker is gone or damaged") and files it again only when it is buried under more than 64
+newer messages; and the removal of a temp
 file is not synced, so one may reappear, hidden, after a crash (§33 reports
 it once stale).
 ## 37. `list`, `inbox` and `show` for a reader with a small window
