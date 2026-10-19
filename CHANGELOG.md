@@ -12,6 +12,12 @@ behaviour).
 - `show <id>` for an id that only a quarantined file carries still exits 1 with `no message with id
   <id>` as its first line, and now adds a second stderr line naming the quarantined file, so a
   reader does not conclude the mail never arrived.
+- `send --key` reused for a different recipient than the one the key already published to now exits
+  2 (`already published <id> to '<recipient>', not '<recipient>'`) and writes nothing; it used to
+  write a second message. The check reads at most the newest 64 messages, so an older original is
+  not found. Scripts that sent one key to several recipients one `send` at a time must use one key
+  per recipient (`--to <alias>` is unaffected). A retry of the same message is unchanged
+  (PROTOCOL.md sections 31 and 36).
 - `doctor` separates installation health from pickup verification (PROTOCOL.md section 20). A mailbox
   on which no canary was ever filed is healthy but unverified: `canary: UNVERIFIED`, exit 0, final line
   `PASS (pickup unverified: no canary has been filed)`; it used to end in `FAIL`, exit 2. A canary that

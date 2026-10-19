@@ -391,7 +391,7 @@ exists, never permission to do anything (PROTOCOL.md sections 0 and 34).
 
 A send with `--key K` is written at most once. A retry with the same key and
 content writes nothing and prints `duplicate of <id>` (exit 0). The same key
-with different content is refused (exit 2). The sender holds a kernel lock on
+with different content, or to a different recipient, is refused (exit 2, nothing written). The sender holds a kernel lock on
 the key while it publishes, so a retry can tell a dead sender from a slow one:
 a sender that died is taken over at once; a live one is never taken over. A
 retry waits up to `--key-wait SECONDS` (0 to 60, default 5, or

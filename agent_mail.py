@@ -2030,6 +2030,38 @@ def _idem_content(mtype: str, subject: str, body: str) -> str:
     return hashlib.sha256(f"{mtype}\0{subject}\0{body}".encode()).hexdigest()
 
 
+IDEM_RECIPIENT_SCAN = 64   # newest messages a keyed send reads to find a key reused for another recipient
+
+
+def _idem_other_recipient(box: Path, sender: str, to: str, key: str,
+                          peers: tuple[str, ...] = ()) -> tuple[str, str]:
+    """(id, recipient) of a message this sender filed under `key` to a DIFFERENT recipient,
+    else ("", ""). The reservation marker is per (sender, recipient, key), so on its own a
+    retry whose --to changed would be written as a second message. A retry follows its
+    original closely, so only the newest IDEM_RECIPIENT_SCAN messages are read (a mailbox of
+    100,000 costs the same as one of 100), and only a file that carries the key is parsed.
+    `peers` are the other writers of the same alias fan-out (section 27): one keyed
+    invocation reserves the key once per writer, so a copy to a peer is the same send.
+    An older original, or a file that cannot be read, is no objection."""
+    same = {to.lower(), *(p.lower() for p in peers)}
+    needle = f"idem: {key}"
+    try:
+        with os.scandir(box) as it:
+            names = sorted((e.name for e in it if e.name.endswith(".md")), reverse=True)
+    except OSError:
+        return "", ""
+    for name in names[:IDEM_RECIPIENT_SCAN]:
+        text, _why = _read_mail_file(box / name)
+        if text is None or needle not in text:
+            continue
+        meta, _body, _problem = _parse_frontmatter(text)
+        if ((meta.get("idem") or "").strip() == key
+                and (meta.get("from") or "").strip().lower() == sender.lower()
+                and (meta.get("to") or "").strip().lower() not in same):
+            return name.split("-", 1)[0], (meta.get("to") or "").strip()
+    return "", ""
+
+
 def _idem_drop_orphan(box: Path, sender: str, to: str, key: str, content: str) -> None:
     """A keyed send refused at the scope stage never reaches _idem_claim, so it
     clears its own key's ORPHAN here (PROTOCOL.md section 31, "Refused at the
@@ -2410,6 +2442,7 @@ def cmd_send(args: argparse.Namespace) -> int:
             if w in siblings:
                 a.supersedes = siblings[w]   # each copy renews its own sibling (section 5)
             a._alias_fanout_done = True
+            a._fanout_peers = tuple(aliases[dest])
             a._body = body
             err = _send_input_error(a, body)
             if err:
@@ -2578,6 +2611,13 @@ def cmd_send(args: argparse.Namespace) -> int:
                       file=sys.stderr)
                 return 3
         if idem:
+            other_id, other_to = _idem_other_recipient(
+                box, sender, to, idem, getattr(args, "_fanout_peers", ()))
+            if other_id:
+                print(f"idempotency key {idem!r} already published {_shown(other_id)} to {_shown(other_to)!r}, not "
+                      f"{to!r}; nothing written: use a new key to send it to a different recipient",
+                      file=sys.stderr)
+                return 2
             marker = _idem_marker(box, sender, to, idem)
             prior, marker_fd = _idem_claim(box, sender, to, idem, msg_id, mtype,
                                            args.subject, body, key_wait)
