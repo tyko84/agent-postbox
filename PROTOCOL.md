@@ -241,6 +241,19 @@ that still owe a reply, in one pass), and it answers `owes_reply()`'s question,
 not `derived_status()`'s: an ASK that was superseded but never cited still owes
 a reply.
 
+**Replacing an ASK does not move its obligation.** Alice sends ASK `A`, then ASK `B` with
+`--supersedes A`. Bob's ANSWER with `--reply-to B` closes `B` only: `A` still owes a reply and
+stays in Bob's inbox (§19). A message carries one `reply_to` (`--re` is the same option under
+its legacy name), so no single ANSWER can close both. To close both, answer each:
+
+```
+send --type ANSWER --from bob --to alice --subject "re: second" --reply-to <B> --body-file answer.txt
+send --type ANSWER --from bob --to alice --subject "re: first"  --reply-to <A> --body "see the answer to <B>"
+```
+
+After the second, `inbox --to bob --exit-code` exits 0. Nothing here changes which messages
+close an ASK (§29).
+
 **So: a pickup that has only ever been observed printing nothing has not been
 tested.** Prove it with a positive control — send a message that *must* arrive,
 including a NOTICE, and confirm you see it. `python selftest.py` does exactly
