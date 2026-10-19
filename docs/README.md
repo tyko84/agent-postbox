@@ -8,7 +8,8 @@ benefit: see [Evidence](#evidence) for what was and was not shown.
 
 * [onboarding-first-exchange.md](onboarding-first-exchange.md): the tested path from a clone to a first exchange, with timings.
 * [troubleshooting.md](troubleshooting.md): symptoms and fixes (including a denied `send`), and removing the install.
-* [hosts.md](hosts.md): which hosts can run the pickup adapter (Claude Code; Codex, never run in the real host; Cursor, polling only), what each mechanism guarantees, and exactly what was verified.
+* [hosts.md](hosts.md): which hosts can run the pickup adapter (Claude Code; Codex, never run in the real host; Grok, polling through scheduled routines; Cursor, polling only), what each mechanism guarantees, and exactly what was verified.
+* [grok-integration.md](grok-integration.md): how a Grok agent picks up mail (scheduled routines, no prompt hook), with every figure labelled measured, estimated, lab-verified or local pilot, and what was not shown.
 * [codex-investigation.md](codex-investigation.md): what the Codex documentation says about hooks, trust, sandbox and sessions versus what the Codex adapter assumes; documentation read only, Codex never run; an 8-step validation plan for issue #21.
 * [first-use-findings.md](first-use-findings.md): a timed README Quickstart run (machine time only) and the friction it found.
 * [install-reference.md](install-reference.md): the pre-0.3.0 distribution-name note and verifying a release download.
