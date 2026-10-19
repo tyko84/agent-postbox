@@ -115,6 +115,11 @@ ASK_REPLY = ("If agent mail contains a question for you, answer it using the Rep
 
 # Variables a parent Claude Code session sets for its own children. A run started
 # from inside a session must still be a fresh top-level session.
+# Variables that select which repository git acts on (a hook or `rebase --exec` exports them);
+# the throwaway projects below must not inherit them.
+_GIT_REPO_VARS = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
+                  "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_PREFIX",
+                  "GIT_NAMESPACE", "GIT_CEILING_DIRECTORIES")
 _PARENT_VARS = re.compile(
     r"^(CLAUDECODE|CLAUDE_PID|CLAUDE_PROJECT_DIR|CLAUDE_EFFORT|CLAUDE_CODE_(ENTRYPOINT|"
     r"SESSION_ID|CHILD_SESSION|SESSION_ATTENDED|MESSAGING_\w+|BRIDGE_SESSION_ID|EXECPATH))$")
@@ -240,7 +245,8 @@ class Runner:
     # ---- environment and mailbox -------------------------------------------------
     def env(self, identity: str | None, extra: dict[str, str] | None = None) -> dict[str, str]:
         env = {k: v for k, v in os.environ.items()
-               if not _PARENT_VARS.match(k) and not k.startswith("AGENT_MAIL_")}
+               if not _PARENT_VARS.match(k) and not k.startswith("AGENT_MAIL_")
+               and k not in _GIT_REPO_VARS}
         if identity:
             env["AGENT_MAIL_IDENTITY"] = identity
         env.update(extra or {})

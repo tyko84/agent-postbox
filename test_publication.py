@@ -1754,13 +1754,26 @@ class Workflows(unittest.TestCase):
         # 3. every script that builds temporary repositories scrubs the same variables
         for name in ("test_publication.py", "selftest.py", "test_adapters.py", "test_cli.py",
                      "test_hardening.py", "test_adversarial.py", "test_readme_examples.py",
-                     "test_packaging.py", "scripts/experiment_v4.py"):
+                     "test_packaging.py", "scripts/experiment_v4.py", "test_live_demo.py",
+                     "examples/two-agents/live_demo.py", "scripts/e2e_claude.py"):
             f = root / name
             if not f.is_file():
                 continue
             body = f.read_text(encoding="utf-8")
             for var in mod.GIT_REPO_VARS:
                 self.assertIn(f'"{var}"', body, f"{name} does not scrub {var}")
+        # 4. and no other script starts git without scrubbing them. The allow-list holds the
+        # read-only users, which only look at a repository and cannot change one.
+        read_only = {"agent_mail.py", "check_publication.py", "scripts/repro_build.py",
+                     "scripts/scenario.py"}
+        for f in sorted(root.rglob("*.py")):
+            rel = f.relative_to(root).as_posix()
+            if rel in read_only or rel.startswith(("pub/", "build/", ".")):
+                continue
+            body = f.read_text(encoding="utf-8")
+            if re.search(r"""\[\s*["']git["']""", body):
+                for var in mod.GIT_REPO_VARS:
+                    self.assertIn(f'"{var}"', body, f"{rel} starts git without scrubbing {var}")
 
     def test_the_selftest_job_keeps_every_cell_and_gives_the_once_scripts_to_3_12(self) -> None:
         job = self.jobs("ci.yml")["selftest"]

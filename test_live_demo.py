@@ -25,6 +25,13 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+# A hook, `rebase --exec` or `bisect run` exports GIT_DIR and friends; inherited, they would
+# point this script's temporary repositories at the real one. Test scripts ignore them.
+for _v in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
+           "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_PREFIX", "GIT_NAMESPACE",
+           "GIT_CEILING_DIRECTORIES"):
+    os.environ.pop(_v, None)
+
 HERE = Path(__file__).resolve().parent
 SCRIPT = HERE / "examples" / "two-agents" / "live_demo.py"
 TIMEOUT = 180
@@ -176,6 +183,44 @@ class Setup(Fixture):
         self.assertIn("--to alpha", b2)
         self.assertIn("one plain command", b2)
         self.assertNotIn(self.state["live_base"], b2)
+
+
+class GitIsolation(unittest.TestCase):
+    """`setup` runs `git add -A` and `git commit` in the demo project. A hook, `rebase --exec` or
+    `bisect run` exports GIT_DIR and GIT_WORK_TREE; `setup` must not let them redirect those
+    commands into the invoking repository (it once committed that repository's files)."""
+
+    def git(self, repo: Path, *args: str) -> str:
+        return subprocess.run(["git", "-C", str(repo), "-c", "user.name=t",
+                               "-c", "user.email=t@example.invalid", *args], capture_output=True,
+                              text=True, check=True).stdout
+
+    def test_setup_does_not_commit_the_invoking_repositorys_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            victim = Path(tmp) / "victim"
+            victim.mkdir()
+            self.git(victim, "init", "-q")
+            (victim / "tracked.txt").write_text("base\n")
+            self.git(victim, "add", "tracked.txt")
+            self.git(victim, "commit", "-q", "-m", "base")
+            (victim / "tracked.txt").write_text("base\nuncommitted edit\n")
+            (victim / "untracked.txt").write_text("synthetic\n")
+            before = (self.git(victim, "rev-list", "--count", "HEAD"),
+                      self.git(victim, "status", "--porcelain"))
+            env = {k: v for k, v in os.environ.items() if not k.startswith("AGENT_MAIL")}
+            env.update(GIT_DIR=str(victim / ".git"), GIT_WORK_TREE=str(victim),
+                       GIT_INDEX_FILE=str(victim / ".git" / "index"))
+            cp = subprocess.run([sys.executable, "-I", str(SCRIPT), "setup", "--dir",
+                                 str(Path(tmp) / "demo")], capture_output=True, text=True,
+                                env=env, timeout=TIMEOUT)
+            self.assertEqual(cp.returncode, 0, cp.stderr)
+            after = (self.git(victim, "rev-list", "--count", "HEAD"),
+                     self.git(victim, "status", "--porcelain"))
+            self.assertEqual(after, before, "setup changed the invoking repository")
+            # control: the demo project got its own baseline commit
+            project = Path(tmp) / "demo" / "project"
+            self.assertEqual(self.git(project, "rev-list", "--count", "HEAD").strip(), "1")
+            self.assertEqual(self.git(project, "log", "-1", "--format=%s").strip(), "baseline")
 
 
 class Check(Fixture):

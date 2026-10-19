@@ -25,6 +25,12 @@ import tempfile
 from pathlib import Path
 
 
+# Variables that select which repository git acts on; a throwaway project must not inherit them.
+GIT_REPO_VARS = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
+                 "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_PREFIX",
+                 "GIT_NAMESPACE", "GIT_CEILING_DIRECTORIES")
+
+
 def hook_file(repo: str) -> str:
     return os.environ.get("HOOKFILE", f"{repo}/hooks/agent_mail_check.py")
 
@@ -138,8 +144,9 @@ def tokens(repo: str) -> None:
         hooks = [{"type": "command", "command": f"cat {proj}/inject.txt"}]
         (proj / ".claude" / "settings.json").write_text(
             json.dumps({"hooks": {"UserPromptSubmit": [{"hooks": hooks}]}}), encoding="utf-8")
-        subprocess.run(["git", "init", "-q"], cwd=proj, check=False)
-        env = {k: v for k, v in os.environ.items() if not k.startswith("AGENT_MAIL")}
+        env = {k: v for k, v in os.environ.items()
+               if not k.startswith("AGENT_MAIL") and k not in GIT_REPO_VARS}
+        subprocess.run(["git", "init", "-q"], cwd=proj, check=False, env=env)
         done = subprocess.run(["claude", "-p", "Reply with the single word: ok", "--model", "haiku",
                                "--output-format", "json", "--max-turns", "1"], cwd=proj,
                               capture_output=True, text=True, timeout=180, env=env, check=False)
