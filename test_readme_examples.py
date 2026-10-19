@@ -186,5 +186,68 @@ class SupportedPythons(unittest.TestCase):
         self.assertEqual(re.findall(r'"(3\.\d+)"', 'python: ["3.10", "3.11"]'), ["3.10", "3.11"])
 
 
+class FirstReaderPath(unittest.TestCase):
+    """What a reader who has never seen the project meets before the first exchange."""
+
+    README = (ROOT / "README.md").read_text(encoding="utf-8")
+
+    @staticmethod
+    def glossary_terms(text: str) -> set[str]:
+        m = re.search(r"^## Words used below\n(.*?)(?=^## )", text, re.S | re.M)
+        if not m:
+            return set()
+        return set(re.findall(r"^\| `?([A-Za-z]+)`? \|", m.group(1), re.M)) - {"Word"}
+
+    def test_glossary_defines_every_message_type_and_the_unfamiliar_words(self) -> None:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("agent_mail_for_docs", ROOT / "agent_mail.py")
+        assert spec is not None and spec.loader is not None
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        terms = self.glossary_terms(self.README)
+        self.assertEqual(sorted(set(mod.TYPES) - terms), [], "README glossary omits a message type")
+        for word in ("owed", "live", "quarantined", "canary", "pickup"):
+            self.assertIn(word, terms)
+        # the glossary comes before the first command a reader runs
+        self.assertLess(self.README.index("## Words used below"), self.README.index("## Quickstart"))
+
+
+    def test_positive_control_glossary_check_sees_a_missing_term(self) -> None:
+        self.assertEqual(self.glossary_terms("## Words used below\n| Word | x |\n| `ASK` | a |\n\n## Next\n"),
+                         {"ASK"})
+        self.assertEqual(self.glossary_terms("no glossary here"), set())
+
+
+    def test_pip_option_warns_about_externally_managed_pythons(self) -> None:
+        """`pip install ./clone` on a distribution-managed python3 (PEP 668) installs nothing;
+        the README must say so beside the command and give the venv form."""
+        m = re.search(r"\*\*Option 1: pip.*?\*\*Option 2", self.README, re.S)
+        self.assertIsNotNone(m, "README lost its pip option")
+        assert m is not None
+        for needle in ("externally-managed-environment", "PEP 668", "python3 -m venv",
+                       ".venv/bin/agent-postbox"):
+            self.assertIn(needle, m.group(0))
+
+
+    def test_installed_copy_is_where_the_readme_says_and_runs(self) -> None:
+        """The CLI section tells an install.py user to run tools/agent-postbox/agent_mail.py
+        in place of the pip-only `agent-postbox` command."""
+        self.assertIn("python3 tools/agent-postbox/agent_mail.py", self.README)
+        self.assertIn("`command not found`", self.README)
+        with tempfile.TemporaryDirectory() as tmp:
+            proj = Path(tmp) / "proj"
+            (proj / ".git").mkdir(parents=True)
+            env = {k: v for k, v in os.environ.items() if not k.startswith("AGENT_MAIL")}
+            env["HOME"] = tmp
+            ins = subprocess.run([sys.executable, "-I", str(ROOT / "install.py"), str(proj)],
+                                 env=env, text=True, capture_output=True, timeout=120)
+            self.assertEqual(ins.returncode, 0, ins.stdout + ins.stderr)
+            cp = subprocess.run([sys.executable, "tools/agent-postbox/agent_mail.py", "--version"],
+                                cwd=proj, env=env, text=True, capture_output=True, timeout=60)
+            self.assertEqual(cp.returncode, 0, cp.stderr)
+            self.assertIn("agent-postbox", cp.stdout)
+
+
+
 if __name__ == "__main__":
     unittest.main()
