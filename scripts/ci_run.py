@@ -56,6 +56,7 @@ TESTS: tuple[Test, ...] = (
     Test(("test_hardening.py",), 38),
     Test(("test_team_sim.py",), 33),
     Test(("test_adapters.py",), 25),
+    Test(("test_conformance.py",), 4),
     Test(("test_field.py",), 23),
     Test(("test_experiment_v2.py",), 22),
     Test(("test_experiment_v3.py",), 20),

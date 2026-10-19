@@ -35,7 +35,7 @@ trap 'rm -rf "$DIST"' EXIT INT TERM
 
 for t in selftest.py stress_test.py test_hardening.py test_adversarial.py test_handoff.py \
          test_readme_examples.py test_publication.py test_packaging.py test_field.py test_cli.py \
-         test_scenario.py test_team_sim.py test_adapters.py test_examples.py test_e2e_script.py \
+         test_scenario.py test_team_sim.py test_adapters.py test_examples.py test_e2e_script.py test_conformance.py \
          test_live_demo.py test_micro_experiment.py test_experiment_v2.py test_experiment_v3.py test_experiment_v4.py; do
     echo "preflight: $t" >&2
     "$PY" "$t" >/dev/null
