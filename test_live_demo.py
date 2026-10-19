@@ -324,6 +324,8 @@ class BaselineCommit(unittest.TestCase):
             real = shutil.which("git")
             if real is None:
                 self.skipTest("git is not installed")
+            if os.name == "nt":
+                self.skipTest("the stand-in git is a #!/bin/sh script, which Windows does not run")
             fake = Path(tmp) / "bin"
             fake.mkdir()
             wrapper = fake / "git"
