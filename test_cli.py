@@ -255,11 +255,34 @@ def test_help(root: Path) -> None:
                       (["status", "--stalled-hours", "abc"], "invalid")):
         r = run(root / "nobox", *argv)
         lines = r.stderr.splitlines()
-        check(f"a usage error (`{' '.join(argv) or '(no command)'}`) is exit 2: usage, then one "
-              "error: line, nothing on stdout",
-              r.returncode == 2 and r.stdout == "" and lines[0].startswith("usage: ")
-              and ": error: " in lines[-1] and why in lines[-1]
-              and sum(": error: " in ln for ln in lines) == 1, r.stderr[-300:])
+        check(f"a usage error (`{' '.join(argv) or '(no command)'}`) is exit 2: the one "
+              "error: line first, then usage, nothing on stdout",
+              r.returncode == 2 and r.stdout == "" and ": error: " in lines[0]
+              and why in lines[0] and any(ln.startswith("usage: ") for ln in lines[1:])
+              and sum(": error: " in ln for ln in lines) == 1, r.stderr[:300])
+
+
+# ---------------------------------------------------------------------------
+def test_parser_error_first(root: Path) -> None:
+    print("\nargument errors: the error: line is the first stderr line, usage follows")
+    for label, argv, needle, prog in (
+            ("no command", [], "required", "agent_mail.py"),
+            ("send, missing required args", ["send"], "the following arguments are required",
+             "send"),
+            ("list, unknown flag", ["list", "--no-such-flag"], "unrecognized arguments", None),
+            ("status, bad value type", ["status", "--stalled-hours", "abc"], "invalid", "status")):
+        r = run(root / "nobox", *argv)
+        lines = r.stderr.splitlines() or [""]
+        usage_at = next((i for i, ln in enumerate(lines) if ln.startswith("usage: ")), -1)
+        check(f"{label}: error: line first, then the usage block, exit 2, stdout empty",
+              r.returncode == 2 and r.stdout == "" and ": error: " in lines[0]
+              and needle in lines[0] and usage_at == 1
+              and (prog is None or prog in lines[0].split(": error: ")[0])
+              and sum(": error: " in ln for ln in lines) == 1, repr(r.stderr[:300]))
+    # Positive control: a successful run has no error line at all.
+    r = run(root / "nobox", "--version")
+    check("control: --version prints no error: line", r.returncode == 0 and ": error: " not in
+          r.stderr, repr(r.stderr[:200]))
 
 
 # ---------------------------------------------------------------------------
@@ -416,9 +439,10 @@ def test_refusals(root: Path) -> None:
              "expected one argument")):
         r = run(box, *argv)
         lines = r.stderr.splitlines() or [""]
-        check(f"{label}: exit 2, usage and one error: line, nothing on stdout, nothing written",
-              r.returncode == 2 and r.stdout == "" and lines[0].startswith("usage: ")
-              and ": error: " in lines[-1] and needle in lines[-1] and "Traceback" not in r.stderr
+        check(f"{label}: exit 2, one error: line then usage, nothing on stdout, nothing written",
+              r.returncode == 2 and r.stdout == "" and ": error: " in lines[0]
+              and needle in lines[0] and any(ln.startswith("usage: ") for ln in lines[1:])
+              and "Traceback" not in r.stderr
               and snapshot(box) == before, repr((r.returncode, r.stderr[-300:])))
     r = run(box, "ask", "--from", "alice", "--to", "bob", "--subject", "s", "--body", "b",
             "--capability", "push")
@@ -2541,6 +2565,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as td:
         root = Path(td).resolve()
         test_help(root)
+        test_parser_error_first(root)
         test_refusals(root)
         test_empty(root)
         test_unreadable_mailbox(root)
