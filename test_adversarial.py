@@ -973,6 +973,25 @@ def keyed_retry_unlistable(root: Path) -> None:
                   and "Traceback" not in second.stderr, repr((second.returncode, second.stderr, n)))
 
 
+def windows_pickup(root: Path) -> None:
+    """A pipe is the ANSI code page on Windows: one unencodable subject must not hide the rest."""
+    print("the prompt hook still delivers when a subject cannot be encoded by stdout")
+    wb = root / "winpick"
+    wb.mkdir()
+    send(wb, frm="alice", to="me", subj="legit-notice")
+    fid = "01ARZ3NDEKTSV4RRFFQ69GC001"
+    hand(wb, fid, head=(f"id: {fid}\ntype: NOTICE\nfrom: eve\nto: me\n"
+                       "date: 2099-01-01T00:00:00Z\nsubject: \u4f60\u597d \u2603\n"))
+    env = {k: v for k, v in os.environ.items() if k not in ("PYTHONUTF8", "PYTHONIOENCODING")}
+    env.update(AGENT_MAIL_DIR=str(wb), AGENT_MAIL_IDENTITY="me", PYTHONIOENCODING="cp1252")
+    hk = subprocess.run([sys.executable, str(HERE / "hooks" / "agent_mail_check.py")],
+                        capture_output=True, text=True, encoding="ascii", errors="replace",
+                        timeout=120, env=env, cwd=wb)
+    check("an unencodable subject does not hide the other live message",
+          "legit-notice" in hk.stdout and fid in hk.stdout, hk.stdout[:300] + hk.stderr)
+    check("...and is written as escapes, not raw", "\\u4f60" in hk.stdout, hk.stdout[:300])
+
+
 def main() -> int:
     faulthandler.dump_traceback_later(WATCHDOG, exit=True)
     with tempfile.TemporaryDirectory() as td:
@@ -1573,6 +1592,7 @@ def main() -> int:
 
         keyed_retry_unlistable(root)
         hostile_output(root)
+        windows_pickup(root)
         if hasattr(os, "geteuid"):
             identity_binding(root)
         else:
