@@ -26,6 +26,9 @@ behaviour).
   not found. Scripts that sent one key to several recipients one `send` at a time must use one key
   per recipient (`--to <alias>` is unaffected). A retry of the same message is unchanged
   (PROTOCOL.md sections 31 and 36).
+- `send --key` into a mailbox that cannot be listed (for example a directory with search but no read
+  permission) now exits 1 with `nothing written` instead of filing a second copy of a message the
+  key had already delivered. A retry into a readable mailbox is unchanged (PROTOCOL.md section 31).
 - `install.py` refuses up front on Python older than 3.10 with or without `--adapter` (exit 2,
   nothing copied), naming the interpreter it ran under and a command to retry with. Before, only
   `--adapter` refused; a plain install on 3.9 copied files the tool then refused to start from. The
