@@ -120,6 +120,7 @@ ASK_REPLY = ("If agent mail contains a question for you, answer it using the Rep
 _GIT_REPO_VARS = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
                   "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_PREFIX",
                   "GIT_NAMESPACE", "GIT_CEILING_DIRECTORIES")
+_GIT_CONFIG_ENV = re.compile(r"^(GIT_CONFIG_(PARAMETERS|COUNT|KEY_\d+|VALUE_\d+)|GIT_TEMPLATE_DIR)$")
 _PARENT_VARS = re.compile(
     r"^(CLAUDECODE|CLAUDE_PID|CLAUDE_PROJECT_DIR|CLAUDE_EFFORT|CLAUDE_CODE_(ENTRYPOINT|"
     r"SESSION_ID|CHILD_SESSION|SESSION_ATTENDED|MESSAGING_\w+|BRIDGE_SESSION_ID|EXECPATH))$")
@@ -246,7 +247,9 @@ class Runner:
     def env(self, identity: str | None, extra: dict[str, str] | None = None) -> dict[str, str]:
         env = {k: v for k, v in os.environ.items()
                if not _PARENT_VARS.match(k) and not k.startswith("AGENT_MAIL_")
-               and k not in _GIT_REPO_VARS}
+               and k not in _GIT_REPO_VARS and not _GIT_CONFIG_ENV.match(k)}
+        # Throwaway projects must not run the user's own git hooks or signing settings.
+        env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
         if identity:
             env["AGENT_MAIL_IDENTITY"] = identity
         env.update(extra or {})

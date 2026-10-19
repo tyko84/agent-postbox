@@ -18,6 +18,7 @@ import datetime as dt
 import glob
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -29,6 +30,8 @@ from pathlib import Path
 GIT_REPO_VARS = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
                  "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_PREFIX",
                  "GIT_NAMESPACE", "GIT_CEILING_DIRECTORIES")
+
+GIT_CONFIG_ENV = re.compile(r"^(GIT_CONFIG_(PARAMETERS|COUNT|KEY_\d+|VALUE_\d+)|GIT_TEMPLATE_DIR)$")
 
 
 def hook_file(repo: str) -> str:
@@ -145,7 +148,9 @@ def tokens(repo: str) -> None:
         (proj / ".claude" / "settings.json").write_text(
             json.dumps({"hooks": {"UserPromptSubmit": [{"hooks": hooks}]}}), encoding="utf-8")
         env = {k: v for k, v in os.environ.items()
-               if not k.startswith("AGENT_MAIL") and k not in GIT_REPO_VARS}
+               if not k.startswith("AGENT_MAIL") and k not in GIT_REPO_VARS
+               and not GIT_CONFIG_ENV.match(k)}
+        env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
         subprocess.run(["git", "init", "-q"], cwd=proj, check=False, env=env)
         done = subprocess.run(["claude", "-p", "Reply with the single word: ok", "--model", "haiku",
                                "--output-format", "json", "--max-turns", "1"], cwd=proj,

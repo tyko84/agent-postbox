@@ -17,6 +17,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -194,6 +195,94 @@ class GitIsolation(unittest.TestCase):
         return subprocess.run(["git", "-C", str(repo), "-c", "user.name=t",
                                "-c", "user.email=t@example.invalid", *args], capture_output=True,
                               text=True, check=True).stdout
+
+    def test_setup_ignores_a_hostile_global_git_configuration(self) -> None:
+        # A developer's global config may run hooks on every commit (core.hooksPath) or require
+        # a signature that cannot be made (commit.gpgsign). The demo's throwaway project must
+        # get its baseline commit and run none of it.
+        with tempfile.TemporaryDirectory() as tmp:
+            hooks = Path(tmp) / "hooks"
+            hooks.mkdir()
+            ran = Path(tmp) / "hook-ran"
+            hook = hooks / "pre-commit"
+            hook.write_text(f"#!/bin/sh\necho ran >> '{ran}'\n")
+            hook.chmod(0o755)
+            cfg = Path(tmp) / "gitconfig"
+            cfg.write_text(f"[core]\n\thooksPath = {hooks}\n[commit]\n\tgpgsign = true\n"
+                           "[gpg]\n\tprogram = /nonexistent-gpg\n")
+            env = {k: v for k, v in os.environ.items() if not k.startswith("AGENT_MAIL")}
+            env["GIT_CONFIG_GLOBAL"] = str(cfg)
+            cp = subprocess.run([sys.executable, "-I", str(SCRIPT), "setup", "--dir",
+                                 str(Path(tmp) / "demo")], capture_output=True, text=True,
+                                env=env, timeout=TIMEOUT)
+            self.assertEqual(cp.returncode, 0, cp.stderr)
+            project = Path(tmp) / "demo" / "project"
+            self.assertEqual(self.git(project, "log", "-1", "--format=%s").strip(), "baseline")
+            self.assertFalse(ran.exists(), "the user's global pre-commit hook ran")
+
+    def test_setup_ignores_git_configuration_passed_in_the_environment(self) -> None:
+        # GIT_CONFIG_COUNT/KEY_n/VALUE_n and GIT_CONFIG_PARAMETERS override every config file,
+        # and GIT_TEMPLATE_DIR can copy hooks into a new repository: none may reach the demo.
+        with tempfile.TemporaryDirectory() as tmp:
+            hooks = Path(tmp) / "hooks"
+            (hooks).mkdir()
+            ran = Path(tmp) / "hook-ran"
+            hook = hooks / "pre-commit"
+            hook.write_text(f"#!/bin/sh\necho ran >> '{ran}'\n")
+            hook.chmod(0o755)
+            templates = Path(tmp) / "templates" / "hooks"
+            templates.mkdir(parents=True)
+            (templates / "pre-commit").write_text(hook.read_text())
+            (templates / "pre-commit").chmod(0o755)
+            variants = {
+                "count": {"GIT_CONFIG_COUNT": "2", "GIT_CONFIG_KEY_0": "core.hooksPath",
+                          "GIT_CONFIG_VALUE_0": str(hooks), "GIT_CONFIG_KEY_1": "commit.gpgsign",
+                          "GIT_CONFIG_VALUE_1": "true"},
+                "parameters": {"GIT_CONFIG_PARAMETERS": f"'core.hooksPath={hooks}'"},
+                "template": {"GIT_TEMPLATE_DIR": str(Path(tmp) / "templates")},
+            }
+            for name, extra in variants.items():
+                env = {k: v for k, v in os.environ.items() if not k.startswith("AGENT_MAIL")}
+                env.update(extra)
+                demo = Path(tmp) / f"demo-{name}"
+                cp = subprocess.run([sys.executable, "-I", str(SCRIPT), "setup", "--dir", str(demo)],
+                                    capture_output=True, text=True, env=env, timeout=TIMEOUT)
+                self.assertEqual(cp.returncode, 0, f"{name}: {cp.stderr}")
+                self.assertEqual(self.git(demo / "project", "log", "-1", "--format=%s").strip(),
+                                 "baseline", name)
+                self.assertFalse(ran.exists(), f"{name}: the hook from the environment ran")
+
+    def test_setup_under_a_real_git_c_rebase_exec(self) -> None:
+        # The case that exposed it: `git -c ... rebase --exec <demo setup>` exports GIT_DIR,
+        # GIT_WORK_TREE and the -c settings (as GIT_CONFIG_PARAMETERS) to the command it runs.
+        with tempfile.TemporaryDirectory() as tmp:
+            hooks = Path(tmp) / "hooks"
+            hooks.mkdir()
+            ran = Path(tmp) / "hook-ran"
+            hook = hooks / "pre-commit"
+            hook.write_text(f"#!/bin/sh\necho ran >> '{ran}'\n")
+            hook.chmod(0o755)
+            victim = Path(tmp) / "victim"
+            victim.mkdir()
+            self.git(victim, "init", "-q")
+            for n in ("one", "two"):
+                (victim / f"{n}.txt").write_text(n)
+                self.git(victim, "add", f"{n}.txt")
+                self.git(victim, "commit", "-q", "-m", n)
+            (victim / "untracked.txt").write_text("synthetic\n")
+            head = self.git(victim, "rev-parse", "HEAD")
+            demo = Path(tmp) / "demo"
+            cmd = f"{shlex.quote(sys.executable)} -I {shlex.quote(str(SCRIPT))} setup --dir {shlex.quote(str(demo))}"
+            cp = subprocess.run(["git", "-C", str(victim), "-c", f"core.hooksPath={hooks}",
+                                 "-c", "commit.gpgsign=true", "-c", "gpg.program=/nonexistent-gpg",
+                                 "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                                 "rebase", "--exec", cmd, "HEAD~1"],
+                                capture_output=True, text=True, timeout=TIMEOUT)
+            self.assertEqual(cp.returncode, 0, cp.stdout + cp.stderr)
+            self.assertEqual(self.git(demo / "project", "log", "-1", "--format=%s").strip(), "baseline")
+            self.assertFalse(ran.exists(), "an inherited -c hook ran")
+            self.assertEqual(self.git(victim, "rev-parse", "HEAD"), head)
+            self.assertEqual(self.git(victim, "status", "--porcelain").strip(), "?? untracked.txt")
 
     def test_setup_does_not_commit_the_invoking_repositorys_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

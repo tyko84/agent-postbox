@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -40,6 +41,14 @@ ROOT = Path(__file__).resolve().parent.parent
 GIT_REPO_VARS = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
                  "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_PREFIX",
                  "GIT_NAMESPACE", "GIT_CEILING_DIRECTORIES")
+# The temporary repositories the tests build must not run the developer's own hooks
+# (core.hooksPath, init.templateDir) or fail on their signing settings. Test children only:
+# the tool under test, and anything a user runs, keeps reading the git configuration it finds.
+GIT_ISOLATED_CONFIG = {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+# Configuration passed through the environment overrides files, so those are dropped as well
+# (GIT_CONFIG_COUNT/KEY_n/VALUE_n, GIT_CONFIG_PARAMETERS) and so is a template directory that
+# could copy hooks into every new repository.
+GIT_CONFIG_ENV = re.compile(r"^(GIT_CONFIG_(PARAMETERS|COUNT|KEY_\d+|VALUE_\d+)|GIT_TEMPLATE_DIR)$")
 TIMEOUT = 900  # seconds, per script: a hang detector (the job limit is 15 minutes)
 
 
@@ -87,7 +96,9 @@ ELSEWHERE = {"test_packaging.py": "packaging"}
 
 def run_one(test: Test, python: str) -> tuple[Test, int, float, str]:
     start = time.monotonic()
-    env = {k: v for k, v in os.environ.items() if k not in GIT_REPO_VARS}
+    env = {k: v for k, v in os.environ.items()
+           if k not in GIT_REPO_VARS and not GIT_CONFIG_ENV.match(k)}
+    env.update(GIT_ISOLATED_CONFIG)
     try:
         cp = subprocess.run([python, *test.argv], cwd=ROOT, env=env, stdin=subprocess.DEVNULL,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=TIMEOUT)
