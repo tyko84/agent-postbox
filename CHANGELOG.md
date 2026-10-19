@@ -10,6 +10,7 @@ behaviour).
 ### Added
 
 - Windows: a scoped CLAIM whose lock file cannot be opened is no longer reported as `being claimed right now; retry` (exit 3) unless a claimant really holds it. A permanent denial (a write-denied or read-only lock file, a mailbox directory that refuses new files) is final at once and a holder with no sharing (Win32 32/33) or a pending delete is looked at the same bounded eight times; after that the failure is the one-line `cannot write to the mailbox ... (EACCES); nothing written` of PROTOCOL.md section 32, exit 1. Checks in selftest.py fail on the previous code.
+- `install.py` on Windows: when the interpreter's path holds a space the printed selftest command is now given once per shell, labelled (`PowerShell: & "<python>" tools/agent-postbox/selftest.py` and `cmd.exe: "<python>" tools/agent-postbox/selftest.py`), because a quoted executable path without the call operator `&` is not a command in PowerShell. `test_readme_examples.py` covers both shells and the unchanged POSIX line.
 - `inbox --exit-code`: exit 10 when an ASK still owes a reply, 0 when none does, 2 when it cannot be known (no identity, missing or unreadable mailbox, a quarantined file with nothing known owed). Opt-in; output and the default exit statuses are unchanged (issue #97, PROTOCOL.md section 37).
 
 ### Changed
