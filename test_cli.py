@@ -2107,6 +2107,42 @@ def test_unreadable_mailbox(root: Path) -> None:
     before = snapshot(box)
     run(box, "list")
     check("reading wrote nothing", snapshot(box) == before)
+_VANISH_SEAM = (
+    "import os, sys\n"
+    "sys.path.insert(0, sys.argv[1])\n"
+    "import agent_mail\n"
+    "real, done = os.lstat, []\n"
+    "def lstat(p, *a, **k):\n"
+    "    if str(p).endswith('-m.md') and not done:\n"
+    "        done.append(1); os.unlink(p)\n"
+    "    return real(p, *a, **k)\n"
+    "os.lstat = lstat\n"
+    "sys.exit(agent_mail.main(sys.argv[2:]))\n")
+
+
+def test_vanished_file(root: Path) -> None:
+    """A file removed between the listing and the read is not an unreadable file."""
+    box = root / "vanish"
+    box.mkdir()
+    hand(box, "V1", "NOTICE", "alice", "bob", "2030-01-01T09:00:00Z", "first")
+    hand(box, "V2", "NOTICE", "alice", "bob", "2030-01-01T09:01:00Z", "second")
+    ctl = run(box, "list")
+    check("control: both messages list, exit 0", ctl.returncode == 0 and "second" in ctl.stdout,
+          ctl.stdout + ctl.stderr)
+    for cmd in (["list"], ["inbox", "--to", "bob"], ["doctor"]):
+        r = subprocess.run([sys.executable, "-I", "-c", _VANISH_SEAM, str(HERE), *cmd],
+                           capture_output=True, text=True, timeout=STEP_TIMEOUT,
+                           env=dict(BASE_ENV, AGENT_MAIL_DIR=str(box)))
+        check(f"{cmd[0]}: a file removed after the listing is no reject and no exit 2",
+              r.returncode == 0 and "REJECT" not in r.stdout + r.stderr, r.stdout + r.stderr)
+        # the next round starts from both files again
+        hand(box, "V1", "NOTICE", "alice", "bob", "2030-01-01T09:00:00Z", "first")
+        hand(box, "V2", "NOTICE", "alice", "bob", "2030-01-01T09:01:00Z", "second")
+    unreadable = box / (P + "V3-m.md")
+    unreadable.write_bytes(b"\xff\xfe not utf-8")
+    r = run(box, "list")
+    check("control: a file that exists but cannot be read is still REJECTed (exit 2)",
+          r.returncode == 2 and "REJECT" in r.stdout + r.stderr, r.stdout + r.stderr)
 
 
 def test_doctor_writable_line(root: Path) -> None:
@@ -2588,6 +2624,7 @@ def main() -> int:
         test_alias_mail_undelivered(root)
         test_fanout_holds(root)
         test_silent_recipient(root)
+        test_vanished_file(root)
     faulthandler.cancel_dump_traceback_later()
     if KNOWN:
         print(f"\nKNOWN ({len(KNOWN)}; defects outside this file's reach, not failures):")
