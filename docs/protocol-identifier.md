@@ -83,3 +83,16 @@ Message files do **not** carry the identifier in phase 1. An unknown header key 
 3. Which changes count as `1.1`: suggested, `owed_truncated` and the `inbox` scheduler status, once both
    are merged and their final names are fixed.
 4. Is a phase 2 `protocol:` header wanted at all, and if so before or after the first new message type?
+
+## Open questions found in independent review (unresolved; this is a DRAFT)
+
+1. Platform ports versus the identifier. The rule that a platform port does not change the identifier sits
+   next to `docs/protocol-compatibility.md` section 5, which marks changing the Windows lock primitive or
+   offset as versioned. A third-party author cannot tell which applies to a lock-layer change.
+2. Tightening input. Refusing non-UTF-8 stdin is described as a clarification, yet an existing caller that
+   relied on the old behaviour now gets exit 2, which the draft's own major rule would count as a change an
+   existing reader could misread. Section 5 also calls read tightening "versioned in effect".
+3. Software minor versus protocol minor. One part of the compatibility inventory suggests the protocol follows the
+   tool's minor version; this draft says they are separate.
+4. Not classified at all: a new derived status value, a renamed or removed CLI flag, and whether CLI flags are
+   part of the protocol at all or only `PROTOCOL.md` and the message files are.

@@ -22,6 +22,9 @@ import unittest
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+if sys.version_info < (3, 10):   # the runner uses tempfile's ignore_cleanup_errors
+    print("SKIP  test_conformance.py (needs Python 3.10 or newer)")
+    raise SystemExit(0)
 RUNNER = HERE / "conformance" / "run_conformance.py"
 
 

@@ -22,12 +22,13 @@ section 5.
 
 These are backed by the spec and by tests, and `conformance/run_conformance.py` checks the ones marked (C).
 
-1. `send` prints `wrote <path>` then `id: <ULID>` on stdout and exits 0; the file is `<id>-<slug>.md`,
-   UTF-8, LF, begins `---` (C).
+1. `send` exits 0 and leaves one file `<id>-<slug>.md`, UTF-8, LF, beginning `---` (C). This CLI also prints
+   `wrote <path>` and `id: <ULID>` on stdout: implementation-specific, and `wrote <path>` is not checked.
 2. Exit codes (the `--help` table): 0 done; 1 not found or the OS refused; 2 refused or unhealthy (bad input,
    no mailbox, quarantined files in `list`/`inbox`/`latency`, `doctor` FAIL); 3 contended, nothing written,
    safe to retry; 130/143 interrupted; 141 the stdout reader went away. A refusal writes nothing (C for 1, 2, 3).
-3. A missing mailbox is `NO MAILBOX`, exit 2, never created, and is distinguishable from an empty one (C).
+3. A missing mailbox exits 2, is never created, and is distinguishable from an empty one (C). The words
+   `NO MAILBOX` (and `REJECT` for a quarantined file) are this CLI's own: implementation-specific.
 4. `--json` on `list`/`inbox`: schema 1, the top-level keys and the row keys of section 37 (C); `status --json`
    schema 1 (C, three keys only).
 5. Statuses are derived: `open`, `answered`, `held`, `expired`, `blocked`, `superseded`, `fresh`, `stale`
@@ -98,14 +99,14 @@ whether to add a `protocol:` header. None of this needs code.
 ## 7. Conformance suite for a third-party adapter author
 
 `python conformance/run_conformance.py [--tool PATH | --cmd PROGRAM ...] [--protocol-only]` runs 49
-always-on checks (plus up to 15 optional ones) in about 15 to 30 seconds against a throwaway mailbox (stdlib, no network, no model), in three
+always-on checks (plus up to 18 optional ones) in about 15 to 30 seconds against a throwaway mailbox (stdlib, no network, no model), in three
 groups reported separately: 45 protocol-level (what `PROTOCOL.md` requires of any implementation), 4
 implementation-specific (the `--version` string, the `id:` line, the words `NO MAILBOX` and `REJECT`),
-and optional checks (`owed_truncated`, the `inbox` scheduler exit status) that are skipped, never failed,
+and optional checks (`owed_truncated`, the `inbox` scheduler exit status) that are skipped when the tool lacks the feature (a tool that answers the flag in an unexpected way is treated as having it),
 when the tool lacks the feature. `docs/adapter-conformance-guide.md` says how to run and report it. It
 passed on Windows 11 (against the Windows port branches, not yet merged) and on Ubuntu 24.04 under WSL. A program that
-exits 0 and does nothing fails 39 of the 45 protocol-level checks; the other 6 pass vacuously (an
-absent file satisfies "nothing was written"), which is why a pass is evidence of these behaviours and
+exits 0 and does nothing fails 39 of the 45 protocol-level checks; the other 6 pass vacuously (they check only an exit status, such as `CLAIM` exiting 0, a lapsed lease being
+reclaimable, or an absent reply), which is why a pass is evidence of these behaviours and
 nothing more. The header of the runner lists what each group asserts, and two questions it deliberately
 does not assert because the project has not decided them: how an unreadable mailbox is reported by
 `list`/`inbox`, and which rows `inbox --limit` drops.

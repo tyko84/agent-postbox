@@ -41,7 +41,10 @@ Useful options:
 | `--tool PATH` | The `agent_mail.py` to test (default: the one next to the runner). |
 
 Exit status: 0 when nothing that ran failed (skips do not fail), 1 when a check failed, 2 when the
-program could not be run at all or the run stopped early. A run takes about 15 to 30 seconds, most of it
+program could not be started or the run stopped early before any check failed (a tool that starts but
+exits non-zero for everything fails checks, exit 1). Python 3.10 or newer is required (macOS ships 3.9 as
+`python3`: use an explicit interpreter). On Windows the tool under test must be a Windows-capable
+`agent_mail.py` (the unmerged Windows port); main alone cannot start there. A run takes about 15 to 30 seconds, most of it
 process start-up and one three-second wait for a short lease to lapse.
 
 ## The three groups
@@ -64,9 +67,13 @@ process start-up and one three-second wait for a short lease to lapse.
   ULID, two files with one id, bytes that are not UTF-8) make `list` exit 2, are never delivered as
   mail, are never deleted, and do not hide the valid mail beside them.
 
-These checks never read the `id:` line, the `--version` text, or any wording on stderr, so a faithful
-implementation with its own prose passes. They do depend on the command-line surface above, which is
-the part of the protocol that is observable without reading the mailbox directory yourself.
+These checks take the id of a sent message from the name of the new file (the `id:` line is only a
+fallback), and never read the `--version` text or wording on stderr, so a faithful implementation with its
+own prose passes. They do depend on the command-line surface above (flags, `--json` schema 1, exit
+statuses) and on `<ULID>-<slug>.md` file names in the mailbox directory; an implementation that stores
+mail under other names needs `PROTOCOL.md` section 2 ("transport only") to be read more loosely than this
+runner does, and will fail the file-name checks. "Real mail is still delivered" next to a quarantined file is
+judged from `list --json`, not from the plain text.
 
 **Implementation-specific.** What this CLI happens to print: the `--version` string, the
 `id: <ULID>` line `send` prints, the words `NO MAILBOX` and `REJECT` on stderr. If your adapter parses

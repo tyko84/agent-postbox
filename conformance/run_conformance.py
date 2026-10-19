@@ -17,17 +17,25 @@ Three groups, reported separately:
                            message file shape, UTF-8 round trips, --json schema 1, claim
                            exclusivity (also under a race), lease expiry, ASK/ANSWER threading,
                            idempotent --key (also under a race), quarantine of malformed files.
-                           It never reads the `id:` line, the --version text or any wording on
-                           stderr, so a faithful reimplementation with different prose passes.
+                           The id of a sent message is taken from the new file's name (the `id:`
+                           line is only a fallback); the --version text and wording on stderr are
+                           never read. The checks do depend on the command-line surface below
+                           (flags, `--json` schema 1, exit statuses) and on `<ULID>-<slug>.md`
+                           names in the mailbox directory.
   IMPLEMENTATION-SPECIFIC  what this CLI happens to print and an adapter may not copy: the
                            --version string, the `id: <ULID>` line, the `NO MAILBOX` and `REJECT`
                            words on stderr. A mismatch here is not a protocol failure.
   OPTIONAL                 features not in every release (owed_truncated, issue 96; the inbox
-                           exit status for schedulers, issue 97). SKIPPED, never failed, when the
-                           tool does not have them; checked in full when it does.
+                           exit status for schedulers, issue 97). SKIPPED when the tool does not
+                           have them: an absent JSON key, or `inbox --check`/`--exit-code`
+                           answered with exit 2 and a message containing "unrecognized",
+                           "unknown", "invalid" or "usage:". Any other answer is treated as a
+                           feature the tool has, and is checked in full (and can fail).
 
 --protocol-only runs the first group alone. Exit status: 0 when nothing that ran failed
-(skips do not fail), 1 when a check failed, 2 when the tool could not be run at all.
+(skips do not fail), 1 when a check failed, 2 when the tool could not be started or the run
+stopped early before any check failed. A tool that starts but exits non-zero for everything
+fails checks (exit 1), it does not exit 2. Needs Python 3.10 or newer.
 
 Requirements the runner puts on the tool under test: it is started as `python PATH args...`
 (or as the --cmd program), reads the mailbox directory from AGENT_MAIL_DIR, takes the same
@@ -119,16 +127,17 @@ class Box:
 
     def send(self, mtype: str, frm: str, to: str, subject: str, *extra: str,
              stdin: bytes | None = None):
-        """(exit status, id, stderr). The id comes from the `id:` line when there is one, else
-        from the name of the file that appeared, so protocol checks do not depend on the line."""
+        """(exit status, id, stderr). The id is the ULID prefix of the one file that appeared; the
+        `id:` line of stdout is read only when no single new file can be told apart (an
+        implementation that names files differently)."""
         before = {p.name for p in self.files()}
         rc, out, err = self.run(*self.send_argv(mtype, frm, to, subject, *extra, body=stdin is None),
                                 stdin=stdin)
-        found = re.search(r"^id: (\S+)", out, re.M)
-        if found:
-            return rc, found.group(1), err
         new = [p.name[:26] for p in self.files() if p.name not in before]
-        return rc, (new[0] if len(new) == 1 else ""), err
+        if len(new) == 1 and ULID.match(new[0]):
+            return rc, new[0], err
+        found = re.search(r"^id: (\S+)", out, re.M)
+        return rc, (found.group(1) if found else ""), err
 
     def files(self) -> list[Path]:
         return sorted(p for p in self.dir.glob("*.md"))
@@ -307,6 +316,16 @@ def protocol_checks(cmd: list[str], root: Path) -> None:
           f"{[rc for rc, _ in res]} files={len(kr.files())}")
 
     section("malformed input is quarantined, never delivered, never deleted")
+    def still_listed(box: Box, rc: int, subject: str) -> bool:
+        """Real mail is still delivered beside a quarantined file, judged from `list --json`
+        (schema 1, stable) rather than from the plain text, which is not a contract."""
+        code, out, _ = box.run("list", "--json")
+        try:
+            rows = json.loads(out).get("messages", [])
+        except ValueError:
+            return False
+        return rc == 2 and code == 2 and any(r.get("subject") == subject for r in rows)
+
     seed = Box(cmd, root, "seed")
     _, sid, _ = seed.send("NOTICE", "agent-a", "agent-b", "ok-mail")
     good = seed.files()[0].read_bytes().decode("utf-8") if seed.files() else ""
@@ -325,13 +344,13 @@ def protocol_checks(cmd: list[str], root: Path) -> None:
         write_bytes(q.dir / f"{bad}-bad.md", text.encode("utf-8"))
         rc, out, err = q.run("list")
         check(PROTO, f"{label}: list exits 2, the file stays on disk, real mail is still listed",
-              rc == 2 and (q.dir / f"{bad}-bad.md").exists() and "ok-mail" in out, f"rc={rc} {err[:100]}")
+              still_listed(q, rc, "ok-mail") and (q.dir / f"{bad}-bad.md").exists(), f"rc={rc} {err[:100]}")
     q = Box(cmd, root, "qid")
     q.send("NOTICE", "agent-a", "agent-b", "ok-mail")
     write_bytes(q.dir / f"{bad}-bad.md", re.sub(r"^id: .*$", "id: not-a-ulid", good, count=1, flags=re.M).encode("utf-8"))
     rc, out, err = q.run("list")
     check(PROTO, "an id that is not a ULID: list exits 2, the file stays on disk, real mail is still listed",
-          rc == 2 and (q.dir / f"{bad}-bad.md").exists() and "ok-mail" in out, f"rc={rc} {err[:100]}")
+          still_listed(q, rc, "ok-mail") and (q.dir / f"{bad}-bad.md").exists(), f"rc={rc} {err[:100]}")
     dup = Box(cmd, root, "dup")
     dup.send("NOTICE", "agent-a", "agent-b", "ok-mail")
     for twin in dup.files()[:1]:
@@ -342,7 +361,7 @@ def protocol_checks(cmd: list[str], root: Path) -> None:
     nu.send("NOTICE", "agent-a", "agent-b", "ok-mail")
     write_bytes(nu.dir / "01AAAAAAAAAAAAAAAAAAAAAAAA-bad.md", b"---\nid: 01AAAAAAAAAAAAAAAAAAAAAAAA\nfrom: x\xff\n---\n")
     rc, out, err = nu.run("list")
-    check(PROTO, "a hand-written non-UTF-8 file: list exits 2, real mail still listed", rc == 2 and "ok-mail" in out, f"rc={rc} {err[:100]}")
+    check(PROTO, "a hand-written non-UTF-8 file: list exits 2, real mail still listed", still_listed(nu, rc, "ok-mail"), f"rc={rc} {err[:100]}")
     if not ONLY_P:
         check(IMPL, "a quarantined file is named by a 'REJECT' line on stderr", "REJECT" in err, err[:100])
 
@@ -375,7 +394,7 @@ def optional_checks(cmd: list[str], root: Path) -> None:
     flag = ""
     for cand in ("--check", "--exit-code"):
         rc, _, err = x.run("inbox", "--to", "agent-b", cand)
-        if not (rc == 2 and ("unrecognized" in err or "usage:" in err.lower())):
+        if not (rc == 2 and any(w in err.lower() for w in ("unrecognized", "unknown", "invalid", "usage:"))):
             flag = cand
             break
     if not flag:
@@ -432,6 +451,10 @@ def optional_checks(cmd: list[str], root: Path) -> None:
 
 
 def main() -> int:
+    if sys.version_info < (3, 10):
+        print("run_conformance.py needs Python 3.10 or newer (this is %d.%d); run it with a newer interpreter, "
+              "for example `python3.12 conformance/run_conformance.py`" % sys.version_info[:2], file=sys.stderr)
+        return 2
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0],
                                  epilog="--cmd must come last: everything after it is the program and its arguments.")
     ap.add_argument("--tool", type=Path, default=DEFAULT_TOOL, help="path to agent_mail.py (run with this Python)")
