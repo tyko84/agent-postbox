@@ -2376,6 +2376,20 @@ class _FlockRefused(Exception):
     """flock(2) itself was refused by the filesystem (not: the file could not be opened)."""
 
 
+def _delete_may_be_pending(lock: Path) -> bool:
+    """Windows only: whether "access denied" on the lock name could be a pending delete. A name
+    that opens for reading, or that does not exist, is not one (a write-denied file, a
+    read-only file, a directory that refuses new files): that denial is final. Only a name that
+    cannot even be read is looked at again."""
+    try:
+        os.close(_open(lock, os.O_RDONLY))
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    return False
+
+
 def _scope_lock(lock: Path) -> int | None:
     """Take the scope lock (PROTOCOL.md section 30) and return the descriptor
     that holds it, or None when a live claimant holds it.
@@ -2386,7 +2400,9 @@ def _scope_lock(lock: Path) -> int | None:
     holder exits. A dead claimant therefore leaves nothing to break by age, and
     no process ever removes a lock another process holds.
     """
+    denied: PermissionError | None = None
     for _ in range(8):
+        denied = None
         # O_NOFOLLOW: the name is predictable, so a link planted there must not
         # send the lock, and the pid below, to its target (section 36).
         try:
@@ -2400,8 +2416,12 @@ def _scope_lock(lock: Path) -> int | None:
                 raise OSError(errno.ELOOP, "Too many levels of symbolic links", str(lock)) from exc
             if os.path.isdir(lock):
                 raise IsADirectoryError(errno.EISDIR, "Is a directory", str(lock)) from exc
-            # Otherwise a name whose delete is pending: the holder is unlinking it
-            # right now. That is the orphan case; look again.
+            # Another process holding the file with no sharing (Win32 32/33), or a name
+            # whose delete is pending (Win32 5, the orphan case): look again, a bounded
+            # number of times. A denial that cannot be a pending delete is final at once.
+            denied = exc
+            if getattr(exc, "winerror", None) not in (32, 33) and not _delete_may_be_pending(lock):
+                raise
             time.sleep(0.01)
             continue
         try:
@@ -2437,6 +2457,10 @@ def _scope_lock(lock: Path) -> int | None:
                     pass
             return fd
         os.close(fd)  # releases the orphan
+    if denied is not None:
+        # Still "access denied" after every look: not a claimant, so not "retry" (exit 3) but
+        # the one-line EACCES failure of section 32 (exit 1), nothing written.
+        raise denied
     return None
 
 

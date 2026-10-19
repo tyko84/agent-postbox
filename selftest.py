@@ -16,6 +16,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 
 # A hook, `rebase --exec` or `bisect run` exports GIT_DIR and friends; inherited, they would
@@ -48,6 +49,33 @@ def skip(name: str, reason: str) -> None:
     # Printed, never silent: a skipped check must not read as a pass.
     print(f"  SKIP  {name} ({reason})")
     skipped.append(name)
+
+
+def deny_writes(directory: Path) -> Callable[[], None] | None:
+    """Make `directory` refuse new files and return the function that undoes it, or None when
+    this account cannot (root; no ACL tool). POSIX: mode 0555. Windows: an explicit deny entry
+    for the current user (add file / add subdirectory) on the directory itself, removed again by
+    the returned function."""
+    if sys.platform == "win32":
+        user = os.environ.get("USERNAME", "")
+        if not user:
+            return None
+        done = subprocess.run(["icacls", str(directory), "/deny", f"{user}:(WD,AD)"],
+                              capture_output=True, text=True)
+        if done.returncode != 0:
+            return None
+
+        def undo_acl() -> None:
+            subprocess.run(["icacls", str(directory), "/remove:d", user], capture_output=True,
+                           text=True, check=True)
+        return undo_acl
+    if os.geteuid() == 0:
+        return None
+    os.chmod(directory, 0o555)
+
+    def undo_mode() -> None:
+        os.chmod(directory, 0o755)
+    return undo_mode
 
 
 def send(box: Path, *args: str) -> subprocess.CompletedProcess:
@@ -1416,14 +1444,13 @@ def main() -> int:
               repr((r.returncode, r.stderr)))
 
         # (d) a send that cannot write says so in one line and leaves nothing
-        if not hasattr(os, "geteuid"):
-            skip("unwritable mailbox: one line, exit 1, nothing left", "no POSIX permission bits")
-        elif os.geteuid() == 0:
-            skip("unwritable mailbox: one line, exit 1, nothing left", "running as root")
+        wbox = Path(tmp) / "readonly"
+        wbox.mkdir()
+        undo_deny = deny_writes(wbox)
+        if undo_deny is None:
+            skip("unwritable mailbox: one line, exit 1, nothing left",
+                 "running as root, or no way to deny writes to this account")
         else:
-            wbox = Path(tmp) / "readonly"
-            wbox.mkdir()
-            os.chmod(wbox, 0o555)
             try:
                 for label, extra_argv in [("plain", []), ("keyed", ["--key", "k"]),
                                      ("scoped claim", ["--scope", "s", "--expires", iso(1)])]:
@@ -1435,9 +1462,51 @@ def main() -> int:
                           and "nothing written" in r.stderr and "EACCES" in r.stderr,
                           repr((r.returncode, r.stderr[-300:])))
             finally:
-                os.chmod(wbox, 0o755)
+                undo_deny()
             check("nothing was left behind (no temp, marker or lock)", not list(wbox.iterdir()),
                   repr(sorted(p.name for p in wbox.iterdir())))
+
+        # (d2) a lock file that cannot be opened for writing is a refusal, not a busy lock
+        # (Windows: "access denied" also means a delete is pending, and 32/33 a holder with no
+        # sharing; both are looked at a bounded number of times, then exit 1, never exit 3)
+        if sys.platform != "win32":
+            skip("scoped claim: a write-denied lock file is exit 1, not 'retry'", "Windows lock-open errors")
+        else:
+            import ctypes  # noqa: PLC0415
+            import hashlib  # noqa: PLC0415
+            from ctypes import wintypes  # noqa: PLC0415
+            kbox = Path(tmp) / "lockdeny"
+            kbox.mkdir()
+            klock = kbox / f".scope.{hashlib.sha256(b's').hexdigest()[:24]}.lock"
+            claim_argv = ["--type", "CLAIM", "--from", "alice", "--to", "bob", "--subject", "s",
+                          "--body", "b", "--scope", "s", "--expires", iso(1)]
+            klock.write_text("x")
+            os.chmod(klock, 0o444)          # read-only attribute: a permanent denial
+            try:
+                r = send(kbox, *claim_argv)
+            finally:
+                os.chmod(klock, 0o666)
+            check("scoped claim: a read-only lock file is exit 1 with the one-line EACCES failure, "
+                  "not 'being claimed right now; retry' (exit 3)",
+                  r.returncode == 1 and "EACCES" in r.stderr and "nothing written" in r.stderr
+                  and "retry" not in r.stderr and not [p for p in kbox.iterdir() if p.suffix == ".md"],
+                  repr((r.returncode, r.stderr[-200:])))
+            k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            k32.CreateFileW.restype = wintypes.HANDLE
+            k32.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
+                                        wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+            h = k32.CreateFileW(str(klock), 0xC0000000, 0, None, 4, 0x80, None)   # no sharing
+            try:
+                r = send(kbox, *claim_argv)
+            finally:
+                k32.CloseHandle(h)
+            check("scoped claim: a lock file another process holds with no sharing, after every look, "
+                  "is exit 1 (EACCES, nothing written), not exit 3",
+                  r.returncode == 1 and "EACCES" in r.stderr and "retry" not in r.stderr,
+                  repr((r.returncode, r.stderr[-200:])))
+            r = send(kbox, *claim_argv)
+            check("...and the same claim succeeds once the holder lets go",
+                  r.returncode == 0, repr((r.returncode, r.stderr[-200:])))
             r = send(wbox, "--type", "NOTICE", "--from", "alice", "--to", "bob", "--subject", "s",
                      "--body", "b", "--key", "k")
             check("control: the same send succeeds once the mailbox is writable",
