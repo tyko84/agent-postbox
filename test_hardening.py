@@ -907,6 +907,35 @@ def main() -> int:
             lst = run(r9, "list")
             check("control: reading a read-only mailbox still works",
                   lst.returncode == 0 and "alice -> all  d" in lst.stdout, lst.stderr)
+            # A key marker this account cannot open: still the one failure line (exit 1, nothing
+            # written), but its reason says it was the marker, not the mailbox, that refused.
+            r9m = Path(td) / "rec9m"
+            r9m.mkdir()
+            mk_first = run(r9m, *NOTE, "--key", "mk")
+            mk_marker = next(r9m.glob(".idem.*"))
+            os.chmod(mk_marker, 0)
+            mk_before = sorted(p.name for p in r9m.iterdir())
+            mk_res = run(r9m, *NOTE, "--key", "mk")
+            check("an unreadable key marker: one line, exit 1, nothing written",
+                  mk_first.returncode == 0 and one_line_failure(mk_res.returncode, mk_res.stdout,
+                                                                 mk_res.stderr, "EACCES"),
+                  f"rc={mk_res.returncode} {mk_res.stderr!r}")
+            check("...the reason names the retry marker, not the mailbox",
+                  "the retry marker for this --key is unreadable: Permission denied (EACCES)"
+                  in mk_res.stderr, mk_res.stderr)
+            check("...and it discloses no marker name, key or mailbox path",
+                  ".idem" not in mk_res.stderr and "'mk'" not in mk_res.stderr
+                  and str(r9m) not in mk_res.stderr and "hint:" not in mk_res.stderr, mk_res.stderr)
+            check("...and nothing was written or removed",
+                  sorted(p.name for p in r9m.iterdir()) == mk_before, str(hidden(r9m)))
+            mk_other = run(r9m, *NOTE, "--key", "mk2")
+            check("control: another key into the same mailbox is written, so the mailbox was fine",
+                  mk_other.returncode == 0, mk_other.stderr)
+            os.chmod(mk_marker, 0o644)
+            mk_again = run(r9m, *NOTE, "--key", "mk")
+            check("control: with the marker readable the retry is a duplicate, exit 0",
+                  mk_again.returncode == 0 and "duplicate of" in mk_again.stdout,
+                  mk_again.stdout + mk_again.stderr)
 
         print("10. claims: expiry boundary, concurrent renewal and concurrent give-up by the owner")
         r10 = Path(td) / "rec10"
