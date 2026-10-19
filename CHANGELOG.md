@@ -7,6 +7,10 @@ behaviour).
 
 ## [Unreleased]
 
+### Added
+
+- `inbox --exit-code`: exit 10 when an ASK still owes a reply, 0 when none does, 2 when it cannot be known (no identity, missing or unreadable mailbox, a quarantined file with nothing known owed). Opt-in; output and the default exit statuses are unchanged (issue #97, PROTOCOL.md section 37).
+
 ### Changed
 
 - `show <id>` for an id that only a quarantined file carries still exits 1 with `no message with id
