@@ -1109,6 +1109,11 @@ newer messages is not found and the retry publishes, exactly as it did (the same
 window §31 "A key names one recipient" and §36 name). A marker that still parses is trusted as before: a well-formed marker naming another
 id or hash is a conflict, not damage. No new exit code, flag or JSON key.
 
+This is a best-effort guard, not global exactly-once delivery. It cannot see an original
+older than the newest 64 messages, one whose headers are too damaged to read, one in another
+mailbox directory, or one filed under a different sender, recipient or key; in each of those
+the retry publishes. Callers that need to know a message exists check for it (`show`, `list`).
+
 **Invariant a test must pin.** (a) A marker whose holder is alive is never
 taken over, however long the retry waits: with a live process holding the
 marker lock and no message, a retry at key wait 0 exits 3, writes nothing and
