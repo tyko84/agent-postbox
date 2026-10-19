@@ -1722,6 +1722,17 @@ class Workflows(unittest.TestCase):
         # positive control: the check does see a script that is not named
         self.assertIn("test_nonexistent_script.py", {"test_nonexistent_script.py"} - named)
 
+    def test_contributing_names_the_mypy_command_ci_runs(self) -> None:
+        root = self.RUNNER.parent.parent
+        doc = root / "CONTRIBUTING.md"
+        if not doc.is_file():
+            self.skipTest("CONTRIBUTING.md is not shipped here (e.g. unpacked sdist)")
+        line = re.search(r"^\s+- run: (mypy .+)$",
+                         (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"), re.M)
+        assert line is not None
+        self.assertIn(f"`{line.group(1)}`", doc.read_text(encoding="utf-8"),
+                      "CONTRIBUTING.md's mypy command differs from the one in ci.yml")
+
     def test_tests_ignore_inherited_git_repository_variables(self) -> None:
         # `git rebase --exec`, hooks and `bisect run` export GIT_DIR and friends. A test
         # that inherited them would run its temporary-repository git calls against the real
