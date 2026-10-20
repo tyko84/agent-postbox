@@ -146,6 +146,14 @@ def _cannot_list(box: Path) -> bool:
 
 def main() -> int:
     try:
+        # A piped stdout on Windows is the ANSI code page (cp1252), which cannot carry most
+        # alphabets: one subject in another script would raise in print(), the blanket handler
+        # below would swallow it, and every live message to this identity would vanish with it.
+        # Escape what the stream cannot carry (a no-op on UTF-8) rather than lose the delivery.
+        try:
+            sys.stdout.reconfigure(errors="backslashreplace")  # type: ignore[union-attr]
+        except Exception:
+            pass
         here = Path(__file__).resolve()
         # agent_mail.py sits either beside this file or one level up,
         # depending on whether the installer flattened the layout.
