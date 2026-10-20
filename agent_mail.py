@@ -542,7 +542,17 @@ def _read_mail_file(path: Path) -> tuple[str | None, str]:
         with os.fdopen(fd, "rb") as fh:
             if not stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
                 return None, "not a regular file"
-            data = fh.read(MAX_FILE_BYTES + 1)
+            # In chunks, not fh.read(MAX_FILE_BYTES + 1): that allocates the whole 32 MiB for every
+            # file, which costs ~4 ms each on Windows (~0.1 ms for a real message) -- 40 s for 10k files.
+            chunks: list[bytes] = []
+            got = 0
+            while got <= MAX_FILE_BYTES:
+                chunk = fh.read(min(65536, MAX_FILE_BYTES + 1 - got))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                got += len(chunk)
+            data = b"".join(chunks)
     except OSError as e:
         return None, f"unreadable ({e})"
     if len(data) > MAX_FILE_BYTES:
