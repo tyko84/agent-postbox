@@ -112,7 +112,7 @@ _SLUG = re.compile(r"[^a-z0-9]+")
 # reported by whoever was doing that work. SIGPIPE is deliberately NOT reset to
 # its default: that would kill `send` mid-flight, skipping the `finally` that
 # releases its scope lock and key marker (sections 30 and 31).
-EXIT_READER_GONE = 128 + signal.SIGPIPE  # 141: what a shell reports for a writer killed by SIGPIPE
+EXIT_READER_GONE = 128 + getattr(signal, "SIGPIPE", 13)  # 141: what a shell reports for a writer killed by SIGPIPE
 _UNSET: Any = object()
 
 
@@ -132,6 +132,13 @@ def _carriable(value: Any, stream: Any) -> str:
     (PYTHONIOENCODING=ascii, a C locale; PROTOCOL.md section 38)."""
     encoding = getattr(stream, "encoding", None) or "ascii"
     return str(value).encode(encoding, "backslashreplace").decode(encoding, "replace")
+
+
+def _reader_gone(exc: OSError) -> bool:
+    """A failed write because the pipe's reader exited. Windows reports that as
+    EINVAL (or EPIPE) rather than a BrokenPipeError."""
+    return isinstance(exc, BrokenPipeError) or (
+        os.name == "nt" and exc.errno in (errno.EPIPE, errno.EINVAL))
 
 
 def print(*args: Any, file: Any = _UNSET, **kwargs: Any) -> None:
@@ -154,7 +161,9 @@ def print(*args: Any, file: Any = _UNSET, **kwargs: Any) -> None:
             args = tuple(_carriable(a, stream) for a in args)
     try:
         builtins.print(*args, file=stream, **kwargs)
-    except BrokenPipeError:
+    except OSError as exc:
+        if not _reader_gone(exc):
+            raise
         if not to_stdout:
             return
         _Stdout.lost = stream
@@ -201,11 +210,10 @@ def _settle_output() -> bool:
             continue
         try:
             stream.flush()
-        except BrokenPipeError:
-            gone = gone or stream is sys.stdout
-            _discard(stream)
-        except (AttributeError, OSError, ValueError):
-            pass
+        except (AttributeError, OSError, ValueError) as exc:
+            if isinstance(exc, OSError) and _reader_gone(exc):
+                gone = gone or stream is sys.stdout
+                _discard(stream)
     return gone
 
 
@@ -1936,6 +1944,124 @@ def _idem_landed(box: Path, old_id: str) -> bool:
         return any(e.name.startswith(prefix) and e.name.endswith(".md") for e in it)
 
 
+# --- portability layer for the lock files (PROTOCOL.md sections 30, 31, 36) ---
+# POSIX uses flock(2) and open(2) as they are. Windows has no flock, so the same
+# three questions are answered with LockFileEx (via msvcrt.locking) on a byte far
+# past the end of the file, which keeps the file's own bytes readable and
+# writable, and files are opened with FILE_SHARE_DELETE so a held file can still
+# be renamed over or removed, as it can on POSIX. Windows has no shared lock
+# here, so a read-only probe takes the exclusive one and drops it at once.
+_WIN = os.name == "nt"
+_WIN_LOCK_OFFSET = 1 << 40
+
+
+def _flock(fd: int, shared: bool = False) -> None:
+    """Non-blocking lock on ``fd`` that its holder keeps until it closes the
+    descriptor. BlockingIOError when another process holds it; any other OSError
+    when the filesystem refuses locking altogether."""
+    if sys.platform != "win32":
+        import fcntl
+        fcntl.flock(fd, (fcntl.LOCK_SH if shared else fcntl.LOCK_EX) | fcntl.LOCK_NB)
+        return
+    import msvcrt
+    here = os.lseek(fd, 0, os.SEEK_CUR)
+    try:
+        os.lseek(fd, _WIN_LOCK_OFFSET, os.SEEK_SET)
+        try:
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        except OSError as exc:
+            if exc.errno in (errno.EACCES, errno.EDEADLK):
+                raise BlockingIOError(exc.errno, "locked by another process") from exc
+            raise
+        if shared:   # a probe: nothing was asked to be kept
+            os.lseek(fd, _WIN_LOCK_OFFSET, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+    finally:
+        os.lseek(fd, here, os.SEEK_SET)
+
+
+def _pread(fd: int, n: int, offset: int) -> bytes:
+    if sys.platform != "win32":
+        return os.pread(fd, n, offset)
+    here = os.lseek(fd, 0, os.SEEK_CUR)
+    try:
+        os.lseek(fd, offset, os.SEEK_SET)
+        return os.read(fd, n)
+    finally:
+        os.lseek(fd, here, os.SEEK_SET)
+
+
+def _open(path: Any, flags: int, mode: int = 0o644) -> int:
+    """``os.open``; on Windows with FILE_SHARE_DELETE added to the share mode."""
+    if sys.platform != "win32":
+        return os.open(path, flags, mode)
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+    access = (0x80000000 | 0x40000000) if flags & os.O_RDWR else (
+        0x40000000 if flags & os.O_WRONLY else 0x80000000)   # GENERIC_READ | GENERIC_WRITE
+    if flags & os.O_EXCL:
+        access |= 0x10000                                    # DELETE: _replace_held renames this one by handle
+    if flags & os.O_CREAT:
+        disposition = 1 if flags & os.O_EXCL else 4          # CREATE_NEW | OPEN_ALWAYS
+    else:
+        disposition = 3                                      # OPEN_EXISTING
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CreateFileW.restype = wintypes.HANDLE
+    k32.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
+                                wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+    # FILE_FLAG_OPEN_REPARSE_POINT: a link at the name is opened as the link, never its target
+    handle = k32.CreateFileW(os.fspath(path), access, 0x1 | 0x2 | 0x4, None, disposition,
+                             0x80 | 0x00200000, None)
+    if handle in (None, wintypes.HANDLE(-1).value):
+        err = ctypes.get_last_error()
+        raise ctypes.WinError(err)
+    fd = msvcrt.open_osfhandle(handle, flags & (os.O_RDONLY | os.O_WRONLY | os.O_RDWR) | os.O_BINARY)
+    # A handle's fstat never says S_IFLNK, but it does carry the reparse-point attribute
+    # (symlinks and junctions): what O_NOFOLLOW answers with ELOOP on POSIX.
+    if getattr(os.fstat(fd), "st_file_attributes", 0) & 0x400:
+        os.close(fd)
+        raise OSError(errno.ELOOP, "Too many levels of symbolic links", os.fspath(path))
+    return fd
+
+
+def _errname(exc: OSError) -> str:
+    """The symbolic name of ``exc``'s errno, as POSIX spells it (Windows names a few
+    of them WSAELOOP, WSAENOTEMPTY and so on)."""
+    name = errno.errorcode.get(exc.errno or 0, "OSError")
+    return name[3:] if name.startswith("WSAE") else name
+
+
+def _replace_held(fd: int, src: Path, dst: Path) -> None:
+    """``os.replace(src, dst)`` where ``fd`` is ``src`` held open. POSIX renames
+    over a name whatever has it open; Windows only does when asked for POSIX
+    semantics, which needs the handle (opened by ``_open``, so it can be
+    renamed) and Windows 10 1809 or later."""
+    if sys.platform != "win32":
+        os.replace(src, dst)
+        return
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+    target = os.path.abspath(os.fspath(dst))
+    target = "\\??\\" + target   # the NT form; no RootDirectory
+    chars = len(target)
+
+    class RenameInfo(ctypes.Structure):
+        _fields_ = [("Flags", wintypes.DWORD), ("RootDirectory", wintypes.HANDLE),
+                    ("FileNameLength", wintypes.DWORD), ("FileName", ctypes.c_wchar * (chars + 1))]
+
+    info = RenameInfo()
+    info.Flags = 0x1 | 0x2 | 0x40   # REPLACE_IF_EXISTS | POSIX_SEMANTICS | IGNORE_READONLY_ATTRIBUTE
+    info.FileNameLength = chars * 2
+    info.FileName = target
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.SetFileInformationByHandle.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+    if not k32.SetFileInformationByHandle(msvcrt.get_osfhandle(fd), 22, ctypes.byref(info),
+                                          ctypes.sizeof(info)):   # 22: FileRenameInfoEx
+        raise ctypes.WinError(ctypes.get_last_error())
+
+
 def _same_inode(path: Path, fd: int) -> bool:
     try:
         return os.stat(path).st_ino == os.fstat(fd).st_ino
@@ -1947,9 +2073,8 @@ def _try_flock(fd: int) -> bool | None:
     """Non-blocking exclusive flock: True when granted, False when another
     process holds it, None when the filesystem refuses flock altogether (the
     marker then carries no usable liveness signal, whatever it says)."""
-    import fcntl  # POSIX only
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        _flock(fd)
     except BlockingIOError:
         return False
     except OSError:
@@ -1967,14 +2092,13 @@ def _idem_new_marker(marker: Path, msg_id: str, content: str, over: bool) -> int
     over the orphan the caller holds locked. Returns the descriptor that holds
     the lock; closing it releases the key's liveness signal.
     """
-    import fcntl  # POSIX only
     # The send's own id in the name and O_EXCL: no other send, whatever its pid,
     # can open, empty or remove this temp file (PROTOCOL.md section 36).
     tmp = marker.with_name(f"{marker.name}.{os.getpid()}.{msg_id}.tmp")
-    fd = os.open(tmp, os.O_RDWR | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o644)
+    fd = _open(tmp, os.O_RDWR | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o644)
     try:
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            _flock(fd)
             tag = _IDEM_LOCKED + "\n"
         except BlockingIOError:
             raise
@@ -1983,7 +2107,7 @@ def _idem_new_marker(marker: Path, msg_id: str, content: str, over: bool) -> int
         os.write(fd, f"{msg_id}\n{content}\n{tag}".encode())
         os.fsync(fd)
         if over:
-            os.replace(tmp, marker)
+            _replace_held(fd, tmp, marker)
             return fd
         try:
             os.link(tmp, marker)
@@ -1996,7 +2120,7 @@ def _idem_new_marker(marker: Path, msg_id: str, content: str, over: bool) -> int
             # written in the old format, which promises no liveness signal.
             os.close(fd)
             try:
-                fd = os.open(marker, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o644)
+                fd = _open(marker, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o644)
             except FileExistsError:
                 return None
             os.write(fd, f"{msg_id}\n{content}\n".encode())
@@ -2036,9 +2160,9 @@ def _idem_legacy_takeover(marker: Path, seen: bytes) -> None:
         # bytes (all that _idem_claim reads), so the same 4096 are compared: a marker longer
         # than that, which only a hand-written file can be, used to compare unequal to its own
         # head and could never be taken over.
-        rfd = os.open(marker, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+        rfd = _open(marker, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
         try:
-            same = os.pread(rfd, 4096, 0) == seen
+            same = _pread(rfd, 4096, 0) == seen
         finally:
             os.close(rfd)
         if same:
@@ -2162,11 +2286,11 @@ def _idem_drop_orphan(box: Path, sender: str, to: str, key: str, content: str) -
     marker = _idem_marker(box, sender, to, key)
     ro = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
     try:
-        rfd = os.open(marker, ro)
+        rfd = _open(marker, ro)
     except OSError:
         return  # no marker (the usual case), or not one this send may open
     try:
-        old_id, old_content, locked = _idem_parse(os.pread(rfd, 4096, 0))
+        old_id, old_content, locked = _idem_parse(_pread(rfd, 4096, 0))
         if not (old_id and locked and old_content == content) or _idem_landed(box, old_id):
             return
         if _try_flock(rfd) is True and _same_inode(marker, rfd) and not _idem_landed(box, old_id):
@@ -2202,7 +2326,7 @@ def _idem_claim(box: Path, sender: str, to: str, key: str, msg_id: str,
         if fd is not None:
             return "", fd
         try:
-            rfd = os.open(marker, ro)
+            rfd = _open(marker, ro)
         except FileNotFoundError:
             continue  # its sender gave up between our link and our open
         except PermissionError as exc:
@@ -2210,7 +2334,7 @@ def _idem_claim(box: Path, sender: str, to: str, key: str, msg_id: str,
             # key's marker, not the mailbox, that refused. Other errors (a symlink) are unchanged.
             raise _IdemMarkerUnreadable(exc.errno, exc.strerror) from exc
         try:
-            seen = os.pread(rfd, 4096, 0)
+            seen = _pread(rfd, 4096, 0)
             old_id, old_content, locked = _idem_parse(seen)
             if old_id and old_content != content:
                 return "CONFLICT", None
@@ -2232,7 +2356,7 @@ def _idem_claim(box: Path, sender: str, to: str, key: str, msg_id: str,
                     if _idem_landed(box, old_id):
                         return old_id, None  # published and exited just now
                     return "", _idem_new_marker(marker, msg_id, content, over=True)
-                if not locked and os.pread(rfd, 4096, 0) != seen:
+                if not locked and _pread(rfd, 4096, 0) != seen:
                     break  # an old-format sender finished writing it: re-read
                 if time.monotonic() >= deadline:
                     if locked:
@@ -2262,6 +2386,20 @@ class _FlockRefused(Exception):
     """flock(2) itself was refused by the filesystem (not: the file could not be opened)."""
 
 
+def _delete_may_be_pending(lock: Path) -> bool:
+    """Windows only: whether "access denied" on the lock name could be a pending delete. A name
+    that opens for reading, or that does not exist, is not one (a write-denied file, a
+    read-only file, a directory that refuses new files): that denial is final. Only a name that
+    cannot even be read is looked at again."""
+    try:
+        os.close(_open(lock, os.O_RDONLY))
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    return False
+
+
 def _scope_lock(lock: Path) -> int | None:
     """Take the scope lock (PROTOCOL.md section 30) and return the descriptor
     that holds it, or None when a live claimant holds it.
@@ -2272,13 +2410,32 @@ def _scope_lock(lock: Path) -> int | None:
     holder exits. A dead claimant therefore leaves nothing to break by age, and
     no process ever removes a lock another process holds.
     """
-    import fcntl  # POSIX only; local so the module still imports where fcntl is absent
+    denied: PermissionError | None = None
     for _ in range(8):
+        denied = None
         # O_NOFOLLOW: the name is predictable, so a link planted there must not
         # send the lock, and the pid below, to its target (section 36).
-        fd = os.open(lock, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o644)
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fd = _open(lock, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o644)
+        except PermissionError as exc:
+            if not _WIN:
+                raise
+            # Windows also says "access denied" for a link to a directory and for a
+            # directory: those are refusals (what POSIX answers with ELOOP and EISDIR).
+            if os.path.islink(lock):
+                raise OSError(errno.ELOOP, "Too many levels of symbolic links", str(lock)) from exc
+            if os.path.isdir(lock):
+                raise IsADirectoryError(errno.EISDIR, "Is a directory", str(lock)) from exc
+            # Another process holding the file with no sharing (Win32 32/33), or a name
+            # whose delete is pending (Win32 5, the orphan case): look again, a bounded
+            # number of times. A denial that cannot be a pending delete is final at once.
+            denied = exc
+            if getattr(exc, "winerror", None) not in (32, 33) and not _delete_may_be_pending(lock):
+                raise
+            time.sleep(0.01)
+            continue
+        try:
+            _flock(fd)
         except BlockingIOError:
             os.close(fd)
             return None  # a live process holds it
@@ -2310,6 +2467,10 @@ def _scope_lock(lock: Path) -> int | None:
                     pass
             return fd
         os.close(fd)  # releases the orphan
+    if denied is not None:
+        # Still "access denied" after every look: not a claimant, so not "retry" (exit 3) but
+        # the one-line EACCES failure of section 32 (exit 1), nothing written.
+        raise denied
     return None
 
 
@@ -2660,7 +2821,7 @@ def cmd_send(args: argparse.Namespace) -> int:
             box.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
             print(f"send failed: cannot create the mailbox at {box}: {exc.strerror or exc} "
-                  f"({errno.errorcode.get(exc.errno or 0, 'OSError')}); nothing written",
+                  f"({_errname(exc)}); nothing written",
                   file=sys.stderr)
             return 1
     lock = box / f".scope.{hashlib.sha256(scope.encode()).hexdigest()[:24]}.lock"
@@ -2798,7 +2959,7 @@ def cmd_send(args: argparse.Namespace) -> int:
         return trap.exit_code
     except OSError as exc:
         trap.quiet = True
-        why = f"{exc.strerror or exc} ({errno.errorcode.get(exc.errno or 0, 'OSError')})"
+        why = f"{exc.strerror or exc} ({_errname(exc)})"
         if landed():
             print(f"send failed after publishing: {why}; id: {msg_id}", file=sys.stderr)
         else:
@@ -3349,16 +3510,15 @@ def _probe_holder(path: Path) -> tuple[str, bytes]:
     written and nothing is left locked.
     """
     try:
-        import fcntl  # POSIX only
-        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
-    except (ImportError, OSError):
+        fd = _open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+    except OSError:
         return "unknown", b""
     try:
         if not stat.S_ISREG(os.fstat(fd).st_mode):
             return "unknown", b""
-        head = os.pread(fd, 4096, 0)
+        head = _pread(fd, 4096, 0)
         try:
-            fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            _flock(fd, shared=True)
         except BlockingIOError:
             return "held", head
         return "free", head
@@ -3415,12 +3575,12 @@ def scan_hidden(box: Path, now_ts: float) -> dict[str, Any]:
             continue
         if is_marker:
             try:
-                fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                fd = _open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
                              | getattr(os, "O_NONBLOCK", 0))
             except OSError:
                 continue
             try:
-                old_id, _content, locked = _idem_parse(os.pread(fd, 4096, 0))
+                old_id, _content, locked = _idem_parse(_pread(fd, 4096, 0))
             except OSError:
                 continue
             finally:
