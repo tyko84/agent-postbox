@@ -1935,6 +1935,9 @@ write no mail.
 | text output (`list`, `inbox`, `show`, `status`) of a subject, path or body in another alphabet when stdout can only carry ASCII (`PYTHONIOENCODING=ascii`, a C locale) | traceback after a partial listing, exit 1 | the line is printed with each character stdout cannot carry as its `\x`, `\u` or `\U` escape (`caf\xe9`), exit 0 |
 | `--help` with stdout closed | the help on stderr, exit 0 | nothing said, exit 0, as §35 has every command do when stdout is gone |
 
+Standard input is decoded as strict UTF-8 whatever encoding the stream carries (the ANSI code page on
+Windows, a C locale on POSIX), so the `--body-file -` row holds on every platform.
+
 `--json` output is ASCII whatever stdout can carry (§37) and is unchanged.
 `test_cli.py` pins every row.
 
