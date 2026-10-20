@@ -58,7 +58,9 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
+SIGKILL = getattr(signal, "SIGKILL", signal.SIGTERM)   # Windows: Popen.send_signal(SIGTERM) is TerminateProcess
 HERE = Path(__file__).resolve().parent
+KILLED_RC = -9 if os.name != "nt" else 1   # what Popen.kill() leaves: SIGKILL / TerminateProcess
 SENTINEL = "END-OF-BODY-SENTINEL"
 STEP_TIMEOUT = 300   # seconds; any single child
 WATCHDOG = 900       # seconds; the whole run
@@ -123,7 +125,10 @@ def killed_sender(box: Path, body_file: Path, out: dict) -> None:
     argv = ["send", "--type", "NOTICE", "--from", "agent-killed", "--to", "all",
             "--subject", "stress killed", "--body-file", str(body_file)]
     code = ("import os, signal, sys\n"
-            f"signal.alarm({WATCHDOG})\n"
+            f"if hasattr(signal, 'alarm'):\n    signal.alarm({WATCHDOG})\n"
+            "else:\n    import threading\n"
+            f"    _wd = threading.Timer({WATCHDOG}, os._exit, [1])\n"
+            "    _wd.daemon = True\n    _wd.start()\n"
             f"sys.path.insert(0, {str(HERE)!r})\n"
             "import agent_mail\n"
             "def park(*_a, **_k):\n"
@@ -166,9 +171,15 @@ def reader(box: Path, stop: threading.Event, torn: list, seen: set) -> None:
 # agent_mail, and a later correct send must succeed.
 FI_CHILD = r'''
 import os, sys, time, signal, builtins
-signal.alarm(120)
+if hasattr(signal, "alarm"):
+    signal.alarm(120)
+else:   # no SIGALRM on Windows: a daemon timer ends the child instead
+    import threading
+    _wd = threading.Timer(120, os._exit, [1])
+    _wd.daemon = True
+    _wd.start()
 sys.path.insert(0, @WT@)
-import fcntl, agent_mail
+import agent_mail
 TARGET = int(os.environ.get("FI_TARGET", "-1"))
 LOG, READY = os.environ.get("FI_LOG", ""), os.environ.get("FI_READY", "")
 STALLS = {int(a): int(b) for a, b in (x.split(":") for x in os.environ.get("FI_STALLS", "").split(",") if x)}
@@ -213,7 +224,10 @@ wrap(os, "replace", lambda s, d, *a, **k: "os.replace -> " + nm(d))
 wrap(os, "rename", lambda s, d, *a, **k: "os.rename -> " + nm(d))
 wrap(os, "unlink", lambda p, *a, **k: "os.unlink " + nm(p))
 wrap(os, "close", lambda fd: "os.close", False, lambda fd: fd in tracked)
-wrap(fcntl, "flock", lambda fd, op: "flock %d" % op)
+wrap(agent_mail, "_flock", lambda fd, *a, **k: "flock")   # the lock call, whichever platform it maps to
+if os.name == "nt":   # the lock and marker files are opened with CreateFileW there, not os.open
+    wrap(agent_mail, "_open", lambda p, *a, **k: "_open " + nm(p), True,
+         lambda p, fl, *a, **k: bool(fl & (os.O_WRONLY | os.O_RDWR | os.O_CREAT)))
 def aopen(path, mode="r", *a, **k):
     if any(c in mode for c in "wax+"):
         mark("pre  open(w) " + nm(path))
@@ -266,7 +280,7 @@ def fi_trace(box: Path, argv: list[str], tmp: Path) -> tuple[int, list[str]]:
 
 
 def fi_kill_at(box: Path, argv: list[str], target: int, tmp: Path,
-               sig: int = signal.SIGKILL) -> tuple[bool, Any, str]:
+               sig: int = SIGKILL) -> tuple[bool, Any, str]:
     ready = tmp / "ready"
     ready.unlink(missing_ok=True)
     p = fi_spawn(box, argv, target, "", str(ready))
@@ -276,7 +290,7 @@ def fi_kill_at(box: Path, argv: list[str], target: int, tmp: Path,
     parked, absorbed = ready.exists(), False
     if parked:
         p.send_signal(sig)
-        if sig != signal.SIGKILL:
+        if sig != SIGKILL:
             try:
                 p.wait(timeout=3)
             except subprocess.TimeoutExpired:
@@ -608,7 +622,7 @@ def fi_point(name: str, tmp: Path, t: int, labels: list[str], full: bool, mode: 
     box = fi_new_box(tmp, f"p{t}")
     ctx = spec["setup"](box)
     parked, rc, err = fi_kill_at(box, ctx["argv"], t, tmp / f"w{t}",
-                                 signal.SIGKILL if mode == "kill" else signal.SIGTERM)
+                                 SIGKILL if mode == "kill" else signal.SIGTERM)
     out: dict[str, Any] = {"t": t, "parked": parked, "fail": [], "residue": set(), "absorbed": rc == "absorbed"}
     if not parked:
         return out
@@ -809,6 +823,10 @@ def fi_hostile(root: Path, only: tuple[str, ...] = ()) -> tuple[int, list[str]]:
     traceback or print a raw escape, leave the mailbox byte-identical and still show the good one."""
     bad: list[str] = []
     cases = {k: v for k, v in fi_hostile_cases().items() if not only or k in only}
+    if os.name == "nt":   # no FIFOs, device files or permission bits to plant there
+        cases = {k: v for k, v in cases.items() if k not in (
+            "FIFO", "mode 000", "symlink to /dev/zero", "symlink to /dev/random",
+            "scope lock names as symlink and FIFO")}
     for i, (name, make) in enumerate(cases.items()):
         box = fi_new_box(root, f"h{i}")
         (box / f"{FI_GOOD}-good.md").write_text(FI_HDR.format(id=FI_GOOD, subj="good"))
@@ -897,6 +915,8 @@ def fi_participants(root: Path, only: tuple[str, ...] = ()) -> tuple[int, list[s
     mailbox change by a reader, no message to a malformed recipient, one copy per writer."""
     bad: list[str] = []
     cases = {k: v for k, v in fi_participants_cases().items() if not only or k in only}
+    if os.name == "nt":   # no FIFOs or permission bits to plant there
+        cases = {k: v for k, v in cases.items() if v not in ("chmod", "fifo")}
     for i, (name, spec) in enumerate(cases.items()):
         box = root / f"pp{i}"
         box.mkdir()
@@ -969,7 +989,8 @@ def faults_main(mode: str) -> int:
         root = Path(td)
         runs = [(n, "kill") for n in (FI_SCENARIOS if full else FI_CI)]
         if full:
-            runs += [(n, "term") for n in FI_SCENARIOS if n != "orphan-scope-takeover"]
+            if os.name != "nt":   # Windows cannot deliver SIGTERM: send_signal kills
+                runs += [(n, "term") for n in FI_SCENARIOS if n != "orphan-scope-takeover"]
         print("fault injection: a real send killed at every write step")
         for name, how in runs:
             r = fi_scenario(name, root, full, how)
@@ -1090,7 +1111,7 @@ def main() -> int:
             ("reader never saw a torn message", not torn, torn[:3]),
             ("no temp files left behind by any sender that was not killed", not leftovers, leftovers[:3]),
             ("one more sender was SIGKILLed mid-publish: no message from it, one temp file of its own",
-             killed.get("reached") is True and killed.get("rc") == -9 and len(killed_tmp) == 1
+             killed.get("reached") is True and killed.get("rc") == KILLED_RC and len(killed_tmp) == 1
              and not [f.name for f in files if f.name.endswith("-stress-killed.md")],
              f"{killed} tmp={killed_tmp}"),
             ("after the kill `list` exits 0, rejects nothing and lists every message once",

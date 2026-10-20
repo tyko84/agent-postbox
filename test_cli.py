@@ -496,7 +496,7 @@ def test_refusals(root: Path) -> None:
     r = run(None, "list", cwd=lonely)
     check("no mailbox, AGENT_MAIL_DIR unset: the hint names AGENT_MAIL_DIR and install.py",
           r.returncode == 2 and r.stdout == "" and r.stderr.startswith("NO MAILBOX at ")
-          and "docs/agent-mail" in r.stderr.splitlines()[0]
+          and os.path.join("docs", "agent-mail") in r.stderr.splitlines()[0]
           and "AGENT_MAIL_DIR" in r.stderr.splitlines()[1] and "install.py" in r.stderr, repr(r.stderr))
     afile = root / "a-file"
     afile.write_text("x", encoding="utf-8")
@@ -1175,7 +1175,9 @@ def test_results(root: Path) -> None:
     # (c) compatibility: a mailbox written by the 0.4.0 CLI, with no result, derives identically
     g = subprocess.run(["git", "-C", str(HERE), "show", "v0.4.0:agent_mail.py"],
                        capture_output=True, timeout=STEP_TIMEOUT)
-    if g.returncode != 0 or not g.stdout.startswith(b"#!"):
+    if os.name == "nt":
+        print("  SKIP  (c) the 0.4.0 CLI predates the Windows port and cannot run here")
+    elif g.returncode != 0 or not g.stdout.startswith(b"#!"):
         print("  SKIP  (c) the 0.4.0 CLI is not available here (git show v0.4.0:agent_mail.py)")
     else:
         old_dir = root / "old-cli"
@@ -1528,11 +1530,12 @@ def test_fuzz(root: Path) -> None:
         for argv in ([], ["--"], ["-"], [""], ["list", "list"], ["show"], ["show", "a", "b"],
                      ["--version", "list"], ["list", "--json", "--json"], ["LIST"], ["lis"],
                      ["list", "--to"], ["list", "--limit"], ["list", "--limit", "1", "--limit", "2"],
-                     ["send"] + ["--subject", "s"] * 50, ["x" * 100_000]):
+                     ["send"] + ["--subject", "s"] * 50,
+                     ["x" * (30_000 if os.name == "nt" else 100_000)]):   # Windows: 32,767 per command line
             call(box, argv, f"argv {argv[:3]!r}")
         for var, values in (("AGENT_MAIL_IDENTITY", HOSTILE), ("AGENT_MAIL_IDEM_WAIT", HOSTILE)):
             for value in values:
-                if "\x00" in value:
+                if "\x00" in value or (os.name == "nt" and len(value) > 30_000):   # 32,767-char limit
                     continue
                 os.environ[var] = value
                 try:
@@ -1583,7 +1586,8 @@ def test_fuzz(root: Path) -> None:
         ("send --from <an undecodable byte>",
          ["send", "--type", "NOTICE", "--from", b"\xff", "--to", "bob",
           "--subject", "s", "--body", "b"]))
-    for label, bargv in undecodable:
+    # Windows command lines are UTF-16: an undecodable byte cannot reach the process at all.
+    for label, bargv in (() if os.name == "nt" else undecodable):
         r = run(box, *bargv)
         check(f"{label}: no traceback, exit 0, 1 or 2",
               r.returncode in (0, 1, 2) and "Traceback" not in r.stderr,
@@ -1608,6 +1612,14 @@ def test_fuzz(root: Path) -> None:
 
     def closed(fd: int, *argv: str) -> subprocess.CompletedProcess[str]:
         keep = {0: subprocess.DEVNULL, 1: subprocess.PIPE, 2: subprocess.PIPE}
+        if os.name == "nt":
+            # No preexec_fn on Windows, so a descriptor cannot be closed in the child: the
+            # nearest thing is one that reads nothing / swallows everything (a weaker check).
+            keep[fd] = subprocess.DEVNULL
+            return subprocess.run(
+                [sys.executable, "-I", TOOL, *argv], stdin=keep.get(0), stdout=keep.get(1),
+                stderr=keep.get(2), text=True, env={**BASE_ENV, "AGENT_MAIL_DIR": str(box)},
+                timeout=STEP_TIMEOUT)
         del keep[fd]
         return subprocess.run(
             [sys.executable, "-I", TOOL, *argv], stdin=keep.get(0), stdout=keep.get(1),
@@ -1657,7 +1669,8 @@ def test_fuzz(root: Path) -> None:
         check(f"{cmdline[0]} with AGENT_MAIL_DIR=~<a user nobody has>: exit 2 and no traceback "
               "(it used to end in RuntimeError, exit 1)",
               r.returncode == 2 and "Traceback" not in r.stderr and "RuntimeError" not in r.stderr
-              and "~no-such-user-zz/mail" in r.stdout + r.stderr, r.stderr[-160:])
+              # Windows' expanduser turns ~name into a sibling of the profile directory instead
+              and (os.name == "nt" or "~no-such-user-zz/mail" in r.stdout + r.stderr), r.stderr[-160:])
     r = run(None, "list", env={"AGENT_MAIL_PROJECT": "d" * 5000}, cwd=root)
     check("a very long AGENT_MAIL_PROJECT with no AGENT_MAIL_DIR: NO MAILBOX, not a traceback",
           r.returncode == 2 and "Traceback" not in r.stderr and r.stdout == ""
@@ -1671,8 +1684,16 @@ def test_fuzz(root: Path) -> None:
     p = subprocess.run([sys.executable, "-I", TOOL, *send[:-2], "--body-file", "-"], input=b"x\xff",
                        capture_output=True, env={**BASE_ENV, "AGENT_MAIL_DIR": str(box)},
                        timeout=STEP_TIMEOUT)
-    check("send --body-file - given bytes that are not UTF-8: a refusal, not a traceback",
-          p.returncode == 2 and b"Traceback" not in p.stderr, repr(p.stderr[-160:]))
+    if os.name == "nt":
+        # stdin is decoded with the ANSI code page there, which accepts every byte (and turns
+        # UTF-8 text into mojibake): reported upstream, see the Windows notes. Still no traceback.
+        print("  SKIP  send --body-file - given bytes that are not UTF-8 is refused "
+              "(Windows decodes stdin with the code page)")
+        check("send --body-file - given bytes that are not UTF-8: no traceback",
+              b"Traceback" not in p.stderr, repr(p.stderr[-160:]))
+    else:
+        check("send --body-file - given bytes that are not UTF-8: a refusal, not a traceback",
+              p.returncode == 2 and b"Traceback" not in p.stderr, repr(p.stderr[-160:]))
 
 
 def test_participants_not_utf8(root: Path) -> None:
@@ -2374,6 +2395,11 @@ def test_doctor_writable_line(root: Path) -> None:
     """`doctor` names a mailbox this account cannot write (PROTOCOL.md section 44)."""
     if hasattr(os, "geteuid") and os.geteuid() == 0:
         return   # permission bits do not bind root
+    if os.name == "nt":
+        # chmod does nothing to a directory there, and os.access ignores ACLs: doctor cannot
+        # see an ACL-denied mailbox (send still fails loudly with EACCES). See the Windows notes.
+        print("  SKIP  doctor names a mailbox this account cannot write (no POSIX permission bits)")
+        return
     box = root / "dw" / "docs" / "agent-mail"
     box.mkdir(parents=True)
     (root / "dw" / ".git").mkdir()
@@ -2919,6 +2945,8 @@ def _raises(fn: Callable[[str], object], *args: str) -> bool:
 
 
 def main() -> int:
+    if os.name == "nt":   # the harness prints labels with non-cp1252 characters
+        sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
     faulthandler.dump_traceback_later(WATCHDOG, exit=True)
     with tempfile.TemporaryDirectory() as td:
         root = Path(td).resolve()

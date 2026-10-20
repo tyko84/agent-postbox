@@ -25,6 +25,7 @@ first on PATH, machine shared (load average 2 to 4.5 during the runs), each scri
 | `test_adapters.py` (47) | Host adapters vs documented shapes; installer | Installer writing outside project, symlinks, perms | 14.6 / 14.7 |
 | `test_examples.py` (8) | Two-agents demo | Demo passing when it did nothing | 3.3 / 3.4 |
 | `test_e2e_script.py` (7) | Offline test of the real-session script | Call budget, report fields | 0.8 / 0.6 |
+| `test_fake_claude.py` (6) | The stand-in `claude` the session-starting suites use; fails closed | A test starting a real, billable model when its stand-in cannot launch | 0.6 / 0.6 |
 | `test_live_demo.py` (24) | Offline recording kit | Kit judging missing artifacts as pass | 5.4 / 5.5 |
 | `test_micro_experiment.py` (9) | Offline micro-experiment harness | Outcome computed from wrong evidence | 0.2 / 0.2 |
 | `test_experiment_v2.py` (48) | Offline v2 harness and analysis | As above | 11.6 / 10.8 |

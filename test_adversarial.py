@@ -48,6 +48,7 @@ for _v in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_
     os.environ.pop(_v, None)
 
 HERE = Path(__file__).resolve().parent
+KILLED_RC = -9 if os.name != "nt" else 1   # what Popen.kill() leaves: SIGKILL / TerminateProcess
 TOOL = str(HERE / "agent_mail.py")
 WATCHDOG = 900   # seconds; the whole run
 FAILS: list[str] = []
@@ -67,9 +68,12 @@ def run(box: Path, *argv: str, stdin: str | None = None,
     # cwd is the mailbox's own directory, not the checkout: `doctor` reads the project's
     # `.claude/` (send_permission), and a developer who runs Claude Code in this repo has one,
     # whose absolute path would put the user's name in an output these tests assert is clean.
-    return subprocess.run([sys.executable, "-I", TOOL, *argv], capture_output=True,
-                          text=True, env=env, input=stdin, timeout=120,
-                          cwd=box if box.is_dir() else None)
+    # A Windows pipe is the ANSI code page unless told otherwise, and -I ignores PYTHONUTF8:
+    # ask for UTF-8 mode with the flag so emoji and bidi controls can cross stdin.
+    utf8 = ["-X", "utf8"] if os.name == "nt" else []
+    return subprocess.run([sys.executable, "-I", *utf8, TOOL, *argv], capture_output=True,
+                          text=True, encoding="utf-8" if utf8 else None, env=env, input=stdin,
+                          timeout=120, cwd=box if box.is_dir() else None)
 
 
 def send(box: Path, *, frm: str = "alice", to: str = "bob", subj: str = "s",
@@ -356,7 +360,7 @@ def reader_goes_away(root: Path) -> None:
                   f"rc={rfull.returncode} {rfull.stderr[-200:]!r}")
     else:
         print("  SKIP  stdout on a full device (no /dev/full on this platform)")
-    if os.geteuid() != 0:
+    if hasattr(os, "geteuid") and os.geteuid() != 0:
         robox = root / "pipe-ro"
         robox.mkdir()
         os.chmod(robox, 0o555)
@@ -830,27 +834,30 @@ def hostile_output(root: Path) -> None:
     check("three megabyte-sized fields: the hook prints under 20 kB, with the cut marked",
           len(hk.stdout) < 20_000 and "characters)" in hk.stdout, str(len(hk.stdout)))
 
-    print("hostile file names never reach a line of output raw")
-    nb = root / "names"
-    nb.mkdir()
-    send(nb, frm="alice", to="bob", subj="name-control")
-    (nb / f"bad{ESC}.md").write_bytes(b"not mail")
-    (nb / "x\nFAKE: all clear\n.md").write_bytes(b"not mail")
-    (nb / "‮gnp.md").write_bytes(b"not mail")
-    os.symlink("/etc/hosts", nb / f"link{ESC}.md")
-    old = nb / (f".t{ESC}.tmp")
-    old.write_text("x")
-    os.utime(old, (1, 1))
-    for argv in (("list",), ("inbox", "--to", "bob"), ("status",), ("doctor",), ("list", "--json")):
-        out = run(nb, *argv)
-        text = out.stdout + out.stderr
-        check(f"`{' '.join(argv)}`: no ESC, BEL or bidi control, no forged line",
-              not any(c in text for c in ("\x1b", "\x07", "‮"))
-              and not any(ln.startswith("FAKE") for ln in text.splitlines()), repr(text[-300:]))
-    lst = run(nb, "list")
-    check("control: the rejects are still named (escaped), and the good message is listed",
-          "name-control" in lst.stdout and "REJECT bad\\x1b[31mRED" in lst.stderr
-          and "REJECT x\\nFAKE: all clear\\n.md" in lst.stderr, lst.stderr)
+    if os.name == "nt":
+        print("  SKIP  hostile file names never reach a line of output raw (NTFS cannot hold such names)")
+    else:
+        print("hostile file names never reach a line of output raw")
+        nb = root / "names"
+        nb.mkdir()
+        send(nb, frm="alice", to="bob", subj="name-control")
+        (nb / f"bad{ESC}.md").write_bytes(b"not mail")
+        (nb / "x\nFAKE: all clear\n.md").write_bytes(b"not mail")
+        (nb / "‮gnp.md").write_bytes(b"not mail")
+        os.symlink("/etc/hosts", nb / f"link{ESC}.md")
+        old = nb / (f".t{ESC}.tmp")
+        old.write_text("x")
+        os.utime(old, (1, 1))
+        for argv in (("list",), ("inbox", "--to", "bob"), ("status",), ("doctor",), ("list", "--json")):
+            out = run(nb, *argv)
+            text = out.stdout + out.stderr
+            check(f"`{' '.join(argv)}`: no ESC, BEL or bidi control, no forged line",
+                  not any(c in text for c in ("\x1b", "\x07", "‮"))
+                  and not any(ln.startswith("FAKE") for ln in text.splitlines()), repr(text[-300:]))
+        lst = run(nb, "list")
+        check("control: the rejects are still named (escaped), and the good message is listed",
+              "name-control" in lst.stdout and "REJECT bad\\x1b[31mRED" in lst.stderr
+              and "REJECT x\\nFAKE: all clear\\n.md" in lst.stderr, lst.stderr)
 
     print("a hostile PARTICIPANTS.md identity never reaches the terminal raw")
     pb = root / "parts"
@@ -1219,21 +1226,24 @@ def main() -> int:
         check("a directory at the lock name: one line naming EISDIR, exit 1, directory untouched",
               refused(res, "EISDIR") and (b / lock_name).is_dir() and md_files(b) == [],
               f"rc={res.returncode} {res.stderr!r}")
-        b = pbox("lock-fifo")
-        os.mkfifo(b / lock_name)
-        try:
-            res = pclaim(b)
-            hung = False
-        except subprocess.TimeoutExpired:
-            hung = True
-        check("a FIFO at the lock name does not hang the claim: exit 2 `cannot lock scope`, one "
-              "line, nothing written, the FIFO left in place",
-              not hung and res.returncode == 2 and md_files(b) == []
-              and res.stderr.startswith("cannot lock scope 'file:p.py': ")
-              and len(res.stderr.strip().splitlines()) == 1
-              and stat.S_ISFIFO(os.lstat(b / lock_name).st_mode),
-              "hung" if hung else f"rc={res.returncode} {res.stderr!r}")
-        for kind in ("symlink", "dangling", "directory", "fifo"):
+        if not hasattr(os, "mkfifo"):
+            print("  SKIP  a FIFO at the scope lock name (no FIFOs on Windows)")
+        else:
+            b = pbox("lock-fifo")
+            os.mkfifo(b / lock_name)
+            try:
+                res = pclaim(b)
+                hung = False
+            except subprocess.TimeoutExpired:
+                hung = True
+            check("a FIFO at the lock name does not hang the claim: exit 2 `cannot lock scope`, one "
+                  "line, nothing written, the FIFO left in place",
+                  not hung and res.returncode == 2 and md_files(b) == []
+                  and res.stderr.startswith("cannot lock scope 'file:p.py': ")
+                  and len(res.stderr.strip().splitlines()) == 1
+                  and stat.S_ISFIFO(os.lstat(b / lock_name).st_mode),
+                  "hung" if hung else f"rc={res.returncode} {res.stderr!r}")
+        for kind in ("symlink", "dangling", "directory", *(("fifo",) if hasattr(os, "mkfifo") else ())):
             b = pbox(f"marker-{kind}")
             if kind == "symlink":
                 os.symlink(victim, b / mark_name)
@@ -1267,21 +1277,24 @@ def main() -> int:
                   and pkeyed(b).stdout.startswith("duplicate of ") and len(md_files(b)) == 1,
                   f"rc={res.returncode} {res.stderr!r} {now_marker[:1]}")
 
-        print("FIFO planted as a .md must not hang the reader")
-        fbox = root / "f"
-        fbox.mkdir()
-        send(fbox, subj="beside fifo")
-        os.mkfifo(fbox / "trap.md")
-        t0 = time.time()
-        try:
-            res = run(fbox, "list")
-            hung = False
-        except subprocess.TimeoutExpired:
-            hung = True
-        check("FIFO does not hang list", not hung and time.time() - t0 < 30)
-        if not hung:
-            check("FIFO quarantined; real message listed",
-                  "REJECT trap.md" in res.stderr and "beside fifo" in res.stdout, res.stderr)
+        if not hasattr(os, "mkfifo"):
+            print("  SKIP  a FIFO planted as a .md (no FIFOs on Windows)")
+        else:
+            print("FIFO planted as a .md must not hang the reader")
+            fbox = root / "f"
+            fbox.mkdir()
+            send(fbox, subj="beside fifo")
+            os.mkfifo(fbox / "trap.md")
+            t0 = time.time()
+            try:
+                res = run(fbox, "list")
+                hung = False
+            except subprocess.TimeoutExpired:
+                hung = True
+            check("FIFO does not hang list", not hung and time.time() - t0 < 30)
+            if not hung:
+                check("FIFO quarantined; real message listed",
+                      "REJECT trap.md" in res.stderr and "beside fifo" in res.stdout, res.stderr)
 
         print("oversized file at read")
         obox = root / "o"
@@ -1300,6 +1313,11 @@ def main() -> int:
             (bbox / f"{ident}-n{i}.md").write_text(
                 f"---\nid: {ident}\ntype: {'ASK' if i % 2 == 0 else 'NOTICE'}\nfrom: a{i % 50}\n"
                 f"to: all\ndate: 2099-01-01T00:00:00Z\nsubject: n{i}\n---\n\nbody\n")
+        if os.name == "nt":
+            # Windows Defender scans a new file on its first open, ~3-5 ms each while it has a
+            # backlog: read them once so the timing below is the tool's, not the scanner's.
+            for warm in bbox.iterdir():
+                warm.read_bytes()
         t0 = time.time()
         res = run(bbox, "list", "--live")
         dt_list = time.time() - t0
@@ -1511,7 +1529,7 @@ def main() -> int:
         with ThreadPoolExecutor(max_workers=4) as ex:
             deaths = list(ex.map(storm_victim, range(16)))
         check("control: every writer ended by SIGKILL or had already finished; at least one was killed",
-              set(deaths) <= {-9, 0} and -9 in deaths, str(deaths))
+              set(deaths) <= {KILLED_RC, 0} and KILLED_RC in deaths, str(deaths))
         after = run(kbox, "list")
         whole = [f.read_text(encoding="utf-8").rstrip("\n").endswith(TAIL) for f in md_files(kbox)]
         check("after the kills: `list` exits 0 with no REJECT; every visible message is complete",
@@ -1555,8 +1573,15 @@ def main() -> int:
 
         keyed_retry_unlistable(root)
         hostile_output(root)
-        identity_binding(root)
-        reader_goes_away(root)
+        if hasattr(os, "geteuid"):
+            identity_binding(root)
+        else:
+            print("  SKIP  identity binding (Windows has no uid to bind a name to)")
+        if os.name == "nt":
+            print("  SKIP  reader_goes_away (closed descriptors, SIGINT and /dev/full are POSIX; "
+                  "selftest.py covers the gone reader on Windows)")
+        else:
+            reader_goes_away(root)
 
     faulthandler.cancel_dump_traceback_later()
     if FAILS:

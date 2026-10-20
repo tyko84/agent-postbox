@@ -205,6 +205,13 @@ behaviour).
   driver; nothing is run in CI. A live run needs `--live` and `POSTBOX_EXPERIMENT_LIVE=1`, the
   main stage refuses without a passing, live smoke gate, and a hard spend ceiling is enforced from
   the host-reported cost (smoke 4, main 30 USD).
+- `test_fake_claude.py`: a stand-in `claude` that fails closed. The suites that drive scripts which
+  start `claude` sessions (`test_e2e_script.py`, `test_live_demo.py`) used to put their stand-in first on
+  PATH and extend the inherited PATH; if the stand-in could not be launched, the lookup fell through to the
+  real, billable CLI. They now take a PATH from which every other `claude` is removed and on which the
+  stand-in has been verified to answer, or they do not run. Its own tests use a canary in place of the
+  real CLI and prove it never runs. Test-suite portability: the suites run on Windows, with every
+  platform-specific skip printed with its reason.
 
 ### Changed
 
