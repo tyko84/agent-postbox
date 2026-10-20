@@ -656,6 +656,22 @@ def test_empty(root: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+def test_name_order(root: Path) -> None:
+    print("\nfiles are read in the order of their names, the same on every platform")
+    box = root / "name-order"
+    box.mkdir()
+    # Not messages: each is quarantined, and the REJECT lines come out in read order. Path
+    # objects fold case on Windows, so sorting them gives a.md, B.md, c.md there and
+    # B.md, a.md, c.md (byte order) on POSIX; sorting the plain names is the same everywhere.
+    for name in ("c.md", "a.md", "B.md"):
+        (box / name).write_text("no frontmatter at all\n", encoding="utf-8")
+    r = run(box, "list")
+    rejects = [ln.split(":")[0].removeprefix("REJECT ") for ln in r.stderr.splitlines()
+               if ln.startswith("REJECT ")]
+    check("quarantined files are named in byte order of their names (B.md before a.md before c.md)",
+          rejects == ["B.md", "a.md", "c.md"], repr(rejects))
+
+
 def test_views(root: Path) -> None:
     print("\nlist, inbox, show: --limit, filters, --json (section 37)")
     box = example_box(root)
@@ -2915,6 +2931,7 @@ def main() -> int:
         test_limit_owed(root)
         test_exit_code(root)
         test_inbox_shows_owed_superseded(root)
+        test_name_order(root)
         test_views(root)
         test_results(root)
         test_reader_gone(root)
