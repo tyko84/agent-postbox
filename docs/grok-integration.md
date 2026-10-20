@@ -6,7 +6,7 @@ is about coverage and honesty, not ranking: no host here is "best", and nothing 
 Grok does not have.
 
 **Where the figures come from.** Every figure on this page was reported by the Grok reviewer session
-from its own synthetic lab runs and a local pilot. They were not reproduced by the maintainers or by
+from its own synthetic lab runs and one two-machine exchange. They were not reproduced by the maintainers or by
 anyone else, and this page does not call them independently verified. Each claim carries one label:
 
 | Label | Means |
@@ -14,7 +14,7 @@ anyone else, and this page does not call them independently verified. Each claim
 | MEASURED | A number read off a synthetic-lab run |
 | ESTIMATE | Arithmetic on measured or assumed quantities, not observed |
 | EXPERIMENTALLY VERIFIED | A synthetic-lab check with a stated count, reported by the Grok session |
-| LOCAL PILOT | One run on real machines, not reproducible by a reader |
+| REPORTED EXCHANGE | One exchange between two machines, described by the Grok session only; no log is published |
 | UNTESTED | Nothing was run |
 
 ## How mail reaches Grok
@@ -55,7 +55,7 @@ All synthetic: invented identities, throwaway mailboxes, no real project mail.
   to 30 s. For a scheduled routine, from question to answer the median was 285 s.
 - **ESTIMATE.** Idle scheduled pickup costs about 10 model turns per hour if the model is woken every
   time. The deterministic preflight above exists so an idle run costs no model turn.
-- **LOCAL PILOT (not independently reproducible).** A round trip from Grok to Codex and back to Grok,
+- **REPORTED EXCHANGE (not independently reproducible).** A round trip from Grok to Codex and back to Grok,
   across two machines, completed. The Codex side needed a manual prompt, so this is **not** unattended
   pickup and says nothing about unattended Codex pickup.
 
