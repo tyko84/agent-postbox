@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import stat
 import subprocess
 import sys
@@ -33,6 +34,30 @@ for _v in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_
     os.environ.pop(_v, None)
 
 ROOT = Path(__file__).resolve().parent
+
+
+def _bash() -> str:
+    """The `bash` the README's shell blocks run under. On Windows a bare `bash` handed to
+    CreateProcess is found in System32 first, where it is WSL's launcher: it fails ("no installed
+    distributions") on a machine without a WSL distribution. So resolve a full path along PATH, refuse
+    anything under the Windows directory, and fall back to Git for Windows' bash near git.exe."""
+    if os.name != "nt":
+        return "bash"
+    windir = os.path.normcase(os.path.realpath(os.environ.get("SystemRoot", r"C:\Windows")))
+    found = shutil.which("bash")
+    if found and not os.path.normcase(os.path.realpath(found)).startswith(windir):
+        return found
+    git = shutil.which("git")
+    if git:
+        here = Path(git).resolve().parent
+        for root in (here, here.parent, here.parent.parent):
+            for cand in (root / "bash.exe", root / "bin" / "bash.exe", root / "usr" / "bin" / "bash.exe"):
+                if cand.is_file():
+                    return str(cand)
+    return "bash"
+
+
+BASH = _bash()
 _FENCE = re.compile(r"^```bash runnable[ \t]*\n(.*?)^```[ \t]*$", re.S | re.M)
 _HEADING = re.compile(r"^## (\d+[a-z]?)\.", re.M)
 _SECT = re.compile(
@@ -66,7 +91,7 @@ def run_blocks(blocks: list[str]) -> subprocess.CompletedProcess[str]:
         env = {k: v for k, v in os.environ.items() if not k.startswith("AGENT_MAIL")}
         env["PATH"] = f"{bindir}{os.pathsep}{env.get('PATH', '')}"
         return subprocess.run(
-            ["bash", "-c", script], cwd=work, env=env, text=True,
+            [BASH, "-c", script], cwd=work, env=env, text=True,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=300,
         )
 
@@ -373,7 +398,7 @@ class RemovalInstructions(unittest.TestCase):
             self.assertEqual(sent.returncode, 0, sent.stderr)
             script = Path(tmp) / "remove.sh"
             script.write_text(blocks[0], encoding="utf-8")
-            done = sh("bash", str(script))
+            done = sh(BASH, str(script))
             self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
             self.assertFalse((proj / "tools").exists())
             self.assertEqual(len(list((proj / "docs" / "agent-mail").glob("*-keep-me.md"))), 1)
@@ -381,7 +406,7 @@ class RemovalInstructions(unittest.TestCase):
             self.assertFalse((proj / ".claude" / "settings.json.bak").exists())
             # the second block is the one that deletes the messages
             script.write_text(blocks[1], encoding="utf-8")
-            self.assertEqual(sh("bash", str(script)).returncode, 0)
+            self.assertEqual(sh(BASH, str(script)).returncode, 0)
             self.assertFalse((proj / "docs").exists())
 
 
