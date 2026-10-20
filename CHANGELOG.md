@@ -10,6 +10,7 @@ behaviour).
 ### Added
 
 - Windows: a scoped CLAIM whose lock file cannot be opened is no longer reported as `being claimed right now; retry` (exit 3) unless a claimant really holds it. A permanent denial (a write-denied or read-only lock file, a mailbox directory that refuses new files) is final at once and a holder with no sharing (Win32 32/33) or a pending delete is looked at the same bounded eight times; after that the failure is the one-line `cannot write to the mailbox ... (EACCES); nothing written` of PROTOCOL.md section 32, exit 1. Checks in selftest.py fail on the previous code.
+- `install.py` on Windows: when the interpreter's path holds a space the printed selftest command is now given once per shell, labelled (`PowerShell: & "<python>" tools/agent-postbox/selftest.py` and `cmd.exe: "<python>" tools/agent-postbox/selftest.py`), because a quoted executable path without the call operator `&` is not a command in PowerShell. `test_readme_examples.py` covers both shells and the unchanged POSIX line.
 - `inbox --exit-code`: exit 10 when an ASK still owes a reply, 0 when none does, 2 when it cannot be known (no identity, missing or unreadable mailbox, a quarantined file with nothing known owed). Opt-in; output and the default exit statuses are unchanged (issue #97, PROTOCOL.md section 37).
 
 ### Changed
@@ -164,6 +165,10 @@ behaviour).
   prints has an identical rule, the exact rules to add if none does, and that a `#` line
   inside a quoted `--body` is refused by Claude Code even with a rule (use `--body-file -`).
   Informational; never writes settings and never changes the exit status.
+- `docs/windows.md`: a Windows guide of observed behaviour only (native CLI, installer, Git Bash, PowerShell 5.1,
+  cmd.exe, the hook command's POSIX syntax, UTF-16 `>` redirects and stdin encoding traps, what was never run in a real
+  Claude Code session). Windows stays unsupported. `install.py` prints PowerShell, cmd.exe and Git Bash identity advice,
+  a quoted interpreter path and a selftest line without `&&` when run on Windows; POSIX output is unchanged.
 - `docs/data/permission-probe/`: the live probe and results behind that line (19 cases,
   Claude Code 2.1.300, `dontAsk`; the first run on 2.1.296 is kept beside it).
 - `examples/two-agents/live_demo.py`: a recording kit for a demonstration with two REAL

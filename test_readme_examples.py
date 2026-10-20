@@ -20,6 +20,7 @@ import os
 import re
 import shutil
 import stat
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -408,6 +409,55 @@ class RemovalInstructions(unittest.TestCase):
             script.write_text(blocks[1], encoding="utf-8")
             self.assertEqual(sh(BASH, str(script)).returncode, 0)
             self.assertFalse((proj / "docs").exists())
+
+class WindowsGuide(unittest.TestCase):
+    """docs/windows.md: every bullet carries a status label, and the installer's printed
+    advice is shell-neutral on Windows (and unchanged on POSIX)."""
+
+    LABELS = ("Verified", "Works but unverified in a real host", "Unsupported", "Untested")
+
+    def test_every_bullet_has_a_status_label_and_page_is_indexed(self) -> None:
+        text = (ROOT / "docs" / "windows.md").read_text(encoding="utf-8")
+        bullets = [ln for ln in text.splitlines() if ln.startswith("* ")]
+        self.assertGreater(len(bullets), 20)
+        bad = [ln[:60] for ln in bullets if not ln[2:].startswith(tuple(f"{k}:" for k in self.LABELS))
+               and not ln[2:].startswith("**")]
+        self.assertEqual(bad, [])
+        self.assertIn("(windows.md)", (ROOT / "docs" / "README.md").read_text(encoding="utf-8"))
+
+    def test_selftest_command_is_valid_in_each_windows_shell(self) -> None:
+        """A quoted interpreter path (it holds a space) is a command in cmd.exe but not in PowerShell,
+        which needs the call operator: that case prints one labelled command per shell."""
+        import importlib.util  # noqa: PLC0415
+        spec = importlib.util.spec_from_file_location("install_for_docs", ROOT / "install.py")
+        assert spec is not None and spec.loader is not None
+        inst = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(inst)
+        proj = Path("C:/work/my proj")
+        quoted = r'"C:\Program Files\Python312\python.exe"'
+        win = inst.selftest_lines(proj, "tools/agent-postbox", quoted, True)
+        self.assertIn(f"  PowerShell: & {quoted} tools/agent-postbox/selftest.py", win)
+        self.assertIn(f"  cmd.exe:    {quoted} tools/agent-postbox/selftest.py", win)
+        self.assertFalse([ln for ln in win if ln.lstrip().startswith(quoted)], "a bare quoted command is invalid in PowerShell")
+        plain = inst.selftest_lines(proj, "tools/agent-postbox", "python3", True)
+        self.assertEqual(plain[-1], "  python3 tools/agent-postbox/selftest.py")
+        self.assertNotIn("PowerShell:", " ".join(plain))
+        where = Path("/work/p")
+        posix = inst.selftest_lines(where, "tools/agent-postbox", "python3", False)
+        self.assertEqual(posix, [f"  cd {shlex.quote(str(where))} && python3 tools/agent-postbox/selftest.py"])
+
+    def test_installer_next_steps_by_platform(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="pbD_ ") as tmp:
+            r = subprocess.run([sys.executable, str(ROOT / "install.py"), tmp],
+                               capture_output=True, text=True, encoding="utf-8", errors="replace")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        if os.name == "nt":
+            self.assertIn("$env:AGENT_MAIL_IDENTITY", r.stdout)
+            self.assertNotIn(" && ", r.stdout)
+            self.assertNotIn("cd '", r.stdout)
+        else:
+            self.assertIn("(there is no default):  export AGENT_MAIL_IDENTITY=<name>", r.stdout)
+            self.assertIn(" && ", r.stdout)
 
 
 if __name__ == "__main__":

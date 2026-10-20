@@ -171,9 +171,34 @@ def installer_python_refusal(version: tuple[int, ...] | None = None) -> str | No
             "`python3.12 install.py <project>` (check with `python3 --version`)")
 
 
+def _identity_advice() -> str:
+    if os.name == "nt":
+        return ("PowerShell: $env:AGENT_MAIL_IDENTITY = '<name>'   "
+                "cmd.exe: set AGENT_MAIL_IDENTITY=<name>   Git Bash: export AGENT_MAIL_IDENTITY=<name>")
+    return "export AGENT_MAIL_IDENTITY=<name>"
+
+
 def python_cmd() -> str:
     """The interpreter that ran this installer, used only in local instructions."""
+    if os.name == "nt" and " " in sys.executable:
+        return f'"{sys.executable}"'   # a bare path with a space would split in a shell
     return sys.executable
+
+
+def selftest_lines(project: Path, dest_rel: str, py: str, windows: bool) -> list[str]:
+    """The lines that tell the user how to run the selftest. On Windows a quoted interpreter path
+    (it holds a space) is a command in cmd.exe but, in PowerShell, a string expression followed by
+    arguments: PowerShell needs the call operator `&`. So that case prints one command per shell,
+    labelled; `&&` and single quotes are not portable between the two either."""
+    tail = f"{dest_rel}/selftest.py"
+    if not windows:
+        return [f"  cd {shlex.quote(str(project))} && {py} {tail}"]
+    lines = [f'  cd "{project}"']
+    if py.startswith('"'):
+        lines += [f"  PowerShell: & {py} {tail}", f"  cmd.exe:    {py} {tail}"]
+    else:
+        lines.append(f"  {py} {tail}")
+    return lines
 
 
 def hook_command(dest_rel: str, adapter: str = "claude-code") -> str:
@@ -628,7 +653,7 @@ def main() -> int:
     print(f"  1. Rename the example rows agent-a / agent-b in {args.mailbox}/PARTICIPANTS.md "
           "to your agents' names.")
     print("  2. Give each agent its own name in the shell its session starts from "
-          "(there is no default):  export AGENT_MAIL_IDENTITY=<name>")
+          "(there is no default):  " + _identity_advice())
     print(f"  3. {python_cmd()} {dest_rel}/agent_mail.py canary --from <name> --to <name>, "
           f"then {python_cmd()} {dest_rel}/agent_mail.py doctor")
     print("     `doctor` on a fresh install is healthy but reports `canary: UNVERIFIED`; file the canary and "
@@ -642,7 +667,8 @@ def main() -> int:
               "still goes through).")
     print("Verify pickup before trusting it -- silence proves nothing (PROTOCOL.md §8). "
           "Takes about 20 seconds:")
-    print(f"  cd {shlex.quote(str(project))} && {python_cmd()} {dest_rel}/selftest.py")
+    for line in selftest_lines(project, dest_rel, python_cmd(), os.name == "nt"):
+        print(line)
     return 0
 
 
