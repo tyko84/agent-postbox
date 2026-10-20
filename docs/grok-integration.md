@@ -6,7 +6,7 @@ is about coverage and honesty, not ranking: no host here is "best", and nothing 
 Grok does not have.
 
 **Where the figures come from.** Every figure on this page was reported by the Grok reviewer session
-from its own synthetic lab runs and one two-machine exchange. They were not reproduced by the maintainers or by
+from its own synthetic lab runs and one interoperability exchange. They were not reproduced by the maintainers or by
 anyone else, and this page does not call them independently verified. Each claim carries one label:
 
 | Label | Means |
@@ -14,7 +14,7 @@ anyone else, and this page does not call them independently verified. Each claim
 | MEASURED | A number read off a synthetic-lab run |
 | ESTIMATE | Arithmetic on measured or assumed quantities, not observed |
 | EXPERIMENTALLY VERIFIED | A synthetic-lab check with a stated count, reported by the Grok session |
-| REPORTED EXCHANGE | One exchange between two machines, described by the Grok session only; no log is published |
+| INTEROP EXCHANGE | One exchange through a dedicated, disposable Agent Postbox interoperability mailbox that carried synthetic test messages only; described by the Grok session, no log published |
 | UNTESTED | Nothing was run |
 
 ## How mail reaches Grok
@@ -35,8 +35,9 @@ AGENT_MAIL_IDENTITY=grok-a python3 tools/agent-postbox/agent_mail.py inbox --to 
 
 `--exit-code` makes the status machine-readable (PROTOCOL.md section 37): **10** when an ASK still owes a
 reply, **0** when none does, **2** when that cannot be known (no identity, a missing or unreadable mailbox,
-a quarantined file with nothing known owed). The routine wakes the model only on 10, and treats 2 as a
-fault to report, not as "no mail". The identity is the `AGENT_MAIL_IDENTITY` of the routine's environment,
+a quarantined file with nothing known owed). Exit 10 counts owed ASKs only: a DISPUTE owes nothing, so it
+can appear in the JSON while the status is 0. The routine therefore wakes the model on 10, or when the JSON
+`messages` list holds a DISPUTE row, and treats 2 as a fault to report, not as "no mail". The identity is the `AGENT_MAIL_IDENTITY` of the routine's environment,
 bound as for every host ([identity.md](identity.md)); nothing in the mailbox sets it.
 
 ## What was shown
@@ -44,20 +45,24 @@ bound as for every host ([identity.md](identity.md)); nothing in the mailbox set
 All synthetic: invented identities, throwaway mailboxes, no real project mail.
 
 - **EXPERIMENTALLY VERIFIED (synthetic lab).** 43 of 43 pickup cases passed, with 0 duplicate answers and
-  0 missed. 15 overlapping runs on the same mail produced exactly 1 answer each. The idempotency key does
-  this (`send --key`, PROTOCOL.md section 31); a claim alone does not stop a restarted copy of the same
-  agent.
-- **EXPERIMENTALLY VERIFIED (execution-level simulation).** An interruption matrix of 15 of 15 cases, with
-  processes killed partway through: 0 duplicates, 0 lost messages, 0 false successes.
-- **EXPERIMENTALLY VERIFIED.** Pickup from a fresh run with no prior context answered all 3 canaries, one
-  answer each, threaded, in about 100 s.
-- **MEASURED (synthetic lab).** A webhook POST to the start of a run took 16 to 27 s, and to the answer 27
-  to 30 s. For a scheduled routine, from question to answer the median was 285 s.
-- **ESTIMATE.** Idle scheduled pickup costs about 10 model turns per hour if the model is woken every
-  time. The deterministic preflight above exists so an idle run costs no model turn.
-- **REPORTED EXCHANGE (not independently reproducible).** A round trip from Grok to Codex and back to Grok,
-  across two machines, completed. The Codex side needed a manual prompt, so this is **not** unattended
-  pickup and says nothing about unattended Codex pickup.
+  0 missed. 16 overlapping runs on the same 3 owed ASKs produced exactly 1 answer per ASK, 3 answers in
+  total. The idempotency key does this (`send --key`, PROTOCOL.md sections 5a and 31); a claim alone does
+  not stop a restarted copy of the same agent.
+- **EXPERIMENTALLY VERIFIED (execution-level simulation).** An interruption matrix of 15 of 15 cases, run by a
+  script that killed the tool processes partway through; no model was executed. 0 duplicates, 0 lost
+  messages, 0 false successes.
+- **EXPERIMENTALLY VERIFIED.** One run started by hand in a fresh context, with no prior context (not
+  triggered by a scheduled routine), answered all 3 canaries, one answer each, threaded, in about 100 s.
+- **MEASURED (synthetic lab).** A webhook POST to the answer took 27 to 30 s (4 runs). For a scheduled
+  routine, from question to answer the median was 285 s (27 runs, range 65 to 768 s). No figure is given
+  for the time from a webhook POST to the start of a run: no archived measurement supports one.
+- **ESTIMATE.** At a five-minute schedule, idle scheduled pickup costs about 10 model turns per hour if
+  the model is woken every time. The deterministic preflight above exists so an idle run costs no model turn.
+- **INTEROP EXCHANGE (not independently reproduced).** A round trip from Grok to Codex and back to Grok
+  completed through a dedicated, disposable Agent Postbox interoperability mailbox that carried synthetic
+  test messages only. The mailbox was on a Windows machine; the Grok side reached it over SSH through a macOS
+  relay; the Codex side needed a manual prompt. So it is **not** unattended pickup, says nothing about
+  unattended Codex pickup, and is not proof of general Windows or multi-machine support. No log is published.
 
 ## What this does not establish
 
@@ -82,5 +87,6 @@ before acting on shared state:
 AGENT_MAIL_IDENTITY=grok-a python3 tools/agent-postbox/agent_mail.py inbox --to grok-a
 ```
 
-and answer any ASK addressed to the agent with `agent_mail.py send --type ANSWER --reply-to <id> --key <stable
-key> --body-file answer.txt`. A stable `--key` per ASK is what keeps a repeated run from answering twice.
+and answer any ASK addressed to the agent with `agent_mail.py send --type ANSWER --from grok-a --to <asker>
+--subject "Re: <subject>" --reply-to <id> --key answer-<id> --body-file answer.txt`. A stable `--key` per ASK
+(here `answer-<ASK id>`) is what keeps a repeated run from answering twice.
