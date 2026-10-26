@@ -88,8 +88,11 @@ that grants something.
   31). A `status` or `doctor` probe takes a shared lock for microseconds on
   lock files and markers at least 60 seconds old, read-only and never following
   links; a claim arriving in that instant is told to retry once (section 33).
-* **Local filesystem, POSIX only.** Atomic rename and exclusive create are
-  assumed. Network filesystems and Windows are untested and unsupported.
+* **Local filesystem; POSIX supported, Windows Experimental.** Atomic rename and exclusive create are
+  assumed. Linux and macOS are the supported platforms. On Windows the kernel-held locks use
+  `msvcrt.locking` and the code is Experimental (see [docs/windows.md](docs/windows.md)): there is no uid, so
+  the identity binding cannot be used, and it was exercised only on local NTFS. Network filesystems,
+  synced folders (OneDrive and similar) and WSL are untested and unsupported.
 
 ## The pickup fails silently, on purpose
 

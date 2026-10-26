@@ -61,7 +61,7 @@ others can write to.
 
 * No task planning, routing, retries or agent lifecycle. Use whatever runs your agents.
 * No network or cross-machine delivery. Local filesystems only.
-* No Windows support (untested, unsupported; WSL not tried).
+* Windows is Experimental, not supported (Python 3.12 in hosted CI, hook through Git Bash only; WSL not tried; see [windows.md](../windows.md)).
 * No guarantee that a model acts on a message. The tool can show that a message arrived
   and was acknowledged; what the model does next is the model's choice.
 

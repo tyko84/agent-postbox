@@ -12,7 +12,7 @@ benefit: see [Evidence](#evidence) for what was and was not shown.
 * [codex-investigation.md](codex-investigation.md): what the Codex documentation says about hooks, trust, sandbox and sessions versus what the Codex adapter assumes; documentation read only, Codex never run; an 8-step validation plan for issue #21.
 * [first-use-findings.md](first-use-findings.md): a timed README Quickstart run (machine time only) and the friction it found.
 * [install-reference.md](install-reference.md): the pre-0.3.0 distribution-name note and verifying a release download.
-* [windows.md](windows.md): Windows is unsupported; what was observed running the CLI and installer by hand on native Windows 11 (PowerShell 5.1, Git Bash, cmd.exe), the traps (UTF-16 `>` redirects, stdin encoding, the POSIX-syntax hook command), and what was never run in a real Claude Code session.
+* [windows.md](windows.md): Windows is Experimental; what was verified (hosted CI on Python 3.12, hand runs on native Windows 11 in PowerShell 5.1, Git Bash and cmd.exe), what was not, the traps (UTF-16 `>` redirects, stdin encoding, the POSIX-syntax hook command), and the Git Bash hook limit.
 * [identity.md](identity.md): optional Unix-user identity binding (PROTOCOL.md section 40): what a file's owner proves, what it does not.
 * [handoff-example.md](handoff-example.md): a filled-in handoff packet (validated by `test_handoff.py`).
 * [../examples/two-agents/](../examples/two-agents/README.md): a runnable demo of two scripted sessions exchanging mail through the real tool.

@@ -1,7 +1,10 @@
 # Windows
 
-**Windows is not a supported platform.** The README says so and this page does not change that. It
-records what was observed when the tool and installer were run by hand on native Windows 11 (Python
+**EXPERIMENTAL: Windows.** Linux and macOS are the supported platforms; Windows runs the same code and is
+covered by one required CI job, but it is Experimental, and this page says exactly how far that goes. It
+does not claim universal Windows compatibility, that every integration works on Windows, or that hosted
+CI proves every native configuration. The first part below separates the five levels of evidence; the
+sections after it are the hand-run observations on native Windows 11 (Python
 3.12 from python.org and Python 3.13 from the Microsoft Store, Windows PowerShell 5.1, cmd.exe, Git
 for Windows with Git Bash, a non-elevated user, no model, no network; the one exception is the hook shell, observed in real Claude Code sessions, see
 "Real Claude Code hook").
@@ -13,6 +16,16 @@ Each line carries one status label:
 * **Works but unverified in a real host**: the tool side works; the host (Claude Code) side was not run.
 * **Unsupported**: known not to work, or not intended to.
 * **Untested**: not tried.
+
+## What is verified, at which level
+
+| Level | Verified | Not verified |
+|---|---|---|
+| 1. Core CLI behaviour | `send`, `inbox`, `list`, `show`, `status`, `doctor`, `canary` and `install.py` run on native Windows 11 with Python 3.12 and 3.13, in Git Bash, Windows PowerShell 5.1 and cmd.exe (sections below) | Python 3.10, 3.11 and 3.14 on Windows; PowerShell 7; a mailbox on a network share, OneDrive or another synced folder |
+| 2. Hook shell | The registered hook command runs and delivers mail through **Git Bash**, including in real headless Claude Code sessions | PowerShell 5.1 and cmd.exe: the committed hook command does not run there as written (`||` and `$CLAUDE_PROJECT_DIR` are not understood), and a failed hook looks like an empty inbox, so poll with `inbox`. Codex and Cursor adapters on Windows: never run |
+| 3. Native Windows test coverage | A hand-run workstation session passed `selftest.py`. A full `ci_run.py` run from an unprivileged native account passed 20 of 22 scripts; the other two failed while creating symlinks, because that account lacked the symlink-creation privilege | Whether normal operation needs that privilege: it does not follow from those two failures, which are test fixtures that plant symlinks on purpose. A clean full run on a workstation where symlinks are allowed has not been recorded here |
+| 4. Hosted CI coverage | The required `selftest-windows` check runs the test scripts on GitHub-hosted `windows-latest` with **Python 3.12 only**. Checks that cannot run on Windows skip themselves and print a `SKIP` line (identity binding, FIFO, permission-bit and signal cases, `test_experiment_v4.py`). The 22 scripts exclude those that run once per push in the Linux and macOS 3.12 cells, among them `test_publication.py`. The hosted runner is privileged to create symlinks, so the symlink-planting tests that are not skipped by design run and pass there (for example in `test_adversarial.py`) | Other Windows Pythons, other Windows versions or configurations, anything the skipped checks cover. The publication, packaging and reproducible-build jobs do not run on Windows |
+| 5. Installation and integration paths | Installing from a clone with `install.py` (levels 1 and 2) | `pip install` of the clone and the packaging build on Windows; WSL; the Codex and Cursor adapters; any host other than Claude Code through Git Bash |
 
 Paths below use `<project>` for your project directory and `%TEMP%` for the temporary directory.
 Use `python3` as the README does; on Windows it resolves to the Store build or to a `python3.exe`
@@ -196,8 +209,8 @@ documentation, not re-read** (relayed from the Claude Code documentation; this p
   `Stop-Process` or `taskkill` runs no cleanup; the tool's leases, expiry and reclaim logic are what
   recover (see the killed-`send` line above, and the CLAIM text in the README).
 * Unsupported: FIFOs and `/dev/stdin`-style body paths. Use `--body-file -` or a real file.
-* Verified: Python 3.12 and 3.13 only. 3.10, 3.11 and 3.14 are listed in the README but were not run
-  on Windows.
+* Verified: Python 3.12 and 3.13 by hand, and 3.12 only in hosted CI. 3.10, 3.11 and 3.14 are listed in the
+  README for Linux and macOS but were not run on Windows.
 * Untested: macOS is not covered by this page.
 * Untested: WSL. It is expected to behave as Linux for a project in the Linux filesystem. A project on the
   Windows drive (`/mnt/c/...`) is Unsupported for locking: the lock semantics there are not those of a Linux
