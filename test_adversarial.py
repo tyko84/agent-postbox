@@ -56,6 +56,19 @@ ULID_A = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
 ULID_B = "01ARZ3NDEKTSV4RRFFQ69G5FAW"
 
 
+def can_symlink(directory: Path) -> bool:
+    """False only where Windows withholds the symlink privilege (WinError 1314); any other error is real."""
+    probe = directory / ".symlink-probe"
+    try:
+        probe.symlink_to(directory, target_is_directory=True)
+    except OSError as e:
+        if getattr(e, "winerror", None) == 1314:
+            return False
+        raise
+    probe.unlink()
+    return True
+
+
 def check(name: str, ok: bool, detail: str = "") -> None:
     print(f"  {'PASS' if ok else 'FAIL'}  {name}")
     if not ok:
@@ -937,11 +950,14 @@ def hostile_output(root: Path) -> None:
     elsewhere.mkdir()
     link_p = root / "inst-link"
     (link_p / ".git").mkdir(parents=True)
-    os.symlink(elsewhere, link_p / ".claude")
-    r = install(link_p, "--adapter", "claude-code")
-    check("a .claude that links out of the project is refused; nothing is written through it",
-          r.returncode == 2 and "leading outside the project" in r.stderr and not list(elsewhere.iterdir()),
-          r.stdout + r.stderr)
+    if can_symlink(root):
+        os.symlink(elsewhere, link_p / ".claude")
+        r = install(link_p, "--adapter", "claude-code")
+        check("a .claude that links out of the project is refused; nothing is written through it",
+              r.returncode == 2 and "leading outside the project" in r.stderr and not list(elsewhere.iterdir()),
+              r.stdout + r.stderr)
+    else:
+        print("  SKIP  a .claude that links out of the project is refused (no symlink privilege)")
 
     if hasattr(os, "geteuid") and os.geteuid() != 0:   # root can write anywhere
         cases: list[tuple[str, str, tuple[str, ...]]] = [
@@ -1176,26 +1192,29 @@ def main() -> int:
         secret.write_text(
             f"---\nid: {ULID_A}\ntype: NOTICE\nfrom: eve\nto: bob\n"
             "date: 2099-01-01T00:00:00Z\nsubject: SECRET-LEAK\n---\n\nSECRET-BODY\n")
-        os.symlink(secret, sbox / "planted.md")
-        os.symlink(root / "does-not-exist", sbox / "dangling.md")
-        os.symlink(outside, sbox / "dirlink.md")
-        res = run(sbox, "list")
-        check("symlinked .md is not read", "SECRET-LEAK" not in res.stdout, res.stdout)
-        check("symlinked .md is quarantined loudly",
-              "REJECT planted.md" in res.stderr and "symlink" in res.stderr, res.stderr)
-        check("dangling and directory symlinks quarantined, no traceback",
-              "REJECT dangling.md" in res.stderr and "REJECT dirlink.md" in res.stderr
-              and "Traceback" not in res.stderr, res.stderr)
-        check("control: the real message beside the links is still listed", "legit" in res.stdout)
-        sh = run(sbox, "show", ULID_A)
-        check("show cannot be steered through the link", "SECRET-BODY" not in sh.stdout, sh.stdout)
-        check("control: the same file read directly IS readable (link was the only barrier)",
-              "SECRET-LEAK" in secret.read_text())
-        # a symlinked mailbox directory chosen by the operator is theirs to choose
-        linkbox = root / "boxlink"
-        os.symlink(sbox, linkbox)
-        res = run(linkbox, "list")
-        check("control: operator-chosen symlinked mailbox dir still works", "legit" in res.stdout, res.stderr)
+        if can_symlink(root):
+            os.symlink(secret, sbox / "planted.md")
+            os.symlink(root / "does-not-exist", sbox / "dangling.md")
+            os.symlink(outside, sbox / "dirlink.md")
+            res = run(sbox, "list")
+            check("symlinked .md is not read", "SECRET-LEAK" not in res.stdout, res.stdout)
+            check("symlinked .md is quarantined loudly",
+                  "REJECT planted.md" in res.stderr and "symlink" in res.stderr, res.stderr)
+            check("dangling and directory symlinks quarantined, no traceback",
+                  "REJECT dangling.md" in res.stderr and "REJECT dirlink.md" in res.stderr
+                  and "Traceback" not in res.stderr, res.stderr)
+            check("control: the real message beside the links is still listed", "legit" in res.stdout)
+            sh = run(sbox, "show", ULID_A)
+            check("show cannot be steered through the link", "SECRET-BODY" not in sh.stdout, sh.stdout)
+            check("control: the same file read directly IS readable (link was the only barrier)",
+                  "SECRET-LEAK" in secret.read_text())
+            # a symlinked mailbox directory chosen by the operator is theirs to choose
+            linkbox = root / "boxlink"
+            os.symlink(sbox, linkbox)
+            res = run(linkbox, "list")
+            check("control: operator-chosen symlinked mailbox dir still works", "legit" in res.stdout, res.stderr)
+        else:
+            print("  SKIP  symlinks planted in the mailbox (no symlink privilege)")
 
         print("planted lock and key-marker files: never followed, never written through "
               "(PROTOCOL.md section 36)")
@@ -1230,23 +1249,32 @@ def main() -> int:
         check("control: with nothing planted the scoped claim and the keyed send both succeed",
               pclaim(b).returncode == 0 and pkeyed(b).returncode == 0 and len(md_files(b)) == 2)
         b = pbox("lock-symlink")
-        os.symlink(victim, b / lock_name)
-        res = pclaim(b)
-        check("scope lock name is a symlink to a file outside: not followed, target intact, "
-              "one line naming ELOOP, exit 1, nothing written, link left in place",
-              refused(res, "ELOOP") and intact() and md_files(b) == [] and os.path.islink(b / lock_name),
-              f"rc={res.returncode} {res.stderr!r} {victim.read_text()!r}")
+        if can_symlink(root):
+            os.symlink(victim, b / lock_name)
+            res = pclaim(b)
+            check("scope lock name is a symlink to a file outside: not followed, target intact, "
+                  "one line naming ELOOP, exit 1, nothing written, link left in place",
+                  refused(res, "ELOOP") and intact() and md_files(b) == [] and os.path.islink(b / lock_name),
+                  f"rc={res.returncode} {res.stderr!r} {victim.read_text()!r}")
+        else:
+            print("  SKIP  scope lock name is a symlink to a file outside (no symlink privilege)")
         b = pbox("lock-dangling")
-        os.symlink(outside / "created-through-the-link.txt", b / lock_name)
-        res = pclaim(b)
-        check("scope lock name is a dangling symlink: nothing is created at its target",
-              refused(res, "ELOOP") and not (outside / "created-through-the-link.txt").exists()
-              and md_files(b) == [], f"rc={res.returncode} {res.stderr!r}")
+        if can_symlink(root):
+            os.symlink(outside / "created-through-the-link.txt", b / lock_name)
+            res = pclaim(b)
+            check("scope lock name is a dangling symlink: nothing is created at its target",
+                  refused(res, "ELOOP") and not (outside / "created-through-the-link.txt").exists()
+                  and md_files(b) == [], f"rc={res.returncode} {res.stderr!r}")
+        else:
+            print("  SKIP  scope lock name is a dangling symlink (no symlink privilege)")
         b = pbox("lock-dirlink")
-        os.symlink(outside, b / lock_name)
-        res = pclaim(b)
-        check("scope lock name is a symlink to a directory: refused the same way",
-              refused(res, "ELOOP") and md_files(b) == [], f"rc={res.returncode} {res.stderr!r}")
+        if can_symlink(root):
+            os.symlink(outside, b / lock_name)
+            res = pclaim(b)
+            check("scope lock name is a symlink to a directory: refused the same way",
+                  refused(res, "ELOOP") and md_files(b) == [], f"rc={res.returncode} {res.stderr!r}")
+        else:
+            print("  SKIP  scope lock name is a symlink to a directory (no symlink privilege)")
         b = pbox("lock-hardlink")
         os.link(victim, b / lock_name)
         res = pclaim(b)
@@ -1284,6 +1312,9 @@ def main() -> int:
                   "hung" if hung else f"rc={res.returncode} {res.stderr!r}")
         for kind in ("symlink", "dangling", "directory", *(("fifo",) if hasattr(os, "mkfifo") else ())):
             b = pbox(f"marker-{kind}")
+            if kind in ("symlink", "dangling") and not can_symlink(root):
+                print(f"  SKIP  key marker name is a {kind} (no symlink privilege)")
+                continue
             if kind == "symlink":
                 os.symlink(victim, b / mark_name)
             elif kind == "dangling":
@@ -1438,7 +1469,10 @@ def main() -> int:
         hand(hbox, ULID_A, name="evil.md",
              head=(f"id: {ULID_A}\ntype: NOTICE\nfrom: eve\nto: me\n"
                    "date: 2099-01-01T00:00:00Z\nsubject: \x1b[31mINJECTED\n"))
-        os.symlink(root / "outside" / "x.md", hbox / "link.md")
+        if can_symlink(root):
+            os.symlink(root / "outside" / "x.md", hbox / "link.md")
+        else:
+            print("  SKIP  a symlink planted beside the hook's mailbox (no symlink privilege)")
         hook = subprocess.run(
             [sys.executable, "-I", str(HERE / "hooks" / "agent_mail_check.py")],
             capture_output=True, text=True, timeout=120,
