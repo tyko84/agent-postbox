@@ -101,9 +101,10 @@ Code changes:
 
 ## Reviews, labels and good first issues
 
-* **Windows.** CI runs the test scripts on `windows-latest` (Python 3.12). Locally, a script that cannot
-  run on Windows skips itself with a `SKIP` line (`test_publication.py` imports `grp`, so it is skipped), the
-  README examples need `bash` (Git Bash), and a few tests create symlinks, which needs the symlink privilege.
+* **Windows.** CI runs the test scripts on `windows-latest` (Python 3.12). A check that cannot
+  run on Windows skips itself with a `SKIP` line. The Windows job does not run `test_publication.py` (it runs once per push
+  in the Linux and macOS cells and imports `grp`), the README examples need `bash` (Git Bash), and some tests plant
+  symlinks, which needs the symlink privilege.
   Contributors on Windows can still send documentation fixes: say in the pull request which checks you
   could not run and CI will run them (a first contribution needs a maintainer to approve the CI run).
 * **What to expect.** This is a one-maintainer project with no response-time promise. Small,

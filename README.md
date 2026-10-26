@@ -742,7 +742,7 @@ apart on purpose, and [docs/windows.md](docs/windows.md) has the detail.
 |---|---|
 | Core CLI (`send`, `inbox`, `list`, `status`, `doctor`, `install.py`) | Verified by hand on native Windows 11, Python 3.12 and 3.13, in Git Bash, PowerShell 5.1 and cmd.exe |
 | Hook shell | Git Bash is the only tested shell. The committed hook command does not run in PowerShell 5.1 or cmd.exe as written, and a failed hook looks like an empty inbox: poll with `inbox` there |
-| Hosted CI | The required `selftest-windows` check runs the test scripts on `windows-latest` with Python 3.12 only. Some scripts and checks skip themselves on Windows and print a `SKIP` line (for example `test_publication.py`, identity binding, FIFO and signal cases) |
+| Hosted CI | The required `selftest-windows` check runs the test scripts on `windows-latest` with Python 3.12 only. Checks that cannot run on Windows skip themselves and print a `SKIP` line (identity binding, FIFO, permission-bit and signal cases, `test_experiment_v4.py`), and the scripts that run once per push in the Linux and macOS cells (`test_publication.py`) are not part of the Windows job |
 | Native workstation tests | A full run from an unprivileged Windows account passed 20 of 22 scripts. The other two failed while creating symlinks, which that account was not privileged to do. That does not show that normal use needs the privilege |
 | Not verified | Other Windows Python versions, WSL, `pip` installation and the packaging build on Windows, the Codex and Cursor adapters on Windows, OneDrive and network-share mailboxes |
 

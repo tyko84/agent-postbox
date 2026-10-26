@@ -139,8 +139,8 @@ installed.
 ## Supported platforms
 
 Linux and macOS are the supported platforms and are tested in CI. Windows is Experimental ([windows.md](windows.md)):
-its CI job skips `test_publication.py` (the fixtures are POSIX archives), so the publication scanner's behaviour on
-Windows is not covered by tests. The tool itself is written for POSIX file semantics (`os.link` for atomic publish,
+its CI job does not run `test_publication.py` (it runs once per push in the Linux and macOS cells, and its fixtures
+are POSIX archives), so the publication scanner's behaviour on Windows is not covered by tests. The tool itself is written for POSIX file semantics (`os.link` for atomic publish,
 `O_EXCL` marker files, `flock(2)` via `fcntl` for scope locks, a directory `fsync`
 that is best effort, and `O_NOFOLLOW` where available); on Windows it uses a portability layer for the locks and
 links (see [protocol-compatibility.md](protocol-compatibility.md)).
