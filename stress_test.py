@@ -731,7 +731,9 @@ def fi_interleave(variant: str, seed: int, root: Path) -> dict[str, Any]:
 
 # ---- hostile files at every read, and participants edge cases ----
 FI_GOOD = "01M5347PX0CAPJFEJ94SQHJ8CP"
-FI_HDR = ("---\nid: {id}\ntype: NOTICE\nfrom: alice\nto: bob\ndate: 2026-10-16T10:00:00Z\n"
+# Fresh at run time: the hook delivers only mail younger than FRESH_DAYS, so a fixed date aged out.
+FI_DATE = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 3600))
+FI_HDR = ("---\nid: {id}\ntype: NOTICE\nfrom: alice\nto: bob\ndate: " + FI_DATE + "\n"
           "subject: {subj}\n---\n\nBODYMARK\n")
 
 
@@ -801,11 +803,11 @@ def fi_hostile_cases() -> dict[str, Any]:
         "directory named *.md": lambda b: fi_dir(b / f"{fi_hid(27)}-x.md"),
         "two files with one id": lambda b: (fi_w(b / f"{fi_hid(29)}-a.md", h.format(id=fi_hid(29), subj="a")), fi_w(b / f"{fi_hid(29)}-b.md", h.format(id=fi_hid(29), subj="b"))),
         "id differs from the file name": lambda b: fi_w(b / f"{fi_hid(30)}-x.md", h.format(id=fi_hid(31), subj="mismatch")),
-        "date in year 9999": lambda b: fi_w(b / f"{fi_hid(33)}-x.md", h.format(id=fi_hid(33), subj="future").replace("2026-10-16T10:00:00Z", "9999-12-31T23:59:59Z")),
-        "date in year 1": lambda b: fi_w(b / f"{fi_hid(34)}-x.md", h.format(id=fi_hid(34), subj="ancient").replace("2026-10-16T10:00:00Z", "0001-01-01T00:00:00Z")),
-        "unparseable date": lambda b: fi_w(b / f"{fi_hid(35)}-x.md", h.format(id=fi_hid(35), subj="baddate").replace("2026-10-16T10:00:00Z", "yesterday-ish")),
-        "zone offset +99:99": lambda b: fi_w(b / f"{fi_hid(36)}-x.md", h.format(id=fi_hid(36), subj="off").replace("2026-10-16T10:00:00Z", "2026-10-16T10:00:00+99:99")),
-        "no date": lambda b: fi_w(b / f"{fi_hid(37)}-x.md", h.format(id=fi_hid(37), subj="nodate").replace("date: 2026-10-16T10:00:00Z\n", "")),
+        "date in year 9999": lambda b: fi_w(b / f"{fi_hid(33)}-x.md", h.format(id=fi_hid(33), subj="future").replace(FI_DATE, "9999-12-31T23:59:59Z")),
+        "date in year 1": lambda b: fi_w(b / f"{fi_hid(34)}-x.md", h.format(id=fi_hid(34), subj="ancient").replace(FI_DATE, "0001-01-01T00:00:00Z")),
+        "unparseable date": lambda b: fi_w(b / f"{fi_hid(35)}-x.md", h.format(id=fi_hid(35), subj="baddate").replace(FI_DATE, "yesterday-ish")),
+        "zone offset +99:99": lambda b: fi_w(b / f"{fi_hid(36)}-x.md", h.format(id=fi_hid(36), subj="off").replace(FI_DATE, FI_DATE[:-1] + "+99:99")),
+        "no date": lambda b: fi_w(b / f"{fi_hid(37)}-x.md", h.format(id=fi_hid(37), subj="nodate").replace("date: " + FI_DATE + "\n", "")),
         "CLAIM with garbage expires": lambda b: fi_w(b / f"{fi_hid(38)}-x.md", h.format(id=fi_hid(38), subj="cl").replace("type: NOTICE", "type: CLAIM").replace("---\n\nBODY", "scope: s1\nexpires: nonsense\n---\n\nBODY")),
         "CLAIM expiring in year 9999": lambda b: fi_w(b / f"{fi_hid(39)}-x.md", h.format(id=fi_hid(39), subj="cl9").replace("type: NOTICE", "type: CLAIM").replace("---\n\nBODY", "scope: s2\nexpires: 9999-12-31T23:59:59Z\n---\n\nBODY")),
         "supersedes cycle and self": lambda b: [fi_w(b / f"{fi_hid(n)}-x.md", h.format(id=fi_hid(n), subj=f"s{n}").replace(f"subject: s{n}", f"subject: s{n}\nsupersedes: {fi_hid(m)}")) for n, m in ((41, 42), (42, 41), (43, 43))],
