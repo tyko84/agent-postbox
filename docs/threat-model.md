@@ -176,7 +176,7 @@ the unfixed code.
 
 ## Not verified
 
-* Windows and network filesystems (unsupported).
+* Windows (Experimental: see [windows.md](windows.md); not assessed here beyond that page) and network filesystems (unsupported).
 * Concurrency attacks on the idempotency-marker takeover beyond what
   `test_adversarial.py` and `test_hardening.py` already drive.
 * Behaviour on Python versions other than 3.13 for the timing figures.

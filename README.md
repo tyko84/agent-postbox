@@ -51,7 +51,8 @@ under a restrictive permission mode), and a third stopped at its ceiling and was
 | You need agents started, planned, assigned or supervised | Not this | It is not an orchestrator |
 | You need something that stops an agent that ignores a claim, or that authenticates who sent a message | Not this | Claims are advisory; `from:` is self-declared (Security and limitations; PROTOCOL.md section 40) |
 | You need proof that a requested action was done | Not this | `--result` is the sender's claim, never proof (PROTOCOL.md section 39) |
-| Several machines, a network filesystem, or Windows | Not supported | Local filesystems and POSIX only (Security and limitations) |
+| Several machines or a network filesystem | Not supported | Local filesystems only (Security and limitations) |
+| Windows | **Experimental**: Python 3.12 in hosted CI, Git Bash for the hook | [docs/windows.md](docs/windows.md): what was verified, what was not. Linux and macOS are the supported platforms |
 
 ## Words used below
 
@@ -71,8 +72,9 @@ under a restrictive permission mode), and a third stopped at its ceiling and was
 ## Quickstart
 
 Nothing here needs a model, an account or a network connection after the
-clone. POSIX only (Linux, macOS), Python 3.10-3.14, git. Windows is unsupported
-and untested (WSL has not been tried). Use `python3`: stock macOS has no
+clone. Linux and macOS (POSIX) are the supported platforms: Python 3.10-3.14, git. Windows is
+**Experimental**, see [Windows](#windows); WSL has not been tried. The examples below are POSIX
+shell (on Windows, run them in Git Bash). Use `python3`: stock macOS has no
 `python`. First run `python3 --version`: it must say 3.10 or newer. Stock macOS
 `python3` can be 3.9 (3.9.6 observed), which the tool refuses; install a newer
 Python and use it (for example `python3.12`) in place of `python3` below.
@@ -474,15 +476,17 @@ experiments below did **not** show.
 | Cursor | No: the host cannot add context per prompt | Documented only, never run; polling (`list --live`) is the only option |
 | Anything else | No | Polling only; the protocol is just files |
 
-POSIX only (Linux, macOS). Not tested on Windows or WSL.
+Linux and macOS are the supported platforms. On Windows the Claude Code hook was observed only
+through Git Bash, and the Codex and Cursor adapters were never run there ([Windows](#windows)). WSL
+has not been tried.
 
 Detail and the checklist for confirming a host: [docs/hosts.md](docs/hosts.md).
 
 ## Install
 
-agent-postbox is one stdlib-only file. **POSIX only** (Linux, macOS): the
-atomic-send and lock code relies on POSIX file semantics, CI runs on Linux and
-macOS, and Windows is untested and unsupported (WSL has not been tried).
+agent-postbox is one stdlib-only file. **Linux and macOS** are the supported platforms: the
+atomic-send and lock code is written for POSIX file semantics and CI runs there on
+Python 3.10-3.14. **Windows is Experimental** ([Windows](#windows)); WSL has not been tried.
 Python 3.10-3.14. `git` is needed to clone it and for `--adapter codex`, whose hook runs
 `git rev-parse` at every prompt; the CLI, the Claude Code hook and `install.py` do not run git
 (checked with git absent from `PATH`).
@@ -682,7 +686,8 @@ executed or passed to a shell; the adapter only reads.
   while an agent is in the middle of a long autonomous turn is not seen until the next one;
   nothing interrupts a running turn. A recipient that must notice mail mid-run has to run
   `inbox` itself ([docs/reliability-evidence.md](docs/reliability-evidence.md)).
-* **POSIX only.** Windows is not supported or tested (WSL: not tried).
+* **Platforms.** Linux and macOS are the supported platforms. Windows is Experimental
+  ([Windows](#windows)); WSL, network filesystems and synced folders are untested.
 
 ## Evidence so far
 
@@ -728,10 +733,27 @@ project and the one form to avoid (a `#` line inside a quoted `--body`; use `--b
 with a heredoc). Symptoms and fixes: [docs/troubleshooting.md](docs/troubleshooting.md).
 Do not use a broad rule such as `Bash(python3 *agent_mail.py *)`.
 
+## Windows
+
+**EXPERIMENTAL: Windows.** Linux and macOS are the supported platforms. The levels below are kept
+apart on purpose, and [docs/windows.md](docs/windows.md) has the detail.
+
+| What | Windows status |
+|---|---|
+| Core CLI (`send`, `inbox`, `list`, `status`, `doctor`, `install.py`) | Verified by hand on native Windows 11, Python 3.12 and 3.13, in Git Bash, PowerShell 5.1 and cmd.exe |
+| Hook shell | Git Bash is the only tested shell. The committed hook command does not run in PowerShell 5.1 or cmd.exe as written, and a failed hook looks like an empty inbox: poll with `inbox` there |
+| Hosted CI | The required `selftest-windows` check runs the test scripts on `windows-latest` with Python 3.12 only. Some scripts and checks skip themselves on Windows and print a `SKIP` line (for example `test_publication.py`, identity binding, FIFO and signal cases) |
+| Native workstation tests | A full run from an unprivileged Windows account passed 20 of 22 scripts. The other two failed while creating symlinks, which that account was not privileged to do. That does not show that normal use needs the privilege |
+| Not verified | Other Windows Python versions, WSL, `pip` installation and the packaging build on Windows, the Codex and Cursor adapters on Windows, OneDrive and network-share mailboxes |
+
+Hosted CI does not prove every native configuration, and nothing here claims that every integration
+works on Windows.
+
 ## Status
 
 Early (v0.x), extracted from a working multi-agent setup. Python 3.10-3.14, standard library
-only, POSIX only; CI runs the test scripts on Linux and macOS. Not on PyPI
+only; CI runs the test scripts on Linux and macOS (Python 3.10-3.14) and on Windows (Python 3.12
+only, Experimental). Not on PyPI
 ([docs/pypi-publishing.md](docs/pypi-publishing.md)). The protocol is opinionated and still
 moving, so expect sections to be added. Writing an adapter or a second implementation? [docs/adapter-conformance-guide.md](docs/adapter-conformance-guide.md)
 describes the stdlib-only conformance runner (evidence of listed behaviours, not a certification). Issues and field reports are welcome (see

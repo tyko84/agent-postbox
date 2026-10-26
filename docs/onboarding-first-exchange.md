@@ -9,8 +9,9 @@ throwaway git project (macOS, Python 3.13, no model, no host, no network after
 the clone), and again on 2026-10-16 (see "Timings" at the end). The timings are
 machine time on one laptop, not the time a person takes.
 
-Requirements: Linux or macOS, Python 3.10-3.14, git. **Windows is unsupported
-and untested**; so is WSL (not tried). Use `python3`, not `python`: stock macOS
+Requirements: Linux or macOS, Python 3.10-3.14, git. **Windows is Experimental**
+(see [windows.md](windows.md): the hook works through Git Bash only, and the `echo > body.txt` line below
+writes UTF-16 in PowerShell 5.1); WSL is untested. Use `python3`, not `python`: stock macOS
 has no `python`. Run `python3 --version` first: it must say 3.10 or newer, and stock
 macOS `python3` can be 3.9 (3.9.6 observed), which the tool refuses.
 

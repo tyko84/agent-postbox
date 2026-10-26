@@ -95,7 +95,7 @@ on a repository that matters.
 
 ## Supported environments
 
-* Linux or macOS, Python 3.10 to 3.14, git. **Windows and WSL are unsupported.**
+* Linux or macOS, Python 3.10 to 3.14, git. **Windows is Experimental** (hosted CI on Python 3.12, hook through Git Bash only; see [windows.md](../windows.md)); WSL is untested.
 * Claude Code: the adapter is tested headless (2.1.300). Interactive mode has not been run.
 * Codex: experimental; the hook must be trusted once in `/hooks`.
 * Cursor, anything else: polling only (`list --live`).
@@ -121,7 +121,7 @@ on a repository that matters.
 > where do permission prompts or denials get in the way, and do the claim and expiry rules
 > behave as documented when you use them.
 >
-> It is POSIX only (Linux/macOS). The installer edits `.claude/settings.json` in the target
+> Linux and macOS are the supported platforms (Windows is Experimental). The installer edits `.claude/settings.json` in the target
 > project (backup kept, removal steps documented) and nothing global. Codex support has never
 > been run in the real host, and the Claude Code hook has only been run headless.
 >

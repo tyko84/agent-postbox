@@ -15,6 +15,15 @@ behaviour).
 
 ### Changed
 
+- Windows is now **Experimental**, no longer "unsupported" (README, `docs/windows.md`, SECURITY.md, CONTRIBUTING.md,
+  `docs/troubleshooting.md`, `docs/packaging.md`). Verified: the required `selftest-windows` CI check (GitHub-hosted
+  `windows-latest`, Python 3.12 only), hand runs on native Windows 11, and Git Bash as the only tested hook shell.
+  Not verified: other Windows Python versions, WSL, `pip` installation and the packaging build, the Codex and
+  Cursor adapters, PowerShell 5.1 or cmd.exe for the committed hook command (it does not run there as written).
+  A full test run from an unprivileged native account passed 20 of 22 scripts; the two failures were symlink
+  creation in tests, which does not show that normal use needs the privilege. Linux and macOS remain the supported
+  platforms, and the `Operating System :: POSIX` classifier is unchanged: no Windows classifier is added because
+  classifiers have no experimental level and would read as support.
 - A NOTICE, DISPUTE, ASK or CLAIM that cites an ASK from someone who is neither its recipient nor
   its sender is now reported in `status` as `CITATION_FROM_THIRD_PARTY`, as a bare ANSWER already was
   (PROTOCOL.md section 45). It still closes the ASK, nothing is stored or refused, `schema` stays 1
@@ -156,8 +165,8 @@ behaviour).
   the file where POSIX uses `flock(2)`; lock and marker files are opened with `FILE_SHARE_DELETE` so a
   held file can be renamed over or removed as on POSIX; a symlink or junction at a lock or marker name
   is refused with `ELOOP` (`FILE_FLAG_OPEN_REPARSE_POINT`), a directory with `EISDIR`; a closed stdout
-  pipe is recognised as `EINVAL`/`EPIPE`. POSIX behaviour is unchanged. **Windows is still unsupported
-  in the README**: CI does not run there, identity binding (no uid), `doctor`'s writable probe on an
+  pipe is recognised as `EINVAL`/`EPIPE`. POSIX behaviour is unchanged. **Windows was still unsupported
+  in the README at that point** (revised by the Windows entry under Changed above): CI did not run there, identity binding (no uid), `doctor`'s writable probe on an
   ACL-denied mailbox, FIFOs and signal delivery do not exist or differ, and a real Claude Code hook has
   not been verified.
 - `doctor` prints `send_permission:` for projects with a `.claude/` directory (PROTOCOL.md

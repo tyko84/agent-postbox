@@ -37,7 +37,7 @@ gets delivered; none tested exclusive claims, expiry or the history, which I bel
 stronger part but have not measured with real agents. Codex support has never run
 in the real host. I'm looking for people who've watched agents miss each other's notes to try
 it and tell me whether it installs, whether the mail reaches the agent, and where permissions
-get in the way. POSIX only. The installer edits
+get in the way. Linux and macOS are supported; Windows is Experimental. The installer edits
 `.claude/settings.json` (backup kept) and there is a tested removal procedure, so try it in a
 throwaway project first.
 

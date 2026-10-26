@@ -324,8 +324,8 @@ archive instead, and `pyproject.toml` is unchanged.
   repository, visible in the diff, not drift.
 * **Not covered:** the reproducibility of the tools themselves (pip,
   setuptools and `build` are downloaded at build time; setuptools is pinned by
-  version, not by hash), a package index other than PyPI, and Windows (POSIX
-  only).
+  version, not by hash), a package index other than PyPI, and Windows (the
+  build and reproducibility checks run on Linux and macOS only).
 
 A hash is only meaningful with what it was built from: publish `SHA256SUMS`
 together with the `BUILDINFO` block.
@@ -346,4 +346,5 @@ it skips with a message.
 Releasing is a maintainer decision: a pushed version tag makes
 `.github/workflows/release.yml` build and attach the artifacts to a draft GitHub
 release, which a maintainer publishes; see [release-process.md](release-process.md).
-POSIX only: the packaging is not tested on Windows.
+The packaging checks run on Linux and macOS. They are not run on Windows: the Windows CI job runs the test
+scripts only, so building, installing or `pip install`-ing the package on Windows is not verified.

@@ -78,8 +78,10 @@ Code changes:
   and a selftest that pins it. Do not edit old sections' meaning silently.
 * Never file mail into this checkout. It is the spec, not a mailbox
   (see `SECURITY.md`).
-* POSIX only. Do not add Windows claims or code paths without a CI job that
-  proves them.
+* Linux and macOS are the supported platforms. Windows is Experimental, and its claims are limited to
+  what [docs/windows.md](docs/windows.md) records and the required `selftest-windows` job runs (Python 3.12).
+  Do not widen them (another Windows Python, a shell, a host adapter, WSL) without a CI job or a recorded
+  run that proves it, and keep a POSIX-only limitation where it still applies.
 * Docs are tested: every `bash runnable` block in `README.md` is executed by
   `test_readme_examples.py`, and every "section N" / section-sign reference
   must resolve to a real `PROTOCOL.md` heading. Change an example or renumber a
@@ -99,10 +101,11 @@ Code changes:
 
 ## Reviews, labels and good first issues
 
-* **Windows.** The tests need a POSIX system (`test_publication.py` imports `grp`, the
-  README examples need `bash`). Contributors on Windows can still send documentation fixes:
-  say in the pull request which checks you could not run and CI will run them (a first
-  contribution needs a maintainer to approve the CI run).
+* **Windows.** CI runs the test scripts on `windows-latest` (Python 3.12). Locally, a script that cannot
+  run on Windows skips itself with a `SKIP` line (`test_publication.py` imports `grp`, so it is skipped), the
+  README examples need `bash` (Git Bash), and a few tests create symlinks, which needs the symlink privilege.
+  Contributors on Windows can still send documentation fixes: say in the pull request which checks you
+  could not run and CI will run them (a first contribution needs a maintainer to approve the CI run).
 * **What to expect.** This is a one-maintainer project with no response-time promise. Small,
   single-purpose pull requests are reviewed fastest. The review
   checks the list above, that a behaviour change is a numbered `PROTOCOL.md` section with a
@@ -134,8 +137,8 @@ automatic closing of pull requests; branch protection is what
 * **Integration owner.** One session coordinates acceptance: it keeps the queue and the merge
   order, and merges only after explicit owner approval.
 * **Platform owners.** Linux/Ubuntu: reliability and recovery. Windows: Windows
-  compatibility and the installer (Windows stays untested and unclaimed until a CI job proves
-  it, see above). macOS: integration. Independent reviewers (for example Codex and Grok)
+  compatibility and the installer (Windows is Experimental and claims stay within what CI and
+  docs/windows.md record, see above). macOS: integration. Independent reviewers (for example Codex and Grok)
   provide review and verification evidence.
 * **Owner.** Approves the items in the principle above. `.github/CODEOWNERS` names the owner
   for review routing. That review is advisory: branch protection does not require code-owner

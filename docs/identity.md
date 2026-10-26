@@ -46,7 +46,8 @@ cell for the rows you want checked:
   from: the first of `<mailbox>/PARTICIPANTS.md`, `<mailbox>/../PARTICIPANTS.md`,
   `./PARTICIPANTS.md`, `<tool dir>/PARTICIPANTS.md` that exists.
 * `pwd` is POSIX-only. Where it is missing, a name is **unresolvable** (see
-  below) and a numeric uid still works. Windows is unsupported anyway.
+  below) and a numeric uid still works. On Windows (Experimental) the binding cannot be used at all: there is
+  no uid ([windows.md](windows.md)).
 * A cell that is neither (`4294967295`, `-1`, `0x1F`, a path, 300 digits, a
   control character) is unresolvable. It is echoed quoted and escaped, in
   one line, never raw.
