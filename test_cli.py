@@ -71,6 +71,19 @@ def check(name: str, ok: bool, detail: str = "") -> None:
         FAILS.append(f"{name}: {detail[:400]}")
 
 
+def can_symlink(directory: Path) -> bool:
+    """False only where Windows withholds the symlink privilege (WinError 1314); any other error is real."""
+    probe = directory / ".symlink-probe"
+    try:
+        probe.symlink_to(directory, target_is_directory=True)
+    except OSError as e:
+        if getattr(e, "winerror", None) == 1314:
+            return False
+        raise
+    probe.unlink()
+    return True
+
+
 def known(name: str, ok: bool, detail: str = "") -> None:
     """A defect outside this file's reach: reported, never silent, never fatal."""
     print(f"  {'PASS' if ok else 'KNOWN'} {name}")
@@ -1656,15 +1669,18 @@ def test_fuzz(root: Path) -> None:
     check("send with a very long AGENT_MAIL_DIR: NO MAILBOX, not a traceback",
           r.returncode == 2 and "Traceback" not in r.stderr and r.stdout == ""
           and r.stderr.startswith("NO MAILBOX at ") and r.stderr.count("\n") == 1, r.stderr[-120:])
-    loop = root / "mailbox-symlink-loop"
-    loop.symlink_to(loop)
-    for cmdline in (send, ("list",), ("status",), ("doctor",)):
-        r = run(None, *cmdline, env={"AGENT_MAIL_DIR": str(loop)}, cwd=root)
-        check(f"{cmdline[0]} with AGENT_MAIL_DIR a symlink loop: NO MAILBOX, exit 2, no traceback "
-              "(`send` used to end in RuntimeError, exit 1)",
-              r.returncode == 2 and "Traceback" not in r.stderr
-              and (f"NO MAILBOX at {loop}" in r.stderr
-                   or (cmdline[0] == "doctor" and "store: MISSING" in r.stdout)), r.stderr[-160:])
+    if can_symlink(root):
+        loop = root / "mailbox-symlink-loop"
+        loop.symlink_to(loop)
+        for cmdline in (send, ("list",), ("status",), ("doctor",)):
+            r = run(None, *cmdline, env={"AGENT_MAIL_DIR": str(loop)}, cwd=root)
+            check(f"{cmdline[0]} with AGENT_MAIL_DIR a symlink loop: NO MAILBOX, exit 2, no traceback "
+                  "(`send` used to end in RuntimeError, exit 1)",
+                  r.returncode == 2 and "Traceback" not in r.stderr
+                  and (f"NO MAILBOX at {loop}" in r.stderr
+                       or (cmdline[0] == "doctor" and "store: MISSING" in r.stdout)), r.stderr[-160:])
+    else:
+        print("  SKIP  AGENT_MAIL_DIR a symlink loop (no symlink privilege)")
     for cmdline in (send, ("list",), ("status",), ("doctor",)):
         r = run(None, *cmdline, env={"AGENT_MAIL_DIR": "~no-such-user-zz/mail"}, cwd=root)
         check(f"{cmdline[0]} with AGENT_MAIL_DIR=~<a user nobody has>: exit 2 and no traceback "
@@ -2039,20 +2055,23 @@ def test_keyed_retry_recovers_from_the_header(root: Path) -> None:
     check("a file whose `id:` disagrees with its name is no evidence: the retry publishes (as before)",
           r.returncode == 0 and r.stdout.startswith("wrote"), repr((r.returncode, r.stdout, r.stderr)))
 
-    b = root / "hr-link"
-    b.mkdir()
-    outside = root / "hr-outside"
-    outside.mkdir()
-    first = run(b, *argv)
-    mid = first.stdout.split("id:")[-1].split()[0]
-    src = next(b.glob("*.md"))
-    (outside / "x.md").write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
-    src.unlink()
-    next(b.glob(".idem.*")).unlink()
-    (b / f"{mid}-link.md").symlink_to(outside / "x.md")
-    r = run(b, *argv)
-    check("a symlink out of the mailbox is never followed as the original: the retry publishes",
-          r.returncode == 0 and r.stdout.startswith("wrote"), repr((r.returncode, r.stdout, r.stderr)))
+    if can_symlink(root):
+        b = root / "hr-link"
+        b.mkdir()
+        outside = root / "hr-outside"
+        outside.mkdir()
+        first = run(b, *argv)
+        mid = first.stdout.split("id:")[-1].split()[0]
+        src = next(b.glob("*.md"))
+        (outside / "x.md").write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+        src.unlink()
+        next(b.glob(".idem.*")).unlink()
+        (b / f"{mid}-link.md").symlink_to(outside / "x.md")
+        r = run(b, *argv)
+        check("a symlink out of the mailbox is never followed as the original: the retry publishes",
+              r.returncode == 0 and r.stdout.startswith("wrote"), repr((r.returncode, r.stdout, r.stderr)))
+    else:
+        print("  SKIP  a symlink out of the mailbox is never followed as the original (no symlink privilege)")
 
     if hasattr(os, "mkfifo"):
         b, mid = fresh("fifo")
