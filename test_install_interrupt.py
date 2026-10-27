@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 """Failure injection for install.py: what does an install killed part-way leave, and does a re-run recover?
 
-Investigation test, not yet wired into ci.yml or scripts/ci_run.py. It exercises the EXISTING installer;
-nothing here changes production code. POSIX only (it kills the installer with SIGKILL at a seam).
+Regression test for atomic installs (install.copy_payload, write_atomic for PARTICIPANTS.md). POSIX only
+(it kills the installer with SIGKILL at a seam; it self-skips on Windows). Run it on purpose:
+
+    python3 test_install_interrupt.py        # about 16 s; the upgrade scenarios need the v0.5.0 tag
+
+Baseline on main e9f13a77 before the fix: 312 PASS / 2 FAIL (a half-written PARTICIPANTS.md survived every
+re-run). Against the unfixed installer this version also fails the "never left torn" checks.
 
 How: a small driver imports install.py, replaces one function at a seam (a file copy, the PARTICIPANTS
 write, the settings backup, the settings rename) with a version that SIGKILLs its own process at the Nth
@@ -27,6 +32,10 @@ import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+# `git archive` below must act on this checkout, not on a repository a caller exported (rebase --exec, hooks).
+GIT_ENV = {k: v for k, v in os.environ.items()
+           if k not in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
+                        "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_PREFIX", "GIT_NAMESPACE", "GIT_CEILING_DIRECTORIES")}
 FAILS: list[str] = []
 
 
@@ -47,23 +56,42 @@ sys.argv = [install_py] + sys.argv[2:]
 def die():
     os.kill(os.getpid(), signal.SIGKILL)
 calls = {"copy": 0}
-real_copy2 = inst.shutil.copy2
-def copy2(src, dst, *a, **k):
+ATOMIC = hasattr(inst, "copy_payload")
+def tmp_half(dst, data):
+    """What a kill during the temp-file write of an atomic copy leaves: half the bytes in the temp
+    file (the name write_atomic uses), the target untouched."""
+    t = Path(dst).with_name(f".{Path(dst).name}.{os.getpid()}.tmp")
+    t.write_bytes(data[: len(data) // 2])
+def copy(real, src, dst, *a, **k):
     i = calls["copy"]; calls["copy"] += 1
     if seam == "copy-before" and i == n: die()
     if seam == "copy-mid" and i == n:
         data = Path(src).read_bytes()
-        Path(dst).write_bytes(data[: len(data) // 2]); die()
-    r = real_copy2(src, dst, *a, **k)
+        if ATOMIC: tmp_half(dst, data)
+        else: Path(dst).write_bytes(data[: len(data) // 2])
+        die()
+    r = real(src, dst, *a, **k)
     if seam == "copy-after" and i == n: die()
     return r
-inst.shutil.copy2 = copy2
+if ATOMIC:
+    real_cp = inst.copy_payload
+    inst.copy_payload = lambda src, dst: copy(real_cp, src, dst)
+else:
+    real_copy2 = inst.shutil.copy2
+    inst.shutil.copy2 = lambda src, dst, *a, **k: copy(real_copy2, src, dst, *a, **k)
+real_wa = getattr(inst, "write_atomic", None)
 real_wt = Path.write_text
+def part_seam(path, data):
+    if seam == "participants-before": die()
+    if seam == "participants-mid":
+        tmp_half(path, data) if ATOMIC else real_wt(Path(path), data[: len(data) // 2], encoding="utf-8")
+        die()
+def write_atomic(path, data, *a, **k):
+    if Path(path).name == "PARTICIPANTS.md": part_seam(path, data)
+    return real_wa(path, data, *a, **k)
+if ATOMIC: inst.write_atomic = write_atomic
 def write_text(self, data, *a, **k):
-    if self.name == "PARTICIPANTS.md":
-        if seam == "participants-before": die()
-        if seam == "participants-mid":
-            real_wt(self, data[: len(data) // 2], *a, **k); die()
+    if self.name == "PARTICIPANTS.md" and not ATOMIC: part_seam(self, data)
     return real_wt(self, data, *a, **k)
 Path.write_text = write_text
 real_back_up = inst.back_up
@@ -117,7 +145,7 @@ def old_release(dst: Path) -> Path | None:
     """A v0.5.0 checkout (git archive of the tag), or None when the tag is not available."""
     dst.mkdir()
     try:
-        tar = subprocess.run(["git", "archive", "v0.5.0"], cwd=HERE, capture_output=True, timeout=60)
+        tar = subprocess.run(["git", "archive", "v0.5.0"], cwd=HERE, capture_output=True, timeout=60, env=GIT_ENV)
         if tar.returncode != 0:
             return None
         subprocess.run(["tar", "-x", "-C", str(dst)], input=tar.stdout, check=True, timeout=60)
@@ -242,7 +270,39 @@ def one(seam: str, n: int, desc: str, scenario: str, root: Path, old_install: Pa
     print(f"    state: files={state} mixed={mixed} settings={sstate} participants={pstate} "
           f"litter={litter(project)} hook-in-window={hook_delivers(project, root)}")
     check(f"{label}: settings.json is never left corrupt", sstate != "CORRUPT")
+    check(f"{label}: no payload file is ever left torn (each is the old file, the complete new one, or absent)",
+          "TORN" not in state.values(), str(state))
+    check(f"{label}: PARTICIPANTS.md is never left torn", pstate != "TORN", pstate)
     recovery_checks(label, project, new_files, original_settings, root)
+
+
+def plain_install_semantics(root: Path) -> None:
+    """Uninterrupted installs: atomic copy keeps what `copy2` gave (modes), touches nothing else, leaves no temp file."""
+    print("\nuninterrupted install: modes, unrelated files, no temp litter, idempotence")
+    project = root / "plain"
+    (project / ".git").mkdir(parents=True)
+    dest = project / "tools" / "agent-postbox"
+    (dest / "hooks").mkdir(parents=True)
+    mine = dest / "MY-NOTES.md"
+    mine.write_text("mine\n", encoding="utf-8")
+    (dest / "agent_mail.py").write_text("old\n", encoding="utf-8")
+    (dest / "agent_mail.py").chmod(0o600)      # an older install with unusual bits
+    r = subprocess.run([sys.executable, "-I", str(HERE / "install.py"), str(project), "--adapter", "claude-code"],
+                       capture_output=True, text=True, timeout=120)
+    check("plain: the install exits 0", r.returncode == 0, r.stdout + r.stderr)
+    modes = {f: (dest / f).stat().st_mode & 0o777 for f in PAYLOAD}
+    want = {f: (HERE / f).stat().st_mode & 0o777 for f in PAYLOAD}
+    check("plain: every payload file has the source's permission bits (as copy2 gave, even over 0600)",
+          modes == want, f"{modes} vs {want}")
+    check("plain: an unrelated file in the install directory is untouched",
+          mine.read_text(encoding="utf-8") == "mine\n")
+    check("plain: no temp file is left behind", not [p for p in project.rglob("*") if p.name.endswith(".tmp")])
+    check("plain: a payload file is a copy of the source",
+          all(sha(dest / f) == sha(HERE / f) for f in PAYLOAD))
+    before = digest_tree(project)
+    r2 = subprocess.run([sys.executable, "-I", str(HERE / "install.py"), str(project), "--adapter", "claude-code"],
+                        capture_output=True, text=True, timeout=120)
+    check("plain: a second install exits 0 and changes nothing", r2.returncode == 0 and before == digest_tree(project))
 
 
 def main() -> int:
@@ -252,6 +312,7 @@ def main() -> int:
     root = Path(tempfile.mkdtemp(prefix="pb-interrupt-"))
     try:
         new_files = {f: sha(HERE / f) for f in PAYLOAD}
+        plain_install_semantics(root)
         old_install = old_release(root / "v050")
         for seam, n, desc in SEAMS:
             print(f"\nfresh install killed {desc}")

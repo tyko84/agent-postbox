@@ -469,6 +469,16 @@ def write_atomic(path: Path, data: bytes, mode: int | None = None) -> None:
         pass
 
 
+def copy_payload(src: Path, dst: Path) -> None:
+    """`shutil.copy2(src, dst)`, but atomic: a kill at any instant leaves `dst` as the old file or
+    the complete new one, never a prefix (a half-copied agent_mail.py or hook would silently stop
+    pickup until the next install). `write_atomic` keeps an existing file's permission bits and
+    writes through a symlinked `dst`, as `copy2` did; `copystat` then gives `dst` the source's
+    mode and times, as `copy2` did."""
+    write_atomic(dst, src.read_bytes())
+    shutil.copystat(src, dst)
+
+
 def back_up(path: Path) -> str:
     """Copy `path` aside and return the backup's name (in the same directory). The
     first backup is `<name>.bak`; it is never overwritten, because it holds the file
@@ -625,8 +635,8 @@ def main() -> int:
 
     (dest / "hooks").mkdir(parents=True, exist_ok=True)
     for name in PAYLOAD:
-        shutil.copy2(HERE / name, dest / name)
-    shutil.copy2(HERE / "hooks" / HOOK_MARKER, dest / "hooks" / HOOK_MARKER)
+        copy_payload(HERE / name, dest / name)
+    copy_payload(HERE / "hooks" / HOOK_MARKER, dest / "hooks" / HOOK_MARKER)
     print(f"  copied tool + spec into {dest_rel}/")
 
     mailbox = project / args.mailbox
@@ -635,9 +645,9 @@ def main() -> int:
     if participants.exists():
         print(f"  kept existing {args.mailbox}/PARTICIPANTS.md")
     else:
-        participants.write_text(
-            (HERE / "PARTICIPANTS.template.md").read_text(encoding="utf-8")
-            .replace("{{DEST}}", dest_rel), encoding="utf-8")
+        # atomic: a half-written file would be kept as "existing" by every later run
+        write_atomic(participants, (HERE / "PARTICIPANTS.template.md").read_text(encoding="utf-8")
+                     .replace("{{DEST}}", dest_rel).replace("\n", os.linesep).encode("utf-8"))
         print(f"  created {args.mailbox}/PARTICIPANTS.md")
 
     if args.adapter:
