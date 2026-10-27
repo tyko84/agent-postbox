@@ -57,12 +57,12 @@ Code changes:
   `python test_readme_examples.py`, `python test_publication.py`,
   `python test_packaging.py`, `python test_cli.py`, `python test_scenario.py`,
   `python test_team_sim.py`, `python test_adapters.py`, `python test_conformance.py`, `python test_examples.py`, `python test_e2e_script.py`, `python test_fake_claude.py`, `python test_live_demo.py`,
-  `python test_micro_experiment.py`, `python test_experiment_v2.py`, `python test_experiment_v3.py`
+  `python test_micro_experiment.py`, `python test_hook_probe.py`, `python test_experiment_v2.py`, `python test_experiment_v3.py`
   and `python test_experiment_v4.py`
   must pass
   (`test_packaging.py` skips, loudly, if the `build` package is unavailable), and so must
   `ruff check .` and
-  `mypy agent_mail.py install.py hooks/agent_mail_check.py check_handoff.py check_publication.py test_publication.py scripts/repro_build.py scripts/verify_release.py scripts/scenario.py scripts/team_sim.py scripts/ci_run.py stress_test.py test_field.py test_handoff.py test_packaging.py test_readme_examples.py selftest.py test_cli.py test_hardening.py test_adversarial.py test_scenario.py test_team_sim.py test_examples.py examples/two-agents/run.py test_adapters.py scripts/e2e_claude.py test_e2e_script.py scripts/experiment_micro.py examples/two-agents/live_demo.py test_live_demo.py test_micro_experiment.py scripts/experiment_v2.py scripts/analyze_v2.py test_experiment_v2.py scripts/experiment_v3.py scripts/analyze_v3.py test_experiment_v3.py scripts/experiment_v4.py scripts/analyze_v4.py test_experiment_v4.py scripts/perf_audit.py scripts/context_bench.py conformance/run_conformance.py test_conformance.py test_fake_claude.py`
+  `mypy agent_mail.py install.py hooks/agent_mail_check.py check_handoff.py check_publication.py test_publication.py scripts/repro_build.py scripts/verify_release.py scripts/scenario.py scripts/team_sim.py scripts/ci_run.py stress_test.py test_field.py test_handoff.py test_packaging.py test_readme_examples.py selftest.py test_cli.py test_hardening.py test_adversarial.py test_scenario.py test_team_sim.py test_examples.py examples/two-agents/run.py test_adapters.py scripts/e2e_claude.py test_e2e_script.py scripts/experiment_micro.py examples/two-agents/live_demo.py test_live_demo.py test_micro_experiment.py scripts/experiment_v2.py scripts/analyze_v2.py test_experiment_v2.py scripts/experiment_v3.py scripts/analyze_v3.py test_experiment_v3.py scripts/experiment_v4.py scripts/analyze_v4.py test_experiment_v4.py scripts/perf_audit.py scripts/context_bench.py conformance/run_conformance.py test_conformance.py test_fake_claude.py test_hook_probe.py`
   (`ci.yml` is the source of truth for what CI runs). The test scripts ignore inherited
   `GIT_DIR`, `GIT_WORK_TREE` and the other `GIT_*` repository variables, so they are safe
   under `git rebase --exec` and in hooks. The pinned tool versions

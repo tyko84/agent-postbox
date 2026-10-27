@@ -89,6 +89,7 @@ TESTS: tuple[Test, ...] = (
     Test(("test_e2e_script.py",), 1),
     Test(("test_fake_claude.py",), 1),
     Test(("test_micro_experiment.py",), 1),
+    Test(("test_hook_probe.py",), 4),
 )
 
 # Test scripts at the root that a cell does not run, and the job that does.
