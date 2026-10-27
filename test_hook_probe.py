@@ -166,7 +166,9 @@ class HookProbe(unittest.TestCase):
         p.cli.unlink()
 
     def _truncated(self, p: Project) -> None:
-        p.cli.write_bytes(p.cli.read_bytes()[:50000])
+        # Cut short, and left inside an open call: a cut that happens to fall between two
+        # statements (line endings move the offset on Windows) would still compile.
+        p.cli.write_bytes(p.cli.read_bytes()[:50000] + b"\ndef _cut_here(a,")
 
     def _api_mismatch(self, p: Project) -> None:
         p.edit_cli("def open_asks(", "def open_asks_renamed(")
