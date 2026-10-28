@@ -85,7 +85,7 @@ prints mailbox text into your agent's context, so anyone who can write to the ma
 text in front of your agent: read [SECURITY.md](SECURITY.md) before using it on a repository
 with outside contributors. Removing it: [docs/troubleshooting.md](docs/troubleshooting.md#removing-it).
 Supported hosts and what was verified: Claude Code in headless sessions (one small model);
-Codex never run in the real host; Cursor documented only (see [Which hosts](#which-hosts-are-supported)).
+Codex never run in the real host; Grok by scheduled polling (Experimental: a synthetic lab only, figures reported by the Grok session); Cursor documented only (see [Which hosts](#which-hosts-are-supported)).
 
 ```sh
 # 0. Check the interpreter: 3.10 or newer is required (3.9 refuses; see above).
@@ -473,6 +473,7 @@ experiments below did **not** show.
 |---|---|---|
 | Claude Code | Yes (`--adapter claude-code`) | Run in the real host, headless (`claude -p`) only, on one small model; last re-run on Claude Code 2.1.300. Interactive mode not run: [docs/e2e-real-sessions.md](docs/e2e-real-sessions.md) |
 | Codex CLI | Yes (`--adapter codex`) | **Experimental**: built from the documented hook format, never run inside real Codex; the hook must be trusted once in `/hooks` |
+| Grok (Grok Bot routines) | No: no prompt hook; a scheduled routine or webhook run polls with a deterministic preflight (`inbox --exit-code`) | **Experimental**: synthetic lab only, with figures reported by the Grok session and not independently reproduced; no unattended real-mail run shown: [docs/grok-integration.md](docs/grok-integration.md) |
 | Cursor | No: the host cannot add context per prompt | Documented only, never run; polling (`list --live`) is the only option |
 | Anything else | No | Polling only; the protocol is just files |
 
