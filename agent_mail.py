@@ -78,6 +78,7 @@ import datetime as dt  # noqa: E402
 import os  # noqa: E402
 import shutil  # noqa: E402
 import signal  # noqa: E402
+import tempfile  # noqa: E402
 import time  # noqa: E402
 import unicodedata  # noqa: E402
 from pathlib import Path  # noqa: E402
@@ -4203,8 +4204,188 @@ def pickup_hook_lines(root: Path) -> list[str]:
     return [head, *out]
 
 
+# `doctor --probe-hook` (PROTOCOL.md section 50). The command the installer writes, and only that
+# shape, is probed; a hand-written one is the user's and is never run from here.
+PROBE_TIMEOUT_SECONDS = 10
+PROBE_IDENTITY = "probe-hook"
+PROBE_ULID = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+PROBE_SUBJECT = "HOOK-PROBE-8f3a"
+# The names the pickup adapter takes from agent_mail (hooks/agent_mail_check.py): one missing
+# means the adapter and the CLI are different versions.
+PROBE_API = ("mail_dir", "load_messages", "open_asks", "live", "build_status", "python_cmd")
+_PROBE_COMMAND = re.compile(
+    r'(?P<py>python3|python) "(?:\$CLAUDE_PROJECT_DIR|\$\(git rev-parse --show-toplevel\))/'
+    r'(?P<script>[^"$`\\\x00-\x1f\x7f]+/hooks/agent_mail_check\.py)"(?: \|\| true)?')
+# What the child prints about the import. A fixed vocabulary: no path, no message text.
+_PROBE_IMPORT_CHECK = (
+    "import sys\n"
+    "here = sys.argv[1]\n"
+    "from pathlib import Path\n"
+    "p = Path(here)\n"
+    "for d in (p.parent, p.parent.parent):\n"
+    "    if (d / 'agent_mail.py').exists():\n"
+    "        sys.path.insert(0, str(d)); break\n"
+    "else:\n"
+    "    print('NO_AGENT_MAIL'); raise SystemExit(0)\n"
+    "try:\n"
+    "    import agent_mail\n"
+    "except BaseException as e:\n"
+    "    print('IMPORT_ERROR ' + type(e).__name__); raise SystemExit(0)\n"
+    "missing = [n for n in sys.argv[2:] if not callable(getattr(agent_mail, n, None))]\n"
+    "print('MISSING_API ' + ' '.join(missing) if missing else 'IMPORT_OK')\n")
+
+
+def _registered_hook_commands(root: Path) -> list[tuple[str, str, str | None]]:
+    """(host, settings file, command) for each registered pickup command under `root`; the
+    command is None when the settings file cannot be read. Read only."""
+    out: list[tuple[str, str, str | None]] = []
+    for host, rel in (("claude-code", ".claude/settings.json"), ("codex", ".codex/hooks.json")):
+        path = root / rel
+        if not _is_file(path):
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8-sig") or "{}")
+        except (OSError, ValueError):
+            out.append((host, rel, None))
+            continue
+        events = (data.get("hooks") or {}) if isinstance(data, dict) else {}
+        groups = events.get("UserPromptSubmit") if isinstance(events, dict) else None
+        for g in (groups if isinstance(groups, list) else []):
+            inner = g.get("hooks") if isinstance(g, dict) else None
+            for h in (inner if isinstance(inner, list) else []):
+                if (isinstance(h, dict) and isinstance(h.get("command"), str)
+                        and "agent_mail_check.py" in h["command"]):
+                    out.append((host, rel, h["command"]))
+    return out
+
+
+def _probe_diagnose(py: str, script: Path, env: dict[str, str], cwd: str) -> str:
+    """Why a probe that printed nothing printed nothing: the import, as the adapter does it,
+    in a second bounded child. One short code, never the child's own text."""
+    try:
+        r = subprocess.run([py, "-c", _PROBE_IMPORT_CHECK, str(script), *PROBE_API],
+                           capture_output=True, text=True, env=env, cwd=cwd, stdin=subprocess.DEVNULL,
+                           timeout=PROBE_TIMEOUT_SECONDS, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return "the import check could not run"
+    out = r.stdout.strip()
+    if out == "NO_AGENT_MAIL":
+        return "agent_mail.py is not beside the hook or one level up (missing, or not installed with it)"
+    if out.startswith("IMPORT_ERROR "):
+        kind = out.split(" ", 1)[1]
+        what = ("it is cut short or damaged" if kind in ("SyntaxError", "IndentationError", "ValueError")
+                else "importing it raised an error")
+        return f"agent_mail.py cannot be imported: {kind} ({what}; re-run install.py)"
+    if out.startswith("MISSING_API "):
+        return (f"agent_mail.py lacks what the hook uses ({out[len('MISSING_API '):]}): the hook and "
+                "the CLI are different versions (re-run install.py)")
+    if out == "IMPORT_OK":
+        return ("agent_mail.py imports and has what the hook uses, yet the hook printed nothing: an "
+                "error inside pickup was swallowed by design (run the hook by hand with "
+                "AGENT_MAIL_DIR and AGENT_MAIL_IDENTITY set to see it)")
+    return "the import check gave no answer"
+
+
+def probe_hook_lines(root: Path) -> tuple[list[str], bool]:
+    """`doctor --probe-hook`: run the registered pickup hook once against a SYNTHETIC mailbox
+    in a temporary directory, with its own identity. The mailbox the user has is neither read
+    nor written, nothing is kept, and the hook script is not changed. Returns (lines, failed).
+    A pass proves only that the script launches here and renders mail; it does not prove that
+    the host invokes it."""
+    lines: list[str] = []
+    failed = False
+    commands = _registered_hook_commands(root)
+    if not commands:
+        lines.append("hook_probe: nothing to probe: no hook is registered "
+                     "(pickup is poll; see `install.py --adapter`)")
+    for host, rel, command in commands:
+        if command is None:
+            lines.append(f"hook_probe: {host}: not probed: {rel} is not valid JSON")
+            continue
+        m = _PROBE_COMMAND.fullmatch(command)
+        if m is None:
+            lines.append(f"hook_probe: {host}: not probed: the command in {rel} is not the shape "
+                         "install.py writes (a hand-written command is never run from here)")
+            continue
+        script = root / m.group("script")
+        try:
+            inside = script.resolve().is_relative_to(root.resolve())
+        except (OSError, RuntimeError):
+            inside = False
+        if not inside:
+            lines.append(f"hook_probe: {host}: not probed: the script path leaves the project")
+            continue
+        if not _is_file(script):
+            failed = True
+            lines.append(f"hook_probe: {host}: FAIL: the script is MISSING at {m.group('script')}")
+            continue
+        py = shutil.which(m.group("py"))
+        if py is None:
+            failed = True
+            lines.append(f"hook_probe: {host}: FAIL: `{m.group('py')}` is not on PATH, so the "
+                         "registered command cannot start")
+            continue
+        lines.append(f"hook_probe: {host}: running `{m.group('py')} {m.group('script')}` once, "
+                     f"against a synthetic mailbox (identity '{PROBE_IDENTITY}'); "
+                     "your mailbox is not read or written")
+        with tempfile.TemporaryDirectory(prefix="agent-mail-probe-") as tmp:
+            stamp = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            (Path(tmp) / f"{PROBE_ULID}-probe.md").write_text(
+                f"---\nid: {PROBE_ULID}\ntype: NOTICE\nfrom: probe\nto: {PROBE_IDENTITY}\n"
+                f"date: {stamp}\nsubject: {PROBE_SUBJECT}\n---\n\nsynthetic\n", encoding="utf-8")
+            env = {k: v for k, v in os.environ.items() if not k.startswith("AGENT_MAIL")}
+            env.update(AGENT_MAIL_DIR=tmp, AGENT_MAIL_IDENTITY=PROBE_IDENTITY,
+                       CLAUDE_PROJECT_DIR=str(root))
+            try:
+                r = subprocess.run([py, str(script)], capture_output=True, text=True, env=env, cwd=tmp,
+                                   stdin=subprocess.DEVNULL, timeout=PROBE_TIMEOUT_SECONDS, check=False)
+            except subprocess.TimeoutExpired:
+                failed = True
+                lines.append(f"  - FAIL: TIMEOUT: the hook did not finish in {PROBE_TIMEOUT_SECONDS} s "
+                             "and was killed; every prompt would wait that long")
+                continue
+            except OSError as exc:
+                failed = True
+                lines.append(f"  - FAIL: the hook could not be started ({type(exc).__name__})")
+                continue
+            if PROBE_SUBJECT in r.stdout:
+                lines.append("  - OK: the hook rendered the synthetic message")
+            else:
+                failed = True
+                head = (f"the hook exited {r.returncode}" if r.returncode != 0
+                        else "the hook exited 0 and printed nothing")
+                lines.append(f"  - FAIL: {head}; "
+                             + _probe_diagnose(py, script, env, tmp))
+    if commands:
+        lines.append("hook_probe: a pass shows the script launches and renders mail in THIS shell. It "
+                     "does not show that Claude Code or Codex runs it, with this identity and mailbox "
+                     "(see AGENT_MAIL_IDENTITY above); `canary` and a real session prove delivery")
+    return lines, failed
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
-    """Read-only mailbox health. Never mutates. Never invents authorship."""
+    """Read-only mailbox health. Never mutates. Never invents authorship.
+
+    An unexpected error inside the report ends it with one FAIL line that names the error type
+    and where it was raised, and exit 2, instead of a traceback and exit 1: a health check that
+    crashes reads as "the tool is broken", not "this check could not finish". The refusals that
+    already have their own one-line handling (working directory gone, unreadable participants
+    table, a reader that went away) are not caught here."""
+    try:
+        return _doctor_report(args)
+    except (_ReaderGone, ParticipantsUnreadable, WorkingDirectoryGone):
+        raise
+    except Exception as exc:
+        tb = exc.__traceback__
+        while tb is not None and tb.tb_next is not None:
+            tb = tb.tb_next
+        where = f" at {Path(tb.tb_frame.f_code.co_filename).name}:{tb.tb_lineno}" if tb else ""
+        print(f"FAIL: doctor could not finish: {type(exc).__name__}{where}; "
+              "the report above is incomplete")
+        return 2
+
+
+def _doctor_report(args: argparse.Namespace) -> int:
     box = mail_dir()
     # Resolved before anything is printed: a deleted cwd must refuse up front, not after a
     # full report that ends in an exit-2 traceback-free abort at the hook lines.
@@ -4356,6 +4537,13 @@ def cmd_doctor(args: argparse.Namespace) -> int:
               f"(a canary lasts {CANARY_DEFAULT_HOURS} h unless `canary --hours` says otherwise)")
         print("  - file one with `canary --from <you> --to <you>`, then run doctor again")
         failures.append("pickup canary missing or stale")
+
+    if getattr(args, "probe_hook", False):
+        probe_lines, probe_failed = probe_hook_lines(root)
+        for line in probe_lines:
+            print(line)
+        if probe_failed:
+            failures.append("pickup hook probe failed")
 
     if failures:
         for f in failures:
@@ -4973,6 +5161,10 @@ def _run(argv: list[str] | None) -> int:
                                    "a missing mailbox, on quarantined files, and when no "
                                    "unexpired pickup canary exists (see `canary`).",
                        epilog="exit status: 0 PASS, 2 FAIL.")
+    d.add_argument("--probe-hook", action="store_true",
+                   help="also run the registered pickup hook once against a synthetic mailbox "
+                        "in a temporary directory (yours is not touched; 10 s limit) and FAIL "
+                        "if it does not render mail. A pass does not prove the host runs it")
     d.set_defaults(func=cmd_doctor)
 
     stp = sub.add_parser("status", help="read-only counts: live by type, open ASKs, "

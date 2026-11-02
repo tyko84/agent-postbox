@@ -2520,3 +2520,53 @@ are unchanged.
 mailbox registry that does not, `send --to <alias>` exits 0, files its copies and prints exactly one
 warning; a non-alias, an alias declared in the mailbox's own registry, and a mailbox with no registry at
 all print none. `test_hardening.py` section 20 pins it.
+
+## 50. `doctor --probe-hook`: run the pickup hook once against a synthetic mailbox
+
+The pickup hook exits 0 and prints nothing on almost every error (it must never block a prompt), so a
+hook that cannot run reads exactly like an empty inbox. `doctor` already reports the configuration
+faults behind that (an unset identity, a missing or unreadable mailbox, a registered script that is
+not there). It does not run the hook, so it cannot see a missing or damaged `agent_mail.py`, a hook
+and CLI of different versions, or an error inside pickup. `doctor --probe-hook` does. It is opt-in:
+without the flag `doctor` prints and exits exactly as before (one exception, below).
+
+**What it runs.** For each pickup hook registered in `.claude/settings.json` or `.codex/hooks.json`
+whose command has exactly the shape `install.py` writes (`python3|python "<project>/<dest>/hooks/
+agent_mail_check.py" || true`), `doctor` prints the interpreter and the project-relative script it
+will run, then runs that script once with `AGENT_MAIL_DIR` pointing at a **synthetic mailbox in a
+temporary directory** (one NOTICE addressed to the identity `probe-hook`), with the working
+directory set there too. The user's mailbox is not read or written, nothing is kept, the hook script
+is not modified, and nothing is written to any diagnostic file. A hand-written command, a script path
+that leaves the project, or an unreadable settings file is reported as `not probed` and never run.
+
+**Bounded.** The hook gets 10 seconds and is then killed (`FAIL: TIMEOUT`). If it prints nothing, one
+second child (also bounded) repeats the hook's own import and says why, in a fixed vocabulary: no
+`agent_mail.py` beside the hook or one level up; `agent_mail.py` cannot be imported, with the error
+type (`SyntaxError`: cut short); a name the hook uses is absent (hook and CLI of different versions);
+or it imports fine and an error inside pickup was swallowed. A nonzero exit, an interpreter not on
+`PATH` and a missing script are named too. No line carries a message, a mailbox path, a temporary
+path or the child's own error text.
+
+**Exit status.** A probe failure adds `FAIL: pickup hook probe failed` and exit 2. A pass or
+`not probed` changes nothing. The probe runs after the store checks: a missing or unreadable mailbox
+ends `doctor` before it.
+
+**What a pass is, and is not.** It shows the script launches in the shell that ran `doctor` and renders
+mail. It does not show that Claude Code or Codex invokes it, with that identity and that mailbox
+(the host's environment can differ), or that the model acted on the text. The canary and a real
+session remain the proof of delivery; the output says so. A hook the host never invoked is invisible
+to this probe by construction, and is the one failure that needs a record written by the invoked
+process (not built: it would end the hook's read-only contract and needs its own decision).
+
+**`doctor` no longer crashes on an unexpected error.** An exception inside the report used to end
+in a traceback and exit 1. It now prints `FAIL: doctor could not finish: <ErrorType> at
+agent_mail.py:<line>; the report above is incomplete` and exits 2, without the error's own text (which
+can hold a path or message text). The refusals that already end in one line (working directory gone,
+unreadable `PARTICIPANTS.md`, a reader that went away) are unchanged. A damaged `agent_mail.py` that
+cannot even be compiled (a `SyntaxError` from an interrupted copy) cannot run its own `doctor` at
+all: Python stops before a line of it runs, the traceback stays visible on stderr, and that is not
+concealed. Run `doctor` from another copy of the tool, or use `--probe-hook` from a healthy one.
+
+`test_hook_probe.py` pins all of it: the fault matrix (hook silent with exit 0, `doctor` unchanged,
+probe naming each fault), a real mailbox byte-identical after the probe, no leak of message text or
+paths, the 10-second bound, a hand-written command never run, and the crash fix.
