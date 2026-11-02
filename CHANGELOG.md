@@ -94,6 +94,7 @@ behaviour).
 
 ### Fixed
 
+- `install.py`: an install killed part-way no longer leaves a torn file. The five payload files are copied through the existing `write_atomic` helper (temp file in the same directory, fsync, `os.replace`; the source's permission bits and times are applied as `copy2` did) and `PARTICIPANTS.md` is created the same way. Before, a kill while `PARTICIPANTS.md` was being written left half the template, which every later run kept as "existing"; a kill mid-copy left a truncated `agent_mail.py` or hook. A SIGKILL can still leave a stray `.<name>.<pid>.tmp` beside the target; it is not a payload name and a re-run ignores it. `test_install_interrupt.py` (POSIX only, about 16 s, in every cell of the gate (it skips itself on Windows)) kills the installer at 12 seams in a fresh, an adopt and a v0.5.0-upgrade scenario: 312 PASS / 2 FAIL on the previous installer, 0 FAIL on this one (the file also checks that no payload is ever left torn, which the previous installer fails 10 times).
 - `list`, `inbox`, `status`, `latency`, `show` and `verify` no longer read a mailbox directory this
   account cannot list (for example mode 000) as an empty one with exit 0. They print
   `UNREADABLE MAILBOX at <path>` and a `hint:` on stderr, nothing on stdout, and exit 2, the status a

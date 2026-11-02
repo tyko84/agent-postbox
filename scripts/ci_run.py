@@ -78,6 +78,7 @@ TESTS: tuple[Test, ...] = (
     Test(("test_experiment_v3.py",), 20),
     Test(("test_experiment_v4.py",), 55),
     Test(("test_publication.py",), 16, once=True),
+    Test(("test_install_interrupt.py",), 16),   # POSIX only: SIGKILLs install.py; skips itself on Windows
     Test(("scripts/scenario.py", "--quick", "--seed", "1"), 14),
     Test(("test_scenario.py",), 14),
     Test(("test_live_demo.py",), 10),
