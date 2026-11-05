@@ -53,7 +53,7 @@ On a branch off `main`:
 
 Branch protection on `main` requires a pull request (no approving review is
 required, and the history must be linear), applies to administrators as well,
-and requires these thirteen status checks, each bound to GitHub Actions as the
+and requires these fourteen status checks, each bound to GitHub Actions as the
 reporting app:
 
 * `lint`
@@ -65,6 +65,8 @@ reporting app:
 * `selftest (macos-latest, 3.10)`, `selftest (macos-latest, 3.11)`,
   `selftest (macos-latest, 3.12)`, `selftest (macos-latest, 3.13)`,
   `selftest (macos-latest, 3.14)`
+* `selftest-windows` (hosted `windows-latest`, Python 3.12; the Windows job is
+  its own job id, not a `selftest` matrix cell)
 
 A check is named after the job id in `ci.yml` plus, for `selftest`, the matrix
 values in order. Renaming a job, giving it a `name:`, or changing the `os` or
@@ -72,7 +74,7 @@ values in order. Renaming a job, giving it a `name:`, or changing the `os` or
 forever: change the required list in the same pull request. This is also why
 `runs-on` stays `ubuntu-latest` and `macos-latest` and is not pinned to an image
 version such as `ubuntu-24.04`: for `selftest` the label is part of the ten
-required names. The price is that a new runner image arrives without a commit;
+required matrix names. The price is that a new runner image arrives without a commit;
 the `reproducible` job and the BUILDINFO block show what it changed.
 `test_publication.py` (class `Workflows`) fails if the ids, the matrix or the
 shape described below change.
@@ -110,7 +112,7 @@ gh api repos/tyko84/agent-postbox/branches/main/protection/enforce_admins --jq '
 gh api repos/tyko84/agent-postbox/branches/main/protection/required_pull_request_reviews --jq '.url'
 ```
 
-The first must print the thirteen names above, each with `app=15368` (GitHub
+The first must print the fourteen names above, each with `app=15368` (GitHub
 Actions; a check bound to an app cannot be satisfied by a status that some other
 integration posts under the same name); the second must print `true` (required
 checks then bind administrators too); the third must print a URL and not fail

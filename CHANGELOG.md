@@ -7,158 +7,16 @@ behaviour).
 
 ## [Unreleased]
 
+## [0.6.0] - TBD
+
+(The release date is set to the UTC publication date when the release pull request merges; see docs/release-process.md.)
+
 ### Added
 
 - `doctor --probe-hook` (opt-in): runs the registered pickup hook once against a synthetic mailbox in a temporary directory (the real mailbox is not touched, 10-second limit, nothing kept, `hooks/agent_mail_check.py` unchanged) and exits 2 with a one-line reason when it prints nothing: `agent_mail.py` missing beside the hook, cut short (`SyntaxError`), lacking a name the hook uses (hook and CLI of different versions), or an error swallowed inside pickup. A pass is not proof of delivery in Claude Code or Codex, and the output says so. `test_hook_probe.py` holds the fault matrix (PROTOCOL.md section 50).
 - Windows: a scoped CLAIM whose lock file cannot be opened is no longer reported as `being claimed right now; retry` (exit 3) unless a claimant really holds it. A permanent denial (a write-denied or read-only lock file, a mailbox directory that refuses new files) is final at once and a holder with no sharing (Win32 32/33) or a pending delete is looked at the same bounded eight times; after that the failure is the one-line `cannot write to the mailbox ... (EACCES); nothing written` of PROTOCOL.md section 32, exit 1. Checks in selftest.py fail on the previous code.
 - `install.py` on Windows: when the interpreter's path holds a space the printed selftest command is now given once per shell, labelled (`PowerShell: & "<python>" tools/agent-postbox/selftest.py` and `cmd.exe: "<python>" tools/agent-postbox/selftest.py`), because a quoted executable path without the call operator `&` is not a command in PowerShell. `test_readme_examples.py` covers both shells and the unchanged POSIX line.
 - `inbox --exit-code`: exit 10 when an ASK still owes a reply, 0 when none does, 2 when it cannot be known (no identity, missing or unreadable mailbox, a quarantined file with nothing known owed). Opt-in; output and the default exit statuses are unchanged (issue #97, PROTOCOL.md section 37).
-
-### Changed
-
-- `doctor`: an unexpected error inside the report now ends with `FAIL: doctor could not finish: <ErrorType> at agent_mail.py:<line>` and exit 2 instead of a traceback and exit 1. A `agent_mail.py` too damaged to compile still fails with its `SyntaxError` on stderr (it cannot run its own `doctor`).
-- Windows is now **Experimental**, no longer "unsupported" (README, `docs/windows.md`, SECURITY.md, CONTRIBUTING.md,
-  `docs/troubleshooting.md`, `docs/packaging.md`). Verified: the required `selftest-windows` CI check (GitHub-hosted
-  `windows-latest`, Python 3.12 only), hand runs on native Windows 11, and Git Bash as the only tested hook shell.
-  Not verified: other Windows Python versions, WSL, `pip` installation and the packaging build, the Codex and
-  Cursor adapters, PowerShell 5.1 or cmd.exe for the committed hook command (it does not run there as written).
-  A full test run from an unprivileged native account passed 20 of 22 scripts; the two failures were symlink
-  creation in tests, which does not show that normal use needs the privilege. Linux and macOS remain the supported
-  platforms, and the `Operating System :: POSIX` classifier is unchanged: no Windows classifier is added because
-  classifiers have no experimental level and would read as support.
-- A NOTICE, DISPUTE, ASK or CLAIM that cites an ASK from someone who is neither its recipient nor
-  its sender is now reported in `status` as `CITATION_FROM_THIRD_PARTY`, as a bare ANSWER already was
-  (PROTOCOL.md section 45). It still closes the ASK, nothing is stored or refused, `schema` stays 1
-  and the only new JSON value is that code in `problems`.
-- `send --key` whose landed original is quarantined (it fails the admission rules `load_messages`
-  applies: unreadable frontmatter, missing id or `from`/`to`, unknown type, and so on) now exits 2
-  with one stderr line instead of `duplicate of <id>` (exit 0). Nothing is published and the key
-  marker and the quarantined file are left as they were. Valid originals, and originals that
-  are absent or unreadable, behave as before (PROTOCOL.md section 31).
-- `send --key` whose retry marker is gone or damaged (deleted, emptied, truncated, overwritten)
-  no longer files the message a second time: the retry finds the original by its own `idem:` header
-  among the newest 64 messages and prints `duplicate of <id>` (exit 0). Exactly one match with the
-  same content is recovered; different content, a quarantined original, or more than one match is
-  refused with exit 2 and nothing written (none is ever chosen); no match publishes as before. Same
-  sender, recipient and exact key only; no new exit code, flag or JSON key (PROTOCOL.md section 31).
-- `send --key` whose retry marker this account cannot read still prints the one failure line (exit 1,
-  nothing written), but the reason now says it was the marker: `cannot write to the mailbox: the retry
-  marker for this --key is unreadable: Permission denied (EACCES); nothing written`. No marker name,
-  key or path is shown; other errors are unchanged (PROTOCOL.md section 32).
-- Argument errors now print the `error:` line first and the usage block after it (argparse printed
-  usage first and the error last, so the error sat under about 18 lines of usage). Exit status 2
-  and an empty stdout are unchanged. A script that parsed the last stderr line for the error must
-  now read the first.
-- `inbox` lists an ASK that was superseded but never answered. It still owed a reply to `inbox --exit-code`, `status` and the pickup hook, so `inbox --type ASK --exit-code` could print an empty list and exit 10. The row format is unchanged (derived status `superseded`, `!` owed mark); exit codes, storage, supersede rules and ids are unchanged (PROTOCOL.md section 19).
-- `show <id>` for an id that only a quarantined file carries still exits 1 with `no message with id
-  <id>` as its first line, and now adds a second stderr line naming the quarantined file, so a
-  reader does not conclude the mail never arrived.
-- `send --key` reused for a different recipient than the one the key already published to now exits
-  2 (`already published <id> to '<recipient>', not '<recipient>'`) and writes nothing; it used to
-  write a second message. The check reads at most the newest 64 messages, so an older original is
-  not found. Scripts that sent one key to several recipients one `send` at a time must use one key
-  per recipient (`--to <alias>` is unaffected). A retry of the same message is unchanged
-  (PROTOCOL.md sections 31 and 36).
-- `send --key` into a mailbox that cannot be listed (for example a directory with search but no read
-  permission) now exits 1 with `nothing written` instead of filing a second copy of a message the
-  key had already delivered. A retry into a readable mailbox is unchanged (PROTOCOL.md section 31).
-- `install.py` refuses up front on Python older than 3.10 with or without `--adapter` (exit 2,
-  nothing copied), naming the interpreter it ran under and a command to retry with. Before, only
-  `--adapter` refused; a plain install on 3.9 copied files the tool then refused to start from. The
-  README and onboarding quickstart now begin with a `python3 --version` check.
-- `send --key` retried after the message already landed, with a `reply_to`, `supersedes`, `scope`,
-  `result` or other optional header different from the landed one, now exits 2 (`already published
-  <id> with a different <header>`) and writes nothing. It used to print `duplicate of <id>` and exit
-  0, silently dropping the retry's header (an ANSWER retried with the right `--reply-to` left its
-  ASK open). An identical retry is unchanged (PROTOCOL.md section 31).
-- The pickup hook prints one fixed line when the mailbox directory exists but this user cannot list
-  it (before, that state was silent and read as an empty inbox, so mail addressed to the identity
-  was lost without a sign). It still exits 0, names no path, message or system error, and a missing,
-  empty or non-directory mailbox stays silent. SECURITY.md is updated.
-- `doctor` separates installation health from pickup verification (PROTOCOL.md section 20). A mailbox
-  on which no canary was ever filed is healthy but unverified: `canary: UNVERIFIED`, exit 0, final line
-  `PASS (pickup unverified: no canary has been filed)`; it used to end in `FAIL`, exit 2. A canary that
-  was filed and has lapsed still fails (exit 2, `canary: MISSING_OR_STALE`) and now names the lapsed
-  canary and the 24-hour default. A script that treated exit 2 on a fresh mailbox as "not installed"
-  must now look for the `UNVERIFIED` line.
-- `install.py` commits a portable hook command: it probes `python3` then `python` and writes the first
-  that is Python 3.10+, never the installer's own path. If none qualifies it refuses before changing
-  anything (exit 2). Polling is unchanged and hooks stay optional.
-- `install.py` refuses up front when the target directory is not writable, and when its own copy lacks
-  files it installs, instead of failing midway.
-- The pickup hook prints one `Full text of one: ... show <id>` line for the whole list instead of one
-  `read:` line per message, and the Reply template only when a reply is owed. Every id, subject and
-  owed ASK is still listed; the full message is one `show` away. Measured on a real 31-message task:
-  21.7 to 36.7 percent fewer hook bytes (about 45 to 49 percent at five or more live messages, none
-  for a single owed ASK); real token cost measured at about 0.55 input tokens per byte
-  (docs/context-cost.md). A rule that also collapsed messages the identity had since replied after was
-  tried and rejected: it lowered the delivery rate in `test_scenario.py`.
-
-### Fixed
-
-- Windows: a scoped CLAIM racing the release of the same scope lock could exit 1 (`cannot write to the mailbox ... Access is denied (EACCES); nothing written`) where exit 3 or success is correct. The previous holder unlinks the lock before closing its handle, and a create landing in that window gets Win32 error 5 for a few milliseconds. The lock now looks again, within the same bounded eight attempts, at 5 as well as 32 and 33; a permanent denial is still the one-line exit 1, after the last look (about 80 ms) instead of at once. POSIX is unchanged. Two checks in `selftest.py` run the Windows branch on any platform and fail on the previous code. Seen as rare failures in `stress_test.py`, `test_hardening.py`, `test_adversarial.py` and `test_conformance.py` under load on Windows.
-- `install.py`: an install killed part-way no longer leaves a torn file. The five payload files are copied through the existing `write_atomic` helper (temp file in the same directory, fsync, `os.replace`; the source's permission bits and times are applied as `copy2` did) and `PARTICIPANTS.md` is created the same way. Before, a kill while `PARTICIPANTS.md` was being written left half the template, which every later run kept as "existing"; a kill mid-copy left a truncated `agent_mail.py` or hook. A SIGKILL can still leave a stray `.<name>.<pid>.tmp` beside the target; it is not a payload name and a re-run ignores it. `test_install_interrupt.py` (POSIX only, about 16 s, in every cell of the gate (it skips itself on Windows)) kills the installer at 12 seams in a fresh, an adopt and a v0.5.0-upgrade scenario: 312 PASS / 2 FAIL on the previous installer, 0 FAIL on this one (the file also checks that no payload is ever left torn, which the previous installer fails 10 times).
-- `list`, `inbox`, `status`, `latency`, `show` and `verify` no longer read a mailbox directory this
-  account cannot list (for example mode 000) as an empty one with exit 0. They print
-  `UNREADABLE MAILBOX at <path>` and a `hint:` on stderr, nothing on stdout, and exit 2, the status a
-  missing store already had; `doctor` already said `store: UNREADABLE`. A readable empty mailbox is
-  unchanged (exit 0). Root is unaffected (permission bits do not bind it). Issue #94.
-- A mailbox that becomes unlistable AFTER the readability check (a mode change in between, an ACL or a
-  network filesystem `os.access` does not see) no longer loads as empty: `Path.glob` swallowed the listing
-  error. The load now reports one `REJECT <mailbox>: mailbox cannot be listed (...)` and `list` / `inbox`
-  exit 2 on it as for any quarantined file. Follow-up to #94.
-- A message file removed between the listing and the read (an operator moving it out while a reader
-  runs) is skipped. It used to be reported as `REJECT ...: unreadable (No such file or directory)`,
-  which made `list`, `inbox` and `doctor` exit 2 for a healthy mailbox. A file that exists but cannot
-  be read is still a REJECT.
-- `send --key` takes over a key marker longer than 4096 bytes instead of refusing it.
-- `send --to <alias>` now warns on stderr when the alias was read from a different PARTICIPANTS.md than
-  the mailbox's own registry (a working directory's or a public checkout's example table could fan mail
-  out to names the mailbox never declared). Which table wins, the exit status and the copies filed are
-  unchanged (PROTOCOL.md section 49). Found and test-covered by the Codex session.
-- The prompt hook no longer loses every message when one subject is in another alphabet. On Windows a
-  piped stdout is the ANSI code page, so printing a CJK or emoji subject raised, the hook's catch-all
-  swallowed it and the identity saw an empty inbox; such characters are now written as escapes
-  (a no-op on a UTF-8 stdout).
-- A recipient who never writes is no longer invisible: `status` counts a name that has an
-  unanswered ASK as old as `--stalled-hours` and never sent a message as `SILENT_RECIPIENT`, and
-  `doctor` names it (PROTOCOL.md section 48). `agents` itself is unchanged.
-- One alias fan-out is one hold: `status --json` adds a top-level `holds` (only when it differs from
-  `claims.held`), and text `status` says "N holds" beside the count, so a claim to a two-writer alias
-  no longer reads as two holds (PROTOCOL.md section 47). `claims.held` still counts messages.
-- `install.py` on Windows no longer runs a `python3.exe` or `python.exe` found in the current directory
-  (usually the project being installed into) when it probes for the hook interpreter.
-- Mail filed to an alias before the alias was declared is no longer silent: `status` counts it
-  as `ALIAS_MAIL_UNDELIVERED` and `doctor` names it (PROTOCOL.md section 46). It is still not shown
-  by any writer's pickup, by design; the report says how to re-send it.
-- A plain ANSWER (no `result:`) from someone the ASK was not addressed to is now reported as
-  `ANSWER_FROM_THIRD_PARTY` in `status` (PROTOCOL.md section 45). It still closes the ASK, as
-  before; it used to do so with no sign anything was unusual.
-- `send --body-file -` (and a body piped with no flag): stdin is now read as bytes and decoded as strict
-  UTF-8 on every platform, as section 38 already said. It was decoded with the stream's own encoding, which
-  on Windows is the ANSI code page: it accepts every byte, so bytes that are not UTF-8 were stored as
-  mojibake instead of being refused (exit 2, one line), and valid UTF-8 text was stored as mojibake too.
-  A C locale on POSIX decodes with surrogateescape and had the same hole. Valid UTF-8, newline
-  translation and the size limit are unchanged, and the caller's `sys.stdin` is left open.
-- `doctor` with a deleted working directory and `AGENT_MAIL_DIR` set now refuses up front (one
-  line on stderr, exit 2, nothing on stdout) instead of printing the whole report and then
-  aborting at the hook lines with the same refusal.
-- Timestamps (`date`, `expires`, `--now`, `--since`) are read by Postbox's own parser instead of
-  `datetime.fromisoformat`, so a lease `send` accepted (a fraction longer than 6 places, a zone
-  written `+0000`) no longer reads back as malformed on Python 3.10, where `fromisoformat` is
-  stricter than on 3.11+. Fractions are truncated to microseconds on every version. Forms only
-  3.11+ happened to accept (basic `20300101T120000`, week dates, an arbitrary separator character,
-  an offset with 60 minutes) now read as unparseable everywhere, as 3.10 already did. PROTOCOL.md
-  section 5 states the accepted form. The adversarial test no longer expects one fewer CLAIM on 3.10.
-- Reading a message file no longer asks for a 32 MiB buffer per file. Every `list`, `inbox`, `status`,
-  `doctor` and the prompt hook read each file with `read(MAX_FILE_BYTES + 1)`, which allocates the whole
-  cap each time; it is now read in 64 KiB chunks up to the same cap. Output and limits are unchanged.
-  With `scripts/perf_audit.py --sizes 1000,10000 --reps 3` on Linux (WSL2): `list` of 10,000 messages
-  1,336 ms to 767 ms, the hook 1,278 ms to 761 ms, peak memory the same. On Windows the allocation was
-  about 4 ms per file (97 s for 10,000 messages, 2 s after).
-
-### Added
-
 - `list --json` and `inbox --json` gain `owed_truncated`: how many of the rows `--limit` cut are
   ASKs that still owe a reply. The text view adds `# N of them owe a reply: ...` naming the command
   that lists them. Before, the cut said only how many rows were left out, so a bounded reader could
@@ -245,6 +103,83 @@ behaviour).
 
 ### Changed
 
+- `doctor`: an unexpected error inside the report now ends with `FAIL: doctor could not finish: <ErrorType> at agent_mail.py:<line>` and exit 2 instead of a traceback and exit 1. A `agent_mail.py` too damaged to compile still fails with its `SyntaxError` on stderr (it cannot run its own `doctor`).
+- Windows is now **Experimental**, no longer "unsupported" (README, `docs/windows.md`, SECURITY.md, CONTRIBUTING.md,
+  `docs/troubleshooting.md`, `docs/packaging.md`). Verified: the required `selftest-windows` CI check (GitHub-hosted
+  `windows-latest`, Python 3.12 only), hand runs on native Windows 11, and Git Bash as the only tested hook shell.
+  Not verified: other Windows Python versions, WSL, `pip` installation and the packaging build, the Codex and
+  Cursor adapters, PowerShell 5.1 or cmd.exe for the committed hook command (it does not run there as written).
+  A full test run from an unprivileged native account passed 20 of 22 scripts; the two failures were symlink
+  creation in tests, which does not show that normal use needs the privilege. Linux and macOS remain the supported
+  platforms, and the `Operating System :: POSIX` classifier is unchanged: no Windows classifier is added because
+  classifiers have no experimental level and would read as support.
+- A NOTICE, DISPUTE, ASK or CLAIM that cites an ASK from someone who is neither its recipient nor
+  its sender is now reported in `status` as `CITATION_FROM_THIRD_PARTY`, as a bare ANSWER already was
+  (PROTOCOL.md section 45). It still closes the ASK, nothing is stored or refused, `schema` stays 1
+  and the only new JSON value is that code in `problems`.
+- `send --key` whose landed original is quarantined (it fails the admission rules `load_messages`
+  applies: unreadable frontmatter, missing id or `from`/`to`, unknown type, and so on) now exits 2
+  with one stderr line instead of `duplicate of <id>` (exit 0). Nothing is published and the key
+  marker and the quarantined file are left as they were. Valid originals, and originals that
+  are absent or unreadable, behave as before (PROTOCOL.md section 31).
+- `send --key` whose retry marker is gone or damaged (deleted, emptied, truncated, overwritten)
+  no longer files the message a second time: the retry finds the original by its own `idem:` header
+  among the newest 64 messages and prints `duplicate of <id>` (exit 0). Exactly one match with the
+  same content is recovered; different content, a quarantined original, or more than one match is
+  refused with exit 2 and nothing written (none is ever chosen); no match publishes as before. Same
+  sender, recipient and exact key only; no new exit code, flag or JSON key (PROTOCOL.md section 31).
+- `send --key` whose retry marker this account cannot read still prints the one failure line (exit 1,
+  nothing written), but the reason now says it was the marker: `cannot write to the mailbox: the retry
+  marker for this --key is unreadable: Permission denied (EACCES); nothing written`. No marker name,
+  key or path is shown; other errors are unchanged (PROTOCOL.md section 32).
+- Argument errors now print the `error:` line first and the usage block after it (argparse printed
+  usage first and the error last, so the error sat under about 18 lines of usage). Exit status 2
+  and an empty stdout are unchanged. A script that parsed the last stderr line for the error must
+  now read the first.
+- `inbox` lists an ASK that was superseded but never answered. It still owed a reply to `inbox --exit-code`, `status` and the pickup hook, so `inbox --type ASK --exit-code` could print an empty list and exit 10. The row format is unchanged (derived status `superseded`, `!` owed mark); exit codes, storage, supersede rules and ids are unchanged (PROTOCOL.md section 19).
+- `show <id>` for an id that only a quarantined file carries still exits 1 with `no message with id
+  <id>` as its first line, and now adds a second stderr line naming the quarantined file, so a
+  reader does not conclude the mail never arrived.
+- `send --key` reused for a different recipient than the one the key already published to now exits
+  2 (`already published <id> to '<recipient>', not '<recipient>'`) and writes nothing; it used to
+  write a second message. The check reads at most the newest 64 messages, so an older original is
+  not found. Scripts that sent one key to several recipients one `send` at a time must use one key
+  per recipient (`--to <alias>` is unaffected). A retry of the same message is unchanged
+  (PROTOCOL.md sections 31 and 36).
+- `send --key` into a mailbox that cannot be listed (for example a directory with search but no read
+  permission) now exits 1 with `nothing written` instead of filing a second copy of a message the
+  key had already delivered. A retry into a readable mailbox is unchanged (PROTOCOL.md section 31).
+- `install.py` refuses up front on Python older than 3.10 with or without `--adapter` (exit 2,
+  nothing copied), naming the interpreter it ran under and a command to retry with. Before, only
+  `--adapter` refused; a plain install on 3.9 copied files the tool then refused to start from. The
+  README and onboarding quickstart now begin with a `python3 --version` check.
+- `send --key` retried after the message already landed, with a `reply_to`, `supersedes`, `scope`,
+  `result` or other optional header different from the landed one, now exits 2 (`already published
+  <id> with a different <header>`) and writes nothing. It used to print `duplicate of <id>` and exit
+  0, silently dropping the retry's header (an ANSWER retried with the right `--reply-to` left its
+  ASK open). An identical retry is unchanged (PROTOCOL.md section 31).
+- The pickup hook prints one fixed line when the mailbox directory exists but this user cannot list
+  it (before, that state was silent and read as an empty inbox, so mail addressed to the identity
+  was lost without a sign). It still exits 0, names no path, message or system error, and a missing,
+  empty or non-directory mailbox stays silent. SECURITY.md is updated.
+- `doctor` separates installation health from pickup verification (PROTOCOL.md section 20). A mailbox
+  on which no canary was ever filed is healthy but unverified: `canary: UNVERIFIED`, exit 0, final line
+  `PASS (pickup unverified: no canary has been filed)`; it used to end in `FAIL`, exit 2. A canary that
+  was filed and has lapsed still fails (exit 2, `canary: MISSING_OR_STALE`) and now names the lapsed
+  canary and the 24-hour default. A script that treated exit 2 on a fresh mailbox as "not installed"
+  must now look for the `UNVERIFIED` line.
+- `install.py` commits a portable hook command: it probes `python3` then `python` and writes the first
+  that is Python 3.10+, never the installer's own path. If none qualifies it refuses before changing
+  anything (exit 2). Polling is unchanged and hooks stay optional.
+- `install.py` refuses up front when the target directory is not writable, and when its own copy lacks
+  files it installs, instead of failing midway.
+- The pickup hook prints one `Full text of one: ... show <id>` line for the whole list instead of one
+  `read:` line per message, and the Reply template only when a reply is owed. Every id, subject and
+  owed ASK is still listed; the full message is one `show` away. Measured on a real 31-message task:
+  21.7 to 36.7 percent fewer hook bytes (about 45 to 49 percent at five or more live messages, none
+  for a single owed ASK); real token cost measured at about 0.55 input tokens per byte
+  (docs/context-cost.md). A rule that also collapsed messages the identity had since replied after was
+  tried and rejected: it lowered the delivery rate in `test_scenario.py`.
 - `install.py` prints the verify command with `cd <project> &&` (shell-quoted) so it runs
   from any directory, and names the `AGENT_MAIL_IDENTITY` step. Wording only; exit codes
   and files are unchanged.
@@ -277,6 +212,66 @@ behaviour).
 
 ### Fixed
 
+- Windows: a scoped CLAIM racing the release of the same scope lock could exit 1 (`cannot write to the mailbox ... Access is denied (EACCES); nothing written`) where exit 3 or success is correct. The previous holder unlinks the lock before closing its handle, and a create landing in that window gets Win32 error 5 for a few milliseconds. The lock now looks again, within the same bounded eight attempts, at 5 as well as 32 and 33; a permanent denial is still the one-line exit 1, after the last look (about 80 ms) instead of at once. POSIX is unchanged. Two checks in `selftest.py` run the Windows branch on any platform and fail on the previous code. Seen as rare failures in `stress_test.py`, `test_hardening.py`, `test_adversarial.py` and `test_conformance.py` under load on Windows.
+- `install.py`: an install killed part-way no longer leaves a torn file. The five payload files are copied through the existing `write_atomic` helper (temp file in the same directory, fsync, `os.replace`; the source's permission bits and times are applied as `copy2` did) and `PARTICIPANTS.md` is created the same way. Before, a kill while `PARTICIPANTS.md` was being written left half the template, which every later run kept as "existing"; a kill mid-copy left a truncated `agent_mail.py` or hook. A SIGKILL can still leave a stray `.<name>.<pid>.tmp` beside the target; it is not a payload name and a re-run ignores it. `test_install_interrupt.py` (POSIX only, about 16 s, in every cell of the gate (it skips itself on Windows)) kills the installer at 12 seams in a fresh, an adopt and a v0.5.0-upgrade scenario: 312 PASS / 2 FAIL on the previous installer, 0 FAIL on this one (the file also checks that no payload is ever left torn, which the previous installer fails 10 times).
+- `list`, `inbox`, `status`, `latency`, `show` and `verify` no longer read a mailbox directory this
+  account cannot list (for example mode 000) as an empty one with exit 0. They print
+  `UNREADABLE MAILBOX at <path>` and a `hint:` on stderr, nothing on stdout, and exit 2, the status a
+  missing store already had; `doctor` already said `store: UNREADABLE`. A readable empty mailbox is
+  unchanged (exit 0). Root is unaffected (permission bits do not bind it). Issue #94.
+- A mailbox that becomes unlistable AFTER the readability check (a mode change in between, an ACL or a
+  network filesystem `os.access` does not see) no longer loads as empty: `Path.glob` swallowed the listing
+  error. The load now reports one `REJECT <mailbox>: mailbox cannot be listed (...)` and `list` / `inbox`
+  exit 2 on it as for any quarantined file. Follow-up to #94.
+- A message file removed between the listing and the read (an operator moving it out while a reader
+  runs) is skipped. It used to be reported as `REJECT ...: unreadable (No such file or directory)`,
+  which made `list`, `inbox` and `doctor` exit 2 for a healthy mailbox. A file that exists but cannot
+  be read is still a REJECT.
+- `send --key` takes over a key marker longer than 4096 bytes instead of refusing it.
+- `send --to <alias>` now warns on stderr when the alias was read from a different PARTICIPANTS.md than
+  the mailbox's own registry (a working directory's or a public checkout's example table could fan mail
+  out to names the mailbox never declared). Which table wins, the exit status and the copies filed are
+  unchanged (PROTOCOL.md section 49). Found and test-covered by the Codex session.
+- The prompt hook no longer loses every message when one subject is in another alphabet. On Windows a
+  piped stdout is the ANSI code page, so printing a CJK or emoji subject raised, the hook's catch-all
+  swallowed it and the identity saw an empty inbox; such characters are now written as escapes
+  (a no-op on a UTF-8 stdout).
+- A recipient who never writes is no longer invisible: `status` counts a name that has an
+  unanswered ASK as old as `--stalled-hours` and never sent a message as `SILENT_RECIPIENT`, and
+  `doctor` names it (PROTOCOL.md section 48). `agents` itself is unchanged.
+- One alias fan-out is one hold: `status --json` adds a top-level `holds` (only when it differs from
+  `claims.held`), and text `status` says "N holds" beside the count, so a claim to a two-writer alias
+  no longer reads as two holds (PROTOCOL.md section 47). `claims.held` still counts messages.
+- `install.py` on Windows no longer runs a `python3.exe` or `python.exe` found in the current directory
+  (usually the project being installed into) when it probes for the hook interpreter.
+- Mail filed to an alias before the alias was declared is no longer silent: `status` counts it
+  as `ALIAS_MAIL_UNDELIVERED` and `doctor` names it (PROTOCOL.md section 46). It is still not shown
+  by any writer's pickup, by design; the report says how to re-send it.
+- A plain ANSWER (no `result:`) from someone the ASK was not addressed to is now reported as
+  `ANSWER_FROM_THIRD_PARTY` in `status` (PROTOCOL.md section 45). It still closes the ASK, as
+  before; it used to do so with no sign anything was unusual.
+- `send --body-file -` (and a body piped with no flag): stdin is now read as bytes and decoded as strict
+  UTF-8 on every platform, as section 38 already said. It was decoded with the stream's own encoding, which
+  on Windows is the ANSI code page: it accepts every byte, so bytes that are not UTF-8 were stored as
+  mojibake instead of being refused (exit 2, one line), and valid UTF-8 text was stored as mojibake too.
+  A C locale on POSIX decodes with surrogateescape and had the same hole. Valid UTF-8, newline
+  translation and the size limit are unchanged, and the caller's `sys.stdin` is left open.
+- `doctor` with a deleted working directory and `AGENT_MAIL_DIR` set now refuses up front (one
+  line on stderr, exit 2, nothing on stdout) instead of printing the whole report and then
+  aborting at the hook lines with the same refusal.
+- Timestamps (`date`, `expires`, `--now`, `--since`) are read by Postbox's own parser instead of
+  `datetime.fromisoformat`, so a lease `send` accepted (a fraction longer than 6 places, a zone
+  written `+0000`) no longer reads back as malformed on Python 3.10, where `fromisoformat` is
+  stricter than on 3.11+. Fractions are truncated to microseconds on every version. Forms only
+  3.11+ happened to accept (basic `20300101T120000`, week dates, an arbitrary separator character,
+  an offset with 60 minutes) now read as unparseable everywhere, as 3.10 already did. PROTOCOL.md
+  section 5 states the accepted form. The adversarial test no longer expects one fewer CLAIM on 3.10.
+- Reading a message file no longer asks for a 32 MiB buffer per file. Every `list`, `inbox`, `status`,
+  `doctor` and the prompt hook read each file with `read(MAX_FILE_BYTES + 1)`, which allocates the whole
+  cap each time; it is now read in 64 KiB chunks up to the same cap. Output and limits are unchanged.
+  With `scripts/perf_audit.py --sizes 1000,10000 --reps 3` on Linux (WSL2): `list` of 10,000 messages
+  1,336 ms to 767 ms, the hook 1,278 ms to 761 ms, peak memory the same. On Windows the allocation was
+  about 4 ms per file (97 s for 10,000 messages, 2 s after).
 - `live_demo.py setup` printed `check`/`rehearse` commands without `--dir`, so after
   `setup --dir X` they looked in the default directory; a beat 4 failure now says which transcript
   directory it searched.
@@ -320,6 +315,15 @@ behaviour).
 - `scripts/experiment_v2.py`: the smoke gate gains a direct check that no call to the mail command or the notes
   file was refused (recorded per run as `channel_denials`), and every arm's intro says to stay in its checkout and
   to test with the unit tests, not `python3 -c`; the denial limit of 1 per run is kept. Dated amendment.
+
+### Known limitations
+
+- **Windows is Experimental.** Verified: the required `selftest-windows` check (hosted `windows-latest`, Python 3.12), native Windows 11 runs, and Git Bash as the hook shell. Not verified: other Windows Python versions, WSL, installing from a wheel, PowerShell 5.1 or cmd.exe for the committed hook command. A scoped claim racing the release of the same scope lock could rarely exit 1 (`Access is denied (EACCES); nothing written`) under load; the retry added in this release (pull request #164) reduced it from about 1.4% to about 1 in 320,000 lock attempts in a native stress run, so a rare residual remains possible. See [docs/windows.md](docs/windows.md).
+- **Codex pickup has never been run in the real Codex CLI** (issue #21); the Codex adapter is verified by tests and a hook simulation only. The independent Codex canary has not run.
+- **A pickup failure can look like an empty inbox.** The hook exits 0 and prints nothing on almost every error by design. `doctor --probe-hook` shows the hook launches and renders mail in your shell; it does not show that Claude Code or Codex runs it.
+- **There is no uninstall command** (see docs/troubleshooting.md, "Removing it").
+- **Not on PyPI.** The distribution name is `tyko84-agent-postbox`; `pip install agent-postbox` installs an unrelated project. Install from a clone or a release wheel.
+- **No experiment with real agents has shown that Postbox improves outcomes** (README, "Evidence so far").
 
 ## [0.5.0] - 2026-10-12
 
@@ -966,7 +970,8 @@ the first tag in the current repository.
 - Breaking a stale (older than 60 seconds) scope lock is not atomic; see the
   README "Security and limitations".
 
-[Unreleased]: https://github.com/tyko84/agent-postbox/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/tyko84/agent-postbox/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/tyko84/agent-postbox/releases/tag/v0.6.0
 [0.5.0]: https://github.com/tyko84/agent-postbox/releases/tag/v0.5.0
 [0.4.0]: https://github.com/tyko84/agent-postbox/releases/tag/v0.4.0
 [0.3.1]: https://github.com/tyko84/agent-postbox/releases/tag/v0.3.1
