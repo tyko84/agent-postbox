@@ -2410,18 +2410,12 @@ class _FlockRefused(Exception):
     """flock(2) itself was refused by the filesystem (not: the file could not be opened)."""
 
 
-def _delete_may_be_pending(lock: Path) -> bool:
-    """Windows only: whether "access denied" on the lock name could be a pending delete. A name
-    that opens for reading, or that does not exist, is not one (a write-denied file, a
-    read-only file, a directory that refuses new files): that denial is final. Only a name that
-    cannot even be read is looked at again."""
-    try:
-        os.close(_open(lock, os.O_RDONLY))
-    except FileNotFoundError:
-        return False
-    except OSError:
-        return True
-    return False
+# Windows answers access denied (5) to a create that races the delete of the same name (the
+# previous holder unlinks the lock before it closes its handle), and 32 and 33 to a name another
+# process holds with no sharing. All three get the same bounded look; a permanent denial (a
+# read-only lock, an ACL, a directory that refuses new files) is still the one-line exit 1, after
+# the last look.
+_WIN_RETRY_ERRORS = (5, 32, 33)
 
 
 def _scope_lock(lock: Path) -> int | None:
@@ -2451,10 +2445,10 @@ def _scope_lock(lock: Path) -> int | None:
             if os.path.isdir(lock):
                 raise IsADirectoryError(errno.EISDIR, "Is a directory", str(lock)) from exc
             # Another process holding the file with no sharing (Win32 32/33), or a name
-            # whose delete is pending (Win32 5, the orphan case): look again, a bounded
-            # number of times. A denial that cannot be a pending delete is final at once.
+            # whose delete is pending or racing a create (Win32 5): look again, a bounded
+            # number of times. Any other error is final at once.
             denied = exc
-            if getattr(exc, "winerror", None) not in (32, 33) and not _delete_may_be_pending(lock):
+            if getattr(exc, "winerror", None) not in _WIN_RETRY_ERRORS:
                 raise
             time.sleep(0.01)
             continue

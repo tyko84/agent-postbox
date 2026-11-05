@@ -2660,6 +2660,35 @@ def main() -> int:
               and "Traceback" not in run40("list").stderr + run40("inbox", "--to", "alice").stderr,
               repr((st40.returncode, probs40, st40.stderr[-200:])))
 
+    print("\nscope lock: a create that races the release of the same name (Windows branch, any platform)")
+    code_race = (
+        "import os, sys, tempfile\n"
+        f"sys.path.insert(0, {str(HERE)!r})\n"
+        "import agent_mail\n"
+        "real = agent_mail._open\n"
+        "n = {'creates': 0}\n"
+        "def flaky(path, flags, mode=0o644):\n"
+        "    if flags & os.O_CREAT:\n"
+        "        n['creates'] += 1\n"
+        "        if n['creates'] <= LIMIT:\n"
+        "            e = PermissionError(13, 'Access is denied'); e.winerror = 5; raise e\n"
+        "    return real(path, flags, mode)\n"
+        "agent_mail._open = flaky\n"
+        "agent_mail._WIN = True\n"
+        "lock = __import__('pathlib').Path(tempfile.mkdtemp()) / 'l.lock'\n"
+        "try:\n"
+        "    fd = agent_mail._scope_lock(lock)\n"
+        "    print('LOCKED' if fd is not None else 'HELD', n['creates'])\n"
+        "except PermissionError:\n"
+        "    print('DENIED', n['creates'])\n")
+    for race_limit, race_want in ((2, "LOCKED 3"), (10 ** 6, "DENIED 8")):
+        r = subprocess.run([sys.executable, "-I", "-c", code_race.replace("LIMIT", str(race_limit))],
+                           capture_output=True, text=True, timeout=60)
+        check("a transient access denied on the create is retried and the lock taken"
+              if race_limit == 2 else
+              "an access denied that never clears is raised after exactly 8 creates (exit 1 path)",
+              r.stdout.strip() == race_want, repr((r.stdout, r.stderr[-200:])))
+
     summary = 'FAILED: ' + '; '.join(failures) if failures else 'all checks passed'
     if skipped and not failures:
         summary += f" ({len(skipped)} spec-checkout-only check(s) skipped)"
