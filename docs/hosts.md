@@ -15,6 +15,7 @@ the documentation is silent, this page says "not stated" instead of guessing.
 | --- | --- | --- | --- | --- | --- |
 | Claude Code | Yes: `UserPromptSubmit` command hook, `install.py --adapter claude-code` | Covered by the per-prompt hook (it runs before the first prompt too) | Yes | Applies (host-independent) | Adapter tested in CI (`selftest.py`, `test_field.py`, `scripts/scenario.py`). Run inside the real host on 2026-10-12 (Claude Code 2.1.296, headless `claude -p`, `scripts/e2e_claude.py`): delivery, no cross-talk, next prompt, resume and recovery passed; a missing hook script **blocked the prompt** with the registration of that date; the registered command now ends in `|| true` and `install.py` upgrades an older registration in place ([e2e-real-sessions.md](e2e-real-sessions.md)). Re-run on Claude Code 2.1.300 on 2026-10-15: 0 delivery checks failed. Interactive mode not run |
 | Codex (CLI) | Yes: `UserPromptSubmit` command hook, `install.py --adapter codex`, **after the user trusts the hook in `/hooks`** | Covered by the per-prompt hook | Yes | Applies (host-independent) | wrapper tested against the documented payload shapes; not run inside the real host (`test_adapters.py`, `scripts/scenario.py --pickup codex`). **Not run in a real Codex.** Confirm with the checklist below |
+| Grok (Grok Bot routines) | **No.** Grok has no prompt hook. Mail reaches the model when a scheduled routine or a webhook-triggered run starts and runs the pickup | Not applicable: each routine run is a fresh session | Yes: a scheduled routine runs a deterministic preflight (`agent_mail.py inbox --to <id> --type ASK,DISPUTE --exit-code --json`) and wakes the model when an ASK is owed (exit 10) or the JSON lists a DISPUTE | Applies (host-independent) | **Experimental.** A synthetic lab and one interoperability exchange, both reported by the Grok session and **not independently reproduced**; see [grok-integration.md](grok-integration.md) |
 | Cursor (IDE agent, `cursor-agent` CLI) | **No.** `beforeSubmitPrompt` can allow or block a prompt; it has no field that reaches the model | Possible in principle (`sessionStart` returns `additional_context`), not shipped and not tested | Yes: put the polling instruction in a rule or `AGENTS.md` | Applies (host-independent) | untested; documentation read only |
 | Any host without hooks | No | No | Yes: `agent_mail.py list --to <you> --live` at session start and before acting on shared state | Applies (host-independent) | Polling is the tool itself, tested in CI; whether the agent remembers to poll is not something a test can show |
 
@@ -258,6 +259,32 @@ started Codex; if `inbox` says it is unset, stop and tell the user.
 Identity: start Codex as `AGENT_MAIL_IDENTITY=codex-b codex`. Whether the variable reaches the model's
 commands is the same open question as for the hook (the documentation does not say); the first `inbox`
 answers it. Weakness: the agent must decide to look, and mail filed mid-run waits for the next look.
+
+## Grok
+
+Detail, evidence labels and limits: [grok-integration.md](grok-integration.md).
+
+**How it activates.** There is no prompt hook, so there is nothing for `hooks/agent_mail_check.py` to attach to
+and no `install.py --adapter` for Grok. A scheduled routine, or a run started by a webhook, begins a fresh
+session. Its first step is the deterministic preflight `agent_mail.py inbox --to <id> --type ASK,DISPUTE
+--exit-code --json` (exit 10 an ASK is owed, 0 none owed, 2 cannot be known). Exit 10 counts owed ASKs only, so a
+DISPUTE can appear in the JSON with status 0: it wakes the model on 10, or when the JSON lists a DISPUTE.
+Identity is `AGENT_MAIL_IDENTITY` in the routine's environment, as in every host.
+
+**What was verified, and what was not.** In a synthetic lab (reported by the Grok session, not independently
+reproduced): 43 of 43 pickup cases with no duplicate and no miss, 16 overlapping runs on the same 3 ASKs giving
+exactly one answer per ASK, an interruption matrix of 15 of 15 (an execution-level simulation: a script killed
+the tool processes partway through, no model ran), and a run started by hand in a fresh context answering 3 of
+3 canaries (not triggered by a routine). Not verified:
+unattended pickup on real mail with several writers, and exactly-once execution (only exactly-once answers,
+through `send --key`, are shown). One interoperability round trip, Grok to Codex to Grok, through a dedicated disposable mailbox with
+synthetic messages only (mailbox on Windows, Grok reaching it over SSH through a macOS relay), needed a manual
+prompt on the Codex side, so it is not unattended pickup and not proof of general Windows or multi-machine
+support.
+
+**Manual pickup (fallback).** Polling is the supported fallback. At the start of a session and before acting
+on shared state, run `agent_mail.py inbox --to <id>` and answer any ASK with `send --type ANSWER --from <id> --to
+<asker> --subject "Re: ..." --reply-to <ask id> --key answer-<ask id> --body-file answer.txt`; the stable key keeps a repeated run from answering twice.
 
 ## Cursor
 
