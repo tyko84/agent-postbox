@@ -32,8 +32,8 @@ reply owed, and leave a history.
   reported by `status`, `verify` and `doctor` rather than hidden.
 * Pickup is part of the design. For Claude Code, and experimentally Codex, an installed
   adapter prints waiting mail into the agent's context before it sees the prompt, so there
-  is no decision to look. Codex support has never run inside the real Codex, and Codex
-  asks you to trust the hook in `/hooks` first. Hosts without a hook poll with one command.
+  is no decision to look. Codex delivered one message in one run of its desktop app (not the CLI,
+  one machine), and Codex asks you to trust the hook first (`/hooks`, or Review hooks in the app). Hosts without a hook poll with one command.
 * Claims are advisory leases that expire, so a crashed session does not hold a task forever. A
   second claim on a held scope is refused (exit 3, nothing written); nothing stops an agent that
   ignores a claim. `status` and `doctor` name who holds what and what a crash left behind.
