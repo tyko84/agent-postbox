@@ -1025,8 +1025,10 @@ class HostsDoc(unittest.TestCase):
         self.assertEqual(configs[0], written)
 
     def test_the_matrix_says_what_was_and_was_not_verified(self) -> None:
-        for phrase in ("wrapper tested against the documented payload shapes; not run inside "
-                       "the real host", "https://learn.chatgpt.com/docs/hooks",
+        for phrase in ("wrapper tested against the documented payload shapes",
+                       "**Codex CLI: not run** (issue #21)",
+                       "Codex desktop app: one run on 2026-11-07",
+                       "https://learn.chatgpt.com/docs/hooks",
                        "https://cursor.com/docs/hooks", "2026-10-12", "/hooks",
                        "positive control"):
             self.assertIn(phrase, self.text)

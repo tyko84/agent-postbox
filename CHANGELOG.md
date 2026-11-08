@@ -319,7 +319,7 @@ behaviour).
 ### Known limitations
 
 - **Windows is Experimental.** Verified: the required `selftest-windows` check (hosted `windows-latest`, Python 3.12), native Windows 11 runs, and Git Bash as the hook shell. Not verified: other Windows Python versions, WSL, installing from a wheel, PowerShell 5.1 or cmd.exe for the committed hook command. A scoped claim racing the release of the same scope lock could rarely exit 1 (`Access is denied (EACCES); nothing written`) under load; the retry added in this release (pull request #164) reduced it from about 1.4% to about 1 in 320,000 lock attempts in a native stress run, so a rare residual remains possible. See [docs/windows.md](docs/windows.md).
-- **Codex pickup has never been run in the real Codex CLI** (issue #21); the Codex adapter is verified by tests and a hook simulation only. The independent Codex canary has not run.
+- **Codex pickup has never been run in the Codex CLI** (issue #21). It was observed once in the Codex desktop app (2026-11-07, one machine, identity set by hand in the registered command; see `docs/hosts.md`); otherwise the Codex adapter is verified by tests and a hook simulation only. The independent Codex canary has not run.
 - **A pickup failure can look like an empty inbox.** The hook exits 0 and prints nothing on almost every error by design. `doctor --probe-hook` shows the hook launches and renders mail in your shell; it does not show that Claude Code or Codex runs it.
 - **There is no uninstall command** (see docs/troubleshooting.md, "Removing it").
 - **Not on PyPI.** The distribution name is `tyko84-agent-postbox`; `pip install agent-postbox` installs an unrelated project. Install from a clone or a release wheel.

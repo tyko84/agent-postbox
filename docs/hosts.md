@@ -6,15 +6,17 @@ model **without the agent deciding to look**. This page says, per host, which
 mechanism does that, what it guarantees, and exactly how it was checked.
 
 Vendor documentation was read on **2026-10-12**. Event and field names are
-quoted from it. Nothing below was observed in a running Codex or Cursor; where
-the documentation is silent, this page says "not stated" instead of guessing.
+quoted from it. The only observation in a running Codex is one run in the Codex
+desktop app on 2026-11-07 (see "Codex desktop app: one observed run"); nothing
+was observed in the Codex CLI or in Cursor. Where the documentation is silent,
+this page says "not stated" instead of guessing.
 
 ## Compatibility matrix
 
 | Host | Automatic per-prompt delivery | Session-start delivery | Explicit polling | Identity binding | How verified |
 | --- | --- | --- | --- | --- | --- |
 | Claude Code | Yes: `UserPromptSubmit` command hook, `install.py --adapter claude-code` | Covered by the per-prompt hook (it runs before the first prompt too) | Yes | Applies (host-independent) | Adapter tested in CI (`selftest.py`, `test_field.py`, `scripts/scenario.py`). Run inside the real host on 2026-10-12 (Claude Code 2.1.296, headless `claude -p`, `scripts/e2e_claude.py`): delivery, no cross-talk, next prompt, resume and recovery passed; a missing hook script **blocked the prompt** with the registration of that date; the registered command now ends in `|| true` and `install.py` upgrades an older registration in place ([e2e-real-sessions.md](e2e-real-sessions.md)). Re-run on Claude Code 2.1.300 on 2026-10-15: 0 delivery checks failed. Interactive mode not run |
-| Codex (CLI) | Yes: `UserPromptSubmit` command hook, `install.py --adapter codex`, **after the user trusts the hook in `/hooks`** | Covered by the per-prompt hook | Yes | Applies (host-independent) | wrapper tested against the documented payload shapes; not run inside the real host (`test_adapters.py`, `scripts/scenario.py --pickup codex`). **Not run in a real Codex.** Confirm with the checklist below |
+| Codex (CLI and desktop app) | Yes: `UserPromptSubmit` command hook, `install.py --adapter codex`, **after the user trusts the hook** (`/hooks` in the CLI; Review hooks or Settings, Hooks in the desktop app) | Covered by the per-prompt hook | Yes | Applies (host-independent) | wrapper tested against the documented payload shapes (`test_adapters.py`, `scripts/scenario.py --pickup codex`). **Codex desktop app: one run on 2026-11-07 delivered a live message into the model's context** (one machine, one hand-edited registration; details below). **Codex CLI: not run** (issue #21) |
 | Cursor (IDE agent, `cursor-agent` CLI) | **No.** `beforeSubmitPrompt` can allow or block a prompt; it has no field that reaches the model | Possible in principle (`sessionStart` returns `additional_context`), not shipped and not tested | Yes: put the polling instruction in a rule or `AGENTS.md` | Applies (host-independent) | untested; documentation read only |
 | Any host without hooks | No | No | Yes: `agent_mail.py list --to <you> --live` at session start and before acting on shared state | Applies (host-independent) | Polling is the tool itself, tested in CI; whether the agent remembers to poll is not something a test can show |
 
@@ -220,7 +222,8 @@ nothing and exits 0; a missing script cannot produce exit 2; the installer
 merges, is idempotent, and refuses instead of overwriting; the registered
 string itself delivers from a subdirectory of a real git repository.
 `scripts/scenario.py --pickup codex` runs the reliability harness with every
-pickup started that way. **Not verified:** anything inside Codex. The stdin
+pickup started that way. **Not verified:** anything inside the Codex CLI; the
+only in-host observation is the one desktop-app run below. The stdin
 object is assembled from the documented field tables (the page prints no full
 example for this event).
 
@@ -239,6 +242,55 @@ Confirm it in the real host (five steps, with a positive control):
    step 4 (it must not know the subject); then start it from a subdirectory
    with the identity set (it must). If step 4 fails with the identity set,
    check `/hooks` for an untrusted or failing entry and `[features] hooks`.
+
+### Codex desktop app: one observed run
+
+Observed 2026-11-07 on macOS with the Codex desktop app (client 26.1023.50603,
+bundled Codex 0.165.0-alpha), one run, one machine, one person watching.
+
+What was done: a throwaway git repository outside every real project;
+`install.py --adapter codex`; one live `NOTICE` filed to the identity `bob`
+(subject `control 4417`); then the registered command was **edited by hand** to
+start with `AGENT_MAIL_IDENTITY=bob` (see below for why). The folder was opened
+in the desktop app, the hook was reviewed and trusted on the Review hooks screen,
+and a new thread was sent "is there agent mail for you?".
+
+What the app's own session record (`~/.codex/sessions/.../rollout-*.jsonl`)
+shows, in order: the user prompt; then a developer-context message starting
+`Agent mail - 1 live message(s) addressed to 'bob'` that contains the subject;
+then the assistant's first reply naming the notice; and only after that one
+`agent_mail.py show <id>` command the model chose to run to read the body. The
+live message reached the model before any command was run.
+
+What this shows: the desktop app runs a project-local `UserPromptSubmit` hook
+once it is trusted, and the hook's plain-text output reaches the model as
+developer context.
+
+What it does not show:
+
+* **Not the CLI.** Issue #21 asks for a Codex CLI run and stays open.
+* **Not the installer's command.** The registered command was changed to carry
+  `AGENT_MAIL_IDENTITY=bob`. A desktop app started from the Dock or Finder does
+  not inherit variables exported in your shell, and without an identity the hook
+  prints nothing, which looks exactly like an empty inbox. The unmodified
+  installer command was not run in Codex. `doctor --probe-hook` reports a
+  hand-edited command as "not probed".
+* **Not run:** the negative control (identity unset), a start from a
+  subdirectory, `canary`, a second session, Windows, or a tools-denied run.
+* One run does not show the hook fires on every prompt or every Codex release.
+
+What to expect when you try it, learned the hard way:
+
+* **The project must be opened as a project and trusted.** The first attempt
+  here showed no hooks at all: the folder had been opened in a way that did not
+  load its `.codex/` layer. An untrusted project's hook is skipped silently.
+* **Trusting is a separate step.** The first reply after opening the project
+  offered a Review hooks dialog (hook type, command, timeout, "New"); nothing is
+  delivered until you allow the hook there or under Settings, Hooks.
+* **Set the identity in the command**, for example
+  `AGENT_MAIL_IDENTITY=<name> python3 "$(git rev-parse --show-toplevel)/tools/agent-postbox/hooks/agent_mail_check.py" || true`,
+  or start the app from a shell that exports it. A repaired or edited command is
+  a new hook and needs trusting again.
 
 ### Codex: manual pickup (fallback, and the smallest first step)
 

@@ -472,7 +472,7 @@ experiments below did **not** show.
 | Host | Automatic pickup | Status |
 |---|---|---|
 | Claude Code | Yes (`--adapter claude-code`) | Run in the real host, headless (`claude -p`) only, on one small model; last re-run on Claude Code 2.1.300. Interactive mode not run: [docs/e2e-real-sessions.md](docs/e2e-real-sessions.md) |
-| Codex CLI | Yes (`--adapter codex`) | **Experimental**: built from the documented hook format, never run inside real Codex; the hook must be trusted once in `/hooks` |
+| Codex (CLI, desktop app) | Yes (`--adapter codex`) | **Experimental**: delivered one message in one run of the Codex desktop app (2026-11-07, hand-set identity; see [docs/hosts.md](docs/hosts.md)); never run in the Codex CLI; the hook must be trusted once (`/hooks`, or Review hooks in the app) |
 | Cursor | No: the host cannot add context per prompt | Documented only, never run; polling (`list --live`) is the only option |
 | Anything else | No | Polling only; the protocol is just files |
 
